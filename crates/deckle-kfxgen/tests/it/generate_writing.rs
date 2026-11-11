@@ -55,6 +55,13 @@ fn ruby_tcy_matches_kfxgen() {
     matches_kfxgen("ruby_tcy");
 }
 
+/// 縦中横 whose texts fill a `content_math` fragment: 8,191 bytes keep the next text in it,
+/// 8,192 start the next fragment (`_math_note`, :2380).
+#[test]
+fn tcy_notes_matches_kfxgen() {
+    matches_kfxgen("tcy_notes");
+}
+
 fn directions() -> Model {
     load_model(&deckle_kfx::fixtures::kfxgen("models/directions")).unwrap()
 }

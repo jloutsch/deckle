@@ -2183,10 +2183,30 @@ ARG_BOOKS = {
             ],
         ),
     ],
+    # 縦中横 whose texts fill kfxgen's content_math fragment (#247, :2380): 4,096 and 4,095
+    # bytes, 8,191 in all, so the next text, of one byte, still joins them; at 8,192 the one
+    # after starts content_math2.
+    "tcy_notes": [
+        _chapter(
+            "縦中横",
+            [
+                _block(
+                    "一\ufffc二\ufffc三\ufffc四\ufffc五",
+                    [
+                        (1, 1, frozenset({("tcy", (0, "1" * 4096))})),
+                        (3, 1, frozenset({("tcy", (1, "2" * 4095))})),
+                        (5, 1, frozenset({("tcy", (2, "1"))})),
+                        (7, 1, frozenset({("tcy", (3, "34"))})),
+                    ],
+                )
+            ],
+        )
+    ],
 }
 
 #: The image books' other arguments.
 ARG_BOOK_EXTRAS = {
+    "tcy_notes": {"language": "ja", "rtl": True, "writing_mode": "vertical-rl"},
     "inline_pictures": {
         "images": {
             "OEBPS/p.png": _png(600, 400),
