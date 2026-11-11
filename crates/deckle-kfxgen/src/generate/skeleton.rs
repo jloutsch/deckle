@@ -290,6 +290,7 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
         .chain(&data.extra_style_names)
         .chain(&data.anchor_names)
         .chain(&section_ad_names)
+        .chain(&data.ruby_names)
         .chain(&picture_names)
         .chain(g.fonts.locations())
         .filter(|name| seen.insert(*name))
@@ -312,6 +313,10 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
     g.push(build_fragment_270(&container_id));
     if data.chunks.iter().any(table_chunks::has_zoom_button) {
         declare_table_viewer(&mut g);
+    }
+    if !data.ruby_names.is_empty() {
+        // `_declare_ruby` (:2304), as Kindle Previewer declares a book with ruby (#236).
+        declare_feature(&mut g, "yj_ruby");
     }
     if REFLOW_LANGUAGES.contains(&base_language.as_str()) {
         // As Kindle Previewer 4.0.3 declares an Arabic, Persian or Hebrew book, by its

@@ -314,6 +314,43 @@ def synth(out):
         "p.plain { unicode-bidi: plaintext; }\n"
         "div.box { border: 1px solid black; padding: 0.5em; }",
     )
+    # Ruby in a horizontal book (#236): readings in paragraphs and headings.
+    _epub(
+        out / "ruby.epub",
+        "ルビ",
+        "ja",
+        [
+            (
+                "c1",
+                "漢字かんじ",
+                '<p class="t"><ruby><b>漢</b>字<rt>かんじ</rt></ruby></p>'
+                "<p>前<ruby>漢<rt>かん</rt>字<rt>じ</rt></ruby>後。</p>"
+                "<p><ruby><b>漢</b>字<rt>かんじ</rt></ruby>、二つの run の上に。</p>"
+                "<p><b><ruby>強<rt>つよ</rt></ruby></b>、太字の上に。</p>"
+                '<p><a href="c2.xhtml#t"><ruby>漢<rt>かん</rt></ruby>字へ</a>、リンクの中に。</p>'
+                "<p><ruby>同<rt>おな</rt></ruby><ruby>同<rt>おな</rt></ruby>、同じ読み。</p>"
+                "<p><ruby>漢<rp>(</rp><rt>かん</rt><rp>)</rp></ruby>、括弧の読み。</p>",
+            ),
+            (
+                "c2",
+                "第(だい)二(に)の章",
+                '<p class="t"><ruby>第<rt>だい</rt></ruby><ruby>二<rt>に</rt></ruby>の章</p>'
+                '<p id="t">ここが<ruby>行<rt>い</rt></ruby>き<ruby>先<rt>さき</rt></ruby>。</p>',
+            ),
+            (
+                "c3",
+                "三（さん）",
+                '<p class="t"><ruby>三<rt>さん</rt></ruby></p><p>本文。</p>',
+            ),
+            (
+                "c4",
+                "四の章",
+                "<h1><ruby>四<rt>よん</rt></ruby>の章</h1><p>読みの無い題。</p>",
+            ),
+        ],
+        css="p.t { font-size: 1.5em; font-weight: bold; }",
+        bare=("c1", "c2", "c3", "c4"),
+    )
     # Shaped as kfxgen's test_books/figures (#382) and floats (#243, #565), less what isn't
     # ported (a linked picture, a picture among words).
     after = "<p>The boats went out past the harbour wall, and the quay watched them go.</p>"
@@ -382,7 +419,7 @@ def synth(out):
         "img.fl { float: left; width: 30%; } img.fr { float: right; width: 25%; }",
         extra=[("p.png", "image/png", _png_image(600, 400))],
     )
-    for name in ("lists", "fonts", "rtl", "directions", "frames"):
+    for name in ("lists", "fonts", "rtl", "directions", "ruby", "frames"):
         print(out / f"{name}.epub")
 
 

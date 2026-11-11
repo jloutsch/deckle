@@ -38,7 +38,6 @@ fn heading_runs_matches_kfxgen() {
 }
 
 #[test]
-#[ignore = "ruby and a table's language (Task 12)"]
 fn links_matches_kfxgen() {
     matches_kfxgen("links");
 }

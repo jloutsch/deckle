@@ -24,6 +24,15 @@ fn directions_matches_kfxgen() {
     matches_kfxgen("directions");
 }
 
+/// Ruby in a horizontal Japanese book (#236): readings over one character, two, two runs, a
+/// bold run, the start of a link, the same reading twice, in parentheses; headings whose
+/// contents label runs the readings in, bare, in parentheses and in full-width ones, and one
+/// whose label leaves them out; readings in several chapters.
+#[test]
+fn ruby_matches_kfxgen() {
+    matches_kfxgen("ruby");
+}
+
 fn directions() -> Model {
     load_model(&deckle_kfx::fixtures::kfxgen("models/directions")).unwrap()
 }
@@ -114,5 +123,29 @@ fn a_direction_flag_of_another_shape_is_a_model_error() {
     assert!(matches!(
         with_flags(vec![pair("lang", s("fr")), pair("lang", s("de"))]),
         Err(GenerateError::Unsupported("a run in two languages"))
+    ));
+}
+
+/// A ruby kfxgen can't unpack is a model error naming the runs; two on one run are
+/// unsupported: kfxgen would take the first in set order.
+#[test]
+fn a_ruby_of_another_shape_is_a_model_error() {
+    for flag in [
+        pair("ruby", s("かん")),
+        pair("ruby", PyValue::Tuple(vec![s("0"), s("かん")])),
+        pair(
+            "ruby",
+            PyValue::Tuple(vec![PyValue::Int(0), PyValue::Int(1)]),
+        ),
+    ] {
+        match with_flags(vec![flag.clone()]) {
+            Err(GenerateError::Model(m)) => assert!(m.contains(".spans"), "{flag:?}: {m}"),
+            other => panic!("{flag:?}: {other:?}"),
+        }
+    }
+    let ruby = |n: i64| pair("ruby", PyValue::Tuple(vec![PyValue::Int(n), s("よみ")]));
+    assert!(matches!(
+        with_flags(vec![ruby(0), ruby(1)]),
+        Err(GenerateError::Unsupported("a run under two rubies"))
     ));
 }

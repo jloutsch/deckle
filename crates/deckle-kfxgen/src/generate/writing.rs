@@ -2,9 +2,13 @@
 //! Writing direction and language: a block's, a container's and an inline element's
 //! direction, unicode-bidi and language as Kindle Previewer 4.0.3 writes them in `$157`
 //! (#246, #605, #710, #714), and the runs an inline element's direction lays out
-//! (`_direction_layers`, `native_generator.py:402`).
-use super::inline::{Flag, Flags, Span};
-use super::{GenerateError, model_err};
+//! (`_direction_layers`, `native_generator.py:402`); ruby (#236).
+use deckle_kfx::fragment::Fragment;
+use deckle_kfx::ion::Value;
+
+use super::chapters::Block;
+use super::inline::{Flag, Flags, Run, Span, title_spans};
+use super::{GenerateError, Generator, measure, model_err, py, st, sym};
 use crate::pyvalue::PyValue;
 
 /// `_BIDI_KEYS` (:71): the converter's names, and the `$157` keys Previewer writes.
@@ -143,10 +147,10 @@ pub(crate) fn page_bidi<'a>(bidis: impl IntoIterator<Item = Option<&'a Bidi>>) -
 }
 
 /// A `$157` key's value: a language as written, a direction's symbol.
-pub(crate) fn bidi_value(key: &str, value: &str) -> deckle_kfx::ion::Value {
+pub(crate) fn bidi_value(key: &str, value: &str) -> Value {
     match bidi_symbol(value).filter(|_| key != "$10") {
-        Some(symbol) => super::sym(symbol),
-        None => deckle_kfx::ion::Value::string(value),
+        Some(symbol) => sym(symbol),
+        None => Value::string(value),
     }
 }
 
@@ -345,4 +349,200 @@ pub(crate) fn direction_layers(spans: &[Span]) -> Vec<Layer> {
     // Stable, as Python's sort.
     out.sort_by_key(|(l, level)| (l.start, *level));
     out.into_iter().map(|(l, _)| l).collect()
+}
+
+/// `RUBY_STYLE_NAME` (:5261): every reading's style.
+pub(crate) const RUBY_STYLE_NAME: &str = "s0_rt";
+
+/// `make_ruby_flag`'s `("ruby", (serial, reading))` (#236).
+pub(crate) fn read_ruby_flag(v: &PyValue, at: &str) -> Result<Flag, GenerateError> {
+    match v.as_list() {
+        Some([PyValue::Int(serial), PyValue::Str(reading)]) => {
+            Ok(Flag::Ruby(*serial, reading.clone()))
+        }
+        _ => Err(model_err(format!("{at}: a ruby, (serial, reading)"))),
+    }
+}
+
+/// `ruby_of`: a run's ruby as (serial, reading).
+fn ruby_of(flags: &Flags) -> Option<(i64, &str)> {
+    flags.iter().find_map(|f| match f {
+        Flag::Ruby(serial, reading) => Some((*serial, reading.as_str())),
+        _ => None,
+    })
+}
+
+/// `without_ruby`: a run's flags less its ruby, which is written as an event of its own.
+pub(crate) fn without_ruby(spans: &[Span]) -> Vec<Span> {
+    spans
+        .iter()
+        .map(|sp| Span {
+            flags: sp
+                .flags
+                .iter()
+                .filter(|f| !matches!(f, Flag::Ruby(..)))
+                .cloned()
+                .collect(),
+            ..sp.clone()
+        })
+        .collect()
+}
+
+/// Each ruby's reading is an entry with an id of its own, which takes no position (:6650):
+/// ids after the content's, in the order the rubies first appear. Keyed by (chunk, serial).
+pub(crate) fn ruby_eids<'a>(
+    spans: impl IntoIterator<Item = &'a [Span]>,
+    next_eid: &mut i64,
+    step: i64,
+) -> Vec<((usize, i64), i64)> {
+    let mut eids: Vec<((usize, i64), i64)> = Vec::new();
+    for (i, spans) in spans.into_iter().enumerate() {
+        for sp in spans {
+            if let Some((serial, _)) = ruby_of(&sp.flags)
+                && !eids.iter().any(|(k, _)| *k == (i, serial))
+            {
+                eids.push(((i, serial), *next_eid));
+                *next_eid += step;
+            }
+        }
+    }
+    eids
+}
+
+/// A chunk's rubies (:7847): each one's base, from its first run to its last, and reading,
+/// in the order they first appear.
+pub(crate) fn rubies(spans: &[Span]) -> Vec<(i64, i64, i64, String)> {
+    let mut out: Vec<(i64, i64, i64, String)> = Vec::new();
+    for sp in spans {
+        let Some((serial, reading)) = ruby_of(&sp.flags) else {
+            continue;
+        };
+        let end = sp.start + sp.len;
+        match out.iter_mut().find(|r| r.0 == serial) {
+            Some(r) => r.2 = end,
+            None => out.push((serial, sp.start, end, reading.to_owned())),
+        }
+    }
+    out
+}
+
+/// `_ruby_heading_title` (:1237): the base text of the chapter's first block, and its runs,
+/// when that block with each reading run in after its base is `title` (#236). A reading
+/// may be in parentheses, as `<rp>` gives it; spaces are ignored.
+pub(crate) fn ruby_heading_title(
+    first: Option<&Block>,
+    title: &str,
+) -> Option<(String, Vec<Span>)> {
+    let first = first.filter(|b| b.is_paragraph())?;
+    let mut rubies: Vec<(i64, (i64, &str))> = Vec::new();
+    for sp in &first.spans {
+        if let Some((serial, reading)) = ruby_of(&sp.flags) {
+            let at = (sp.start + sp.len, reading);
+            match rubies.iter_mut().find(|r| r.0 == serial) {
+                Some(r) => r.1 = at,
+                None => rubies.push((serial, at)),
+            }
+        }
+    }
+    if rubies.is_empty() {
+        return None;
+    }
+    let mut ends: Vec<(i64, &str)> = rubies.into_iter().map(|(_, at)| at).collect();
+    ends.sort_by(|a, b| b.cmp(a));
+    let no_space = |s: &str| s.chars().filter(|&c| !py::is_space(c)).collect::<String>();
+    let run_in = |open: &str, close: &str| {
+        let mut text: Vec<char> = first.text.chars().collect();
+        for &(end, reading) in &ends {
+            // Python's slice: an end past the text is its end, a negative one counts back.
+            let n = text.len() as i64;
+            let at = if end < 0 {
+                (end + n).max(0)
+            } else {
+                end.min(n)
+            } as usize;
+            let run: Vec<char> = format!("{open}{reading}{close}").chars().collect();
+            text.splice(at..at, run);
+        }
+        no_space(&text.into_iter().collect::<String>())
+    };
+    let want = no_space(title);
+    if ![("", ""), ("(", ")"), ("（", "）")]
+        .iter()
+        .any(|(open, close)| run_in(open, close) == want)
+    {
+        return None;
+    }
+    let base = py::strip(&first.text).to_owned();
+    let spans = title_spans(&first.text, &first.spans, py::len(&base));
+    Some((base, spans))
+}
+
+/// A chunk's rubies put on its runs (:8039): each reading numbered in its chapter's ruby
+/// fragment, on the run over exactly its base, or on a run of its own before the first run
+/// after its start.
+pub(crate) fn place_rubies(
+    spans: &[Span],
+    runs: &mut Vec<Run>,
+    eids: &[((usize, i64), i64)],
+    chunk_idx: usize,
+    chapter: usize,
+    readings: &mut Vec<(i64, String)>,
+) {
+    for (serial, start, end, reading) in rubies(spans) {
+        let eid = eids
+            .iter()
+            .find(|(k, _)| *k == (chunk_idx, serial))
+            .map(|(_, e)| *e)
+            .expect("every ruby has an id");
+        readings.push((eid, reading));
+        let ruby = (format!("ruby{chapter}"), readings.len() as i64);
+        // After a longer run starting with it, such as a link holding it (QA's G53 on #713).
+        let at = runs
+            .iter()
+            .position(|r| r.start > start || (r.start == start && r.len <= end - start))
+            .unwrap_or(runs.len());
+        match runs.get_mut(at) {
+            Some(r) if (r.start, r.len) == (start, end - start) => r.ruby = Some(ruby),
+            _ => runs.insert(at, Run::ruby(start, end - start, ruby)),
+        }
+    }
+}
+
+/// `build_ruby_style_157` (:2328): half the base's size at a normal line height.
+pub(crate) fn build_ruby_style_157(g: &mut Generator) -> Fragment {
+    g.local(RUBY_STYLE_NAME);
+    let value = st([
+        ("$16", measure(py::decimal("0.5"), "$308")),
+        ("$42", sym("$383")),
+        ("$173", sym(RUBY_STYLE_NAME)),
+    ]);
+    Fragment::new("$157", Some(RUBY_STYLE_NAME), value)
+}
+
+/// `build_fragment_756` (:2342): a chapter's ruby fragment, one text entry per reading,
+/// numbered from 1 as the bases' events name them.
+pub(crate) fn build_fragment_756(
+    g: &mut Generator,
+    name: &str,
+    readings: &[(i64, String)],
+) -> Fragment {
+    g.local(name);
+    let entries = readings
+        .iter()
+        .zip(1..)
+        .map(|((eid, reading), number)| {
+            st([
+                ("$155", Value::Int(*eid)),
+                ("$157", sym(RUBY_STYLE_NAME)),
+                ("$159", sym("$269")),
+                ("$758", Value::Int(number)),
+                ("$145", Value::string(reading)),
+            ])
+        })
+        .collect();
+    Fragment::new(
+        "$756",
+        Some(name),
+        st([("$757", sym(name)), ("$146", Value::List(entries))]),
+    )
 }

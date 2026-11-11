@@ -94,3 +94,11 @@ kfxgen raises `KeyError` only on one it writes, and writes a book for one `_bidi
 out. kfxgen also writes a book for a key it doesn't read, which it ignores, and for a value of
 another type that `_bidi_diff` leaves out. A run carrying two languages alone is
 `GenerateError::Unsupported`: kfxgen would write the first in set order.
+
+## Rubies of another shape
+
+The converter writes a ruby as `("ruby", (serial, reading))`, an int and a string
+(`make_ruby_flag`, `inline_style.py:328`). The port reads exactly that; anything else is a
+`GenerateError::Model` naming the runs, where kfxgen raises on most shapes it can't unpack
+and writes a reading of another type as that Ion type. A run under two rubies is
+`GenerateError::Unsupported`: kfxgen would take the first in set order.

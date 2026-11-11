@@ -11,7 +11,7 @@ use super::block_styles::{Sizes, number};
 use super::fonts::FontTable;
 use super::notes::Popups;
 use super::styles::{Style157, StyleArgs, Styles};
-use super::writing::{Bidi, direction_layers, read_bidi_flag};
+use super::writing::{Bidi, direction_layers, read_bidi_flag, read_ruby_flag, without_ruby};
 use super::{GenerateError, Generator, model_err, py, st, sym};
 use crate::pyvalue::{PyValue, truthy};
 
@@ -47,6 +47,8 @@ pub(crate) enum Flag {
     Bidi(i64, i64, Bidi),
     /// An inline element's language when it sets no direction (#710).
     Lang(String),
+    /// `make_ruby_flag` (#236): the base of a reading, as (serial, reading).
+    Ruby(i64, String),
 }
 
 /// A size in CSS px, ordered by `total_cmp` so a run's flags can be a set; read with no sign
@@ -121,7 +123,7 @@ fn flag_of(f: &PyValue, at: &str) -> Result<Flag, GenerateError> {
         },
         PyValue::Tuple(kv) if kv.len() == 2 => match (kv[0].as_str(), &kv[1]) {
             (Some("link"), PyValue::Str(target)) => Flag::Link(target.clone()),
-            (Some("ruby"), _) => return Err(Unsupported("ruby")),
+            (Some("ruby"), v) => read_ruby_flag(v, &format!("{at}.spans"))?,
             (Some("tcy"), _) => return Err(Unsupported("tate-chu-yoko")),
             (Some("bidi"), v) => read_bidi_flag(v, &format!("{at}.spans"))?,
             (Some("lang"), PyValue::Str(lang)) => Flag::Lang(lang.clone()),
@@ -208,6 +210,9 @@ pub(crate) fn read_spans(v: Option<&PyValue>, at: &str) -> Result<Vec<Span>, Gen
         }
         if count(|f| matches!(f, Flag::Lang(_))) > 1 {
             return Err(Unsupported("a run in two languages"));
+        }
+        if count(|f| matches!(f, Flag::Ruby(..))) > 1 {
+            return Err(Unsupported("a run under two rubies"));
         }
         if count(|f| matches!(f, Flag::Size(_))) > 1 || count(|f| matches!(f, Flag::Mono(_))) > 1 {
             return Err(Unsupported("a run of two sizes or two monospace families"));
@@ -561,12 +566,28 @@ fn emphasis_style(
 
 /// A `$142` run of a `$259` entry: where, its `$157` and the `$266` it links to.
 pub(crate) struct Run {
-    start: i64,
-    len: i64,
+    pub start: i64,
+    pub len: i64,
     style: Option<String>,
     anchor: Option<String>,
     /// Its anchor is a pop-up note's (#445).
     popup: bool,
+    /// The event of a ruby over it: its chapter's ruby fragment and its number there (#236).
+    pub ruby: Option<(String, i64)>,
+}
+
+impl Run {
+    /// A ruby's event alone.
+    pub(crate) fn ruby(start: i64, len: i64, ruby: (String, i64)) -> Self {
+        Run {
+            start,
+            len,
+            style: None,
+            anchor: None,
+            popup: false,
+            ruby: Some(ruby),
+        }
+    }
 }
 
 /// What a chunk's runs start from (:7820): its paragraph's weight, slant, families and size,
@@ -596,7 +617,7 @@ pub(crate) fn entry_runs(
     popups: &Popups,
 ) -> Vec<Run> {
     let mut runs = Vec::new();
-    for mut layer in direction_layers(spans) {
+    for mut layer in direction_layers(&without_ruby(spans)) {
         // A run layered on others starts from their weight, slant and font (#715).
         let (mut run_b, mut run_i, mut run_fam) = (base.bold, base.italic, base.family);
         let under = std::mem::take(&mut layer.under);
@@ -666,6 +687,7 @@ pub(crate) fn entry_runs(
             style,
             popup: anchor.as_ref().is_some_and(|a| popups.anchors.contains(a)),
             anchor,
+            ruby: None,
         });
     }
     runs
@@ -694,7 +716,7 @@ pub(crate) fn write_runs(
         ]));
     }
     for run in runs {
-        if run.style.is_none() && run.anchor.is_none() {
+        if run.style.is_none() && run.anchor.is_none() && run.ruby.is_none() {
             continue;
         }
         let Value::Struct(mut span) = st([
@@ -713,6 +735,11 @@ pub(crate) fn write_runs(
         if let Some(style) = &run.style {
             g.local(style);
             span.insert("$157", sym(style));
+        }
+        if let Some((fragment, number)) = &run.ruby {
+            g.local(fragment);
+            span.insert("$757", sym(fragment));
+            span.insert("$758", Value::Int(*number));
         }
         out.push(Value::Struct(span));
     }

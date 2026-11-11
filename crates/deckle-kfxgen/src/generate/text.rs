@@ -52,6 +52,8 @@ pub(crate) struct ChapterData {
     pub extra_style_names: Vec<String>,
     /// The `$266` anchors, for the entity index.
     pub anchor_names: Vec<String>,
+    /// The chapters' ruby fragments (#236).
+    pub ruby_names: Vec<String>,
 }
 
 /// `_build_chapter_content` (:5396).
@@ -76,7 +78,8 @@ pub(crate) fn build_chapter_content(
         let blocks = chapter.blocks.as_deref().unwrap_or_default();
         let all: Vec<&Block> = blocks.iter().collect();
         let toc = !chapter.toc_links.is_empty();
-        // `_ruby_heading_title` finds no ruby, so `_book_heading_title` (:1304) decides.
+        // A heading whose label runs its readings in (#236), else `_book_heading_title`
+        // (:1304) decides.
         let mut title = chapter.title.clone();
         let mut title_spans = None;
         let matched = label_blocks(&all, &title);
@@ -89,7 +92,10 @@ pub(crate) fn build_chapter_content(
         } else {
             None
         };
-        if let Some(b) = book_block {
+        if let Some((base, spans)) = writing::ruby_heading_title(first_block, &title) {
+            title = base;
+            title_spans = Some(spans);
+        } else if let Some(b) = book_block {
             title = py::strip(&b.text).to_owned();
             title_spans = Some(inline::title_spans(&b.text, &b.spans, py::len(&title)));
         }
@@ -342,6 +348,11 @@ pub(crate) fn build_chapter_content(
             content_pos_id += CONTENT_POS_STEP;
         }
     }
+    let ruby_eids = writing::ruby_eids(
+        chunks.iter().map(|c| &c.spans[..]),
+        &mut content_pos_id,
+        CONTENT_POS_STEP,
+    );
     let sizes = Sizes::of(&chunks);
     for (ch_idx, &(start, end)) in chapter_chunk_ranges.iter().enumerate() {
         let fs = chapters[ch_idx].font_size;
@@ -465,8 +476,11 @@ pub(crate) fn build_chapter_content(
 
     // $259: a storyline per chapter (:7359).
     let mut storyline_names = Vec::new();
+    // Each chapter's readings, (id, reading): one ruby fragment per storyline (:6694).
+    let mut ruby_readings: Vec<(usize, Vec<(i64, String)>)> = Vec::new();
     for (ch_idx, &(start, end)) in chapter_chunk_ranges.iter().enumerate() {
         let sl_name = format!("l{ch_idx}");
+        let mut readings = Vec::new();
         let fs = chapters[ch_idx].font_size;
         let mut entry_styles = Vec::new();
         // A container's own `$157`: a row's or group's border (:7556), a box's (:7520).
@@ -564,7 +578,7 @@ pub(crate) fn build_chapter_content(
                 },
                 sized: !heading || heading_book.is_some(),
             };
-            let runs = inline::entry_runs(
+            let mut runs = inline::entry_runs(
                 g,
                 &mut styles,
                 &mut extra_style_names,
@@ -573,6 +587,14 @@ pub(crate) fn build_chapter_content(
                 &base,
                 &body_anchor_map,
                 &popups,
+            );
+            writing::place_rubies(
+                &chunk.spans,
+                &mut runs,
+                &ruby_eids,
+                chunk_idx,
+                ch_idx,
+                &mut readings,
             );
             entry_runs.push((link, runs));
         }
@@ -590,6 +612,9 @@ pub(crate) fn build_chapter_content(
         )?;
         g.push(fragment);
         storyline_names.push(sl_name);
+        if !readings.is_empty() {
+            ruby_readings.push((ch_idx, readings));
+        }
     }
 
     // Every allocated style is registered, and one no storyline uses is dropped (:8088).
@@ -614,6 +639,19 @@ pub(crate) fn build_chapter_content(
         story_names.retain(|n| !unused.contains(n));
         extra_style_names.retain(|n| !unused.contains(n));
     }
+    // Ruby, built after the pruning, which looks only in the storylines (:8126).
+    if !ruby_readings.is_empty() {
+        let f = writing::build_ruby_style_157(g);
+        g.push(f);
+        extra_style_names.push(writing::RUBY_STYLE_NAME.to_owned());
+    }
+    let mut ruby_names = Vec::new();
+    for (ch_idx, readings) in &ruby_readings {
+        let name = format!("ruby{ch_idx}");
+        let f = writing::build_fragment_756(g, &name, readings);
+        g.push(f);
+        ruby_names.push(name);
+    }
     // Pictures among words: their styles after the pruning (:8133).
     for (name, value) in inline_styles.into_styles() {
         g.push(Fragment::new("$157", Some(&name), value));
@@ -631,5 +669,6 @@ pub(crate) fn build_chapter_content(
         content_names,
         extra_style_names,
         anchor_names,
+        ruby_names,
     })
 }
