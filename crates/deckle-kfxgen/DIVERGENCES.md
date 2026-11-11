@@ -70,3 +70,14 @@ port reads exactly those; anything else, or an empty `emitted_family` or `locati
 (kfxlib refuses a symbol of zero length). It writes a book for an `italic` of 1, which Python
 compares equal to True, and for a `css_family` that isn't a string, which no family list
 names, so `FontTable.match` never picks it.
+
+## Landmarks and page lists of another shape
+
+The converter writes `landmarks` as `(kind, label, link key)` tuples of strings, the kind
+"toc" or "start" (`_book_landmarks`, `converter.py:8905`), and `page_list` as `(label, link
+key)` tuples of strings (`_book_page_list`, :8961). The port reads each as a list or tuple of
+that many strings; anything else is a `GenerateError::Model` naming the argument. So is a
+landmark of another kind that lands, where kfxgen raises `KeyError` (`build_fragment_389_toc`,
+`native_generator.py:3198`). kfxgen raises on a key that isn't a string (`"#" not in key`) and
+on an entry it can't unpack, but writes a book for a label of another type, which it writes as
+that Ion type, and for an entry whose kind or label isn't a string but whose key lands nowhere.

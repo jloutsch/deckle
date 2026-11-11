@@ -18,6 +18,7 @@ mod inline_pictures;
 mod metadata;
 mod nav;
 mod notes;
+mod pages;
 mod positions;
 mod py;
 mod skeleton;

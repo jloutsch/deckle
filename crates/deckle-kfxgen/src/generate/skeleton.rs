@@ -18,6 +18,7 @@ use super::images;
 use super::metadata::{BookMetadata, build_fragment_490};
 use super::nav::{NavEntry, book_headings, build_fragment_389};
 use super::notes;
+use super::pages;
 use super::positions::{
     build_fragment_264, build_fragment_265, build_fragment_550, build_position_data,
 };
@@ -100,14 +101,8 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
         .ok_or_else(|| model_err("args.chapters: a list"))?
         .len();
 
-    for (key, feature) in [
-        ("rtl", "right-to-left page order"),
-        ("landmarks", "landmarks"),
-        ("page_list", "a page list"),
-    ] {
-        if truthy(args.get(key)) {
-            return Err(Unsupported(feature));
-        }
+    if truthy(args.get("rtl")) {
+        return Err(Unsupported("right-to-left page order"));
     }
     if writing_mode == Some("vertical-rl") {
         return Err(Unsupported("vertical text"));
@@ -226,24 +221,14 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
             level: ch.toc_level,
         })
         .collect();
-    // No page list of the book's own: approximate pages, as kfxlib adds them (:5040).
-    let (pages, page_list_name) = if truthy(args.get("approximate_pages")) {
-        let pages = (1..)
-            .zip(&pos.pages)
-            .map(|(n, &(p, off))| (n.to_string(), p, off))
-            .collect();
-        (pages, "APPROXIMATE_PAGE_LIST")
-    } else {
-        (Vec::new(), "nP")
-    };
+    let book_nav = pages::read(args, &data, &pos.pages)?;
     let cover_position = chapters[0].is_cover.then(|| data.section_positions[0]);
     let f = build_fragment_389(
         &mut g,
         &nav_entries,
         cover_position,
         &book_headings(&data),
-        &pages,
-        page_list_name,
+        &book_nav,
     );
     g.push(f);
     let f = build_fragment_258(&mut g, &section_names);

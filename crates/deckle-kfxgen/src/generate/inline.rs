@@ -294,6 +294,25 @@ impl Anchors {
     }
 }
 
+/// Where each declared id first lives, as (chunk, its offset), and where each file first
+/// appears (:6728).
+pub(crate) type IdMaps<'a> = (BTreeMap<&'a str, (usize, i64)>, BTreeMap<&'a str, usize>);
+
+pub(crate) fn id_maps<'a>(anchors: impl IntoIterator<Item = &'a Anchors>) -> IdMaps<'a> {
+    let mut key_to_chunk = BTreeMap::new();
+    let mut file_to_chunk = BTreeMap::new();
+    for (i, anchors) in anchors.into_iter().enumerate() {
+        for key in &anchors.keys {
+            key_to_chunk
+                .entry(key.as_str())
+                .or_insert((i, anchors.offset(key)));
+            let file = key.split_once('#').map_or(key.as_str(), |(f, _)| f);
+            file_to_chunk.entry(file).or_insert(i);
+        }
+    }
+    (key_to_chunk, file_to_chunk)
+}
+
 /// `_dedupe_keys` (:1571).
 fn dedupe_keys(keys: &mut Vec<String>) {
     let mut seen = BTreeSet::new();
@@ -391,17 +410,7 @@ pub(crate) fn build_body_anchors(
     anchor_names: &mut Vec<String>,
     popups: &mut Popups,
 ) -> BTreeMap<String, String> {
-    let mut key_to_chunk: BTreeMap<&str, (usize, i64)> = BTreeMap::new();
-    let mut file_to_chunk: BTreeMap<&str, usize> = BTreeMap::new();
-    for (i, chunk) in chunks.iter().enumerate() {
-        for key in &chunk.anchors.keys {
-            key_to_chunk
-                .entry(key)
-                .or_insert((i, chunk.anchors.offset(key)));
-            let file = key.split_once('#').map_or(key.as_str(), |(f, _)| f);
-            file_to_chunk.entry(file).or_insert(i);
-        }
-    }
+    let (key_to_chunk, file_to_chunk) = id_maps(chunks.iter().map(|c| c.anchors));
     let targets: BTreeSet<&str> = chunks
         .iter()
         .flat_map(|c| c.spans)
