@@ -89,6 +89,8 @@ vertical|vertical_247/s746k.epub
 ruby_tcy|tcy_emphasis_748/s748k.epub
 page_list|landmarks_pages/l579-main.epub
 links|link_runs_726/s726k.epub
+floats|floats/floats-fix-source.epub
+floats_697|floats_697/F697 kfxgen source.epub
 LIST
 for epub in "$SOURCES"/*.epub; do
   calibre_model "$(basename "$epub" .epub)" "$epub" "$OUT"

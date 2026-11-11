@@ -635,6 +635,313 @@ def _frame_edges():
     ]
 
 
+def _inline_pictures():
+    """Pictures among words (#529, #565) past what the Calibre-path `floats` and `floats_697`
+    reach: every size, given height and vertical-align; a picture the book doesn't hold or
+    can't measure; runs and ids moved round them; a linked picture alone, at a location and
+    with ids, and a linked float among words, cut into entries; floats of each size, a side
+    that isn't left or right; a paragraph cut after its picture lines and at its empty lines,
+    with spacers, ids in its blank lines and a run over the cut; a chapter opening on a scene
+    break, one at 0.75 and one of plain text."""
+    p, q = "OEBPS/p.png", "OEBPS/q.png"
+    pic = _pic
+
+    def words(*parts):
+        return " ".join(parts)
+
+    lost = pic("missing.png", "lost")
+    lost_words = words(lost, "Lost", lost, "in words.")
+    long_words = " ".join(["Filler words that run on."] * 60)
+    long_text = words(long_words, pic(q, "q"), long_words, pic(p, "p", "w=2em"), long_words)
+    linked = pic(p, "linked", "w=50%")
+    linked_float = pic(p, "lf", "w=30%", "right")
+    # kfxgen #21: the second "Same words" takes the first's place, runs and ids.
+    same = words("Same words", linked_float, "Same words")
+    at_cut = "Words above.\n" + pic(q, "q") + "\nWords below."
+    blanks = "One line.\n" + "    " + "\nTwo lines.\nThree.\n\n\nFour."
+    lost_cut = lost + " Bold words.\n\nNext."
+    return [
+        _chapter(
+            "Sizes",
+            [
+                _para("Sizes", heading=True, level=1),
+                _para(words("A picture", pic(q, "q"), "among words, and again", pic(q, "q"))),
+                _para(
+                    words(
+                        "Widths",
+                        *(pic(p, "p", s) for s in ("w=50%", "w=2em", "w=24px", "w=18pt")),
+                        "end.",
+                    )
+                ),
+                _para(
+                    words(
+                        "Heights",
+                        *(pic(p, "p", s) for s in ("h=50%", "h=2em", "h=30", "h=12pt")),
+                        "end.",
+                    ),
+                    px=24.0,
+                ),
+                _para(
+                    words(
+                        "Given heights",
+                        *(
+                            pic(p, "p", s, "", h)
+                            for s, h in (
+                                ("w=2em", "h=50%"),
+                                ("w=50%", "h=50%"),
+                                ("w=24px", "h=50%"),
+                                ("w=18pt", "h=50%"),
+                                ("w=24px", "h=2em"),
+                                ("w=24px", "h=30"),
+                            )
+                        ),
+                        "end.",
+                    )
+                ),
+                _para(
+                    words(
+                        "Aligned",
+                        *(
+                            pic(q, "q", "", "", f"va={va}")
+                            for va in (
+                                "middle",
+                                "top",
+                                "bottom",
+                                "text-top",
+                                "text-bottom",
+                                "baseline",
+                                "super",
+                                "sub",
+                                "-2px",
+                                "0",
+                                "3",
+                                "1.5em",
+                                ".5rem",
+                                "10%",
+                                "2pt",
+                                "bogus",
+                            )
+                        ),
+                        "end.",
+                    )
+                ),
+                _para(
+                    lost_words,
+                    [
+                        (len(lost) + 1, 4, frozenset({"bold"})),
+                        (len(lost) + 3, len(lost) + 2, frozenset({"italic"})),
+                        (len(lost) + 6, 5, frozenset({"underline"})),
+                    ],
+                    keys=["s.xhtml#lost"],
+                ),
+                {
+                    **_para(
+                        words(pic("OEBPS/eoi.jpg", "unmeasured"), "Unmeasured, then linked",
+                              pic(q, "q"), "and", pic(q, "q"), pic(q, "q") + "."),
+                        [(len(pic("OEBPS/eoi.jpg", "unmeasured")) + 25, len(pic(q, "q")),
+                          _link("s.xhtml#lost"))],
+                        heading=True,
+                        level=2,
+                    ),
+                    "anchor_keys": ["s.xhtml#a", "s.xhtml#b", "s.xhtml#c", "s.xhtml#d"],
+                    "anchor_offsets": {"s.xhtml#a": 0, "s.xhtml#b": 30, "s.xhtml#c": 2000},
+                },
+                _para(
+                    words(lost, "Words after a lost picture", pic(q, "q"), "end."),
+                    [(len(lost) + 1, 5, frozenset({"bold"}))],
+                ),
+                _para(words("Ends on a picture", pic(q, "q"))),
+                # Its size against the main text's rounds to 0 (`_rem`).
+                _para(words("Tiny", pic(q, "q"), pic(p, "p", "w=24px")), px=0.0001),
+                _box(
+                    [_para(words("In a sized box", pic(q, "q", "w=50%"), "end."), above=0.0)],
+                    border=None,
+                    padding=None,
+                    width=50.0,
+                ),
+                _para(long_text),
+                _para(
+                    "To lost, b, d, nowhere.",
+                    [
+                        (3, 4, _link("s.xhtml#lost")),
+                        (9, 1, _link("s.xhtml#b")),
+                        (12, 1, _link("s.xhtml#d")),
+                        (15, 7, _link("l.xhtml#pending")),
+                    ],
+                ),
+            ],
+        ),
+        _chapter(
+            "Linked",
+            [
+                _para("Linked", heading=True, level=1),
+                {
+                    **_para(linked, [(0, len(linked), _link("s.xhtml#a"))]),
+                    "anchor_keys": ["l.xhtml#start", "l.xhtml#on", "l.xhtml#bare"],
+                    "anchor_offsets": {"l.xhtml#start": 0, "l.xhtml#on": 3},
+                },
+                _para(linked, [(0, len(linked), _link("nowhere.xhtml#x"))]),
+                _para(linked_float, [(0, len(linked_float), _link("s.xhtml#a"))]),
+                {
+                    **_para(
+                        same,
+                        [
+                            (11, len(linked_float), _link("s.xhtml#a")),
+                            (len(same) - 10, 4, frozenset({"bold"})),
+                        ],
+                        level=3,
+                    ),
+                    "anchor_keys": ["l.xhtml#first", "l.xhtml#second"],
+                    "anchor_offsets": {"l.xhtml#first": 2, "l.xhtml#second": len(same) - 5},
+                },
+                {
+                    **_para(pic(q, "q") + "\n" + pic(q, "q")),
+                    "anchor_keys": ["l.xhtml#lines"],
+                    "anchor_offsets": {"l.xhtml#lines": len(pic(q, "q")) + 1},
+                },
+                _para(lost, keys=["l.xhtml#pending"]),
+                _para(linked, [(0, len(linked), _link("l.xhtml#on"))]),
+                _para(
+                    "To on, first, second, bare, lines.",
+                    [
+                        (3, 2, _link("l.xhtml#on")),
+                        (7, 5, _link("l.xhtml#first")),
+                        (14, 6, _link("l.xhtml#second")),
+                        (22, 4, _link("l.xhtml#bare")),
+                        (28, 5, _link("l.xhtml#lines")),
+                    ],
+                ),
+            ],
+        ),
+        _chapter(
+            "At a location",
+            [
+                _para("x" * 109),
+                _para(linked, [(0, len(linked), _link("s.xhtml#a"))]),
+                _para(words("Two", pic(q, "q") + pic(q, "q"), "together.")),
+            ],
+            _omit_title_heading=True,
+        ),
+        _chapter(
+            "Lines",
+            [
+                _para("Lines", heading=True, level=1),
+                {
+                    **_para(
+                        at_cut,
+                        [(6, 10, frozenset({"bold"}))],
+                        level=3,
+                        below=0.5,
+                        indent=("1.5", "$308"),
+                    ),
+                    "anchor_keys": ["n.xhtml#a", "n.xhtml#b", "n.xhtml#c", "n.xhtml#d"],
+                    "anchor_offsets": {
+                        "n.xhtml#a": 12,
+                        "n.xhtml#b": 13,
+                        "n.xhtml#c": 14 + len(pic(q, "q")),
+                        "n.xhtml#d": -1,
+                    },
+                },
+                _para("Words.\n" + pic(q, "q")),
+                {
+                    **_para("Words.\n" + pic(q, "q") + "\n \n"),
+                    "anchor_keys": ["n.xhtml#k"],
+                    "anchor_offsets": {"n.xhtml#k": 8 + len(pic(q, "q"))},
+                },
+                _para(" \n\nWords after a blank start.\nAnd more."),
+                _para("Words.\n\n \u00a0\nNext."),
+                {
+                    **_para("Verse one,\nverse two.\n\n\nVerse three.", level=2, scene=2.0,
+                            above="absent"),
+                    "anchor_keys": ["n.xhtml#e", "n.xhtml#f", "n.xhtml#g", "n.xhtml#h"],
+                    "anchor_offsets": {
+                        "n.xhtml#e": 22,
+                        "n.xhtml#f": 23,
+                        "n.xhtml#g": 24,
+                        "n.xhtml#h": 99,
+                    },
+                },
+                {
+                    **_para(blanks, [(4, 12, frozenset({"italic"}))]),
+                    "anchor_keys": ["n.xhtml#i", "n.xhtml#j", "n.xhtml#l"],
+                    "anchor_offsets": {"n.xhtml#i": 12, "n.xhtml#j": 30, "n.xhtml#l": 10},
+                },
+                {
+                    **_para("Words.\n" + pic(q, "q") + "\n\nMore words."),
+                    "anchor_keys": ["n.xhtml#m"],
+                    "anchor_offsets": {"n.xhtml#m": 8 + len(pic(q, "q"))},
+                },
+                _para("Words.\n\n" + pic(q, "q") + " among more words."),
+                _para(lost_cut, [(len(lost) + 1, 4, frozenset({"bold"}))]),
+                {**_para("A tight line.\n\nAnother."), "tight": True},
+                _box([_para("In a box.\n\nCut.", above=0.0)]),
+                _para(pic(p, "left", "w=30%", "left") + "Floated words.\n\nMore words."),
+                _para(
+                    "To a, b, c, d, e, f, g, h, i, j, k, l, m.",
+                    [(3 + 3 * i, 1, _link(f"n.xhtml#{c}")) for i, c in enumerate("abcdefghijklm")],
+                ),
+            ],
+        ),
+        _chapter(
+            "Floats",
+            [
+                _para("Floats", heading=True, level=1),
+                _para(
+                    words(
+                        "Floats",
+                        *(
+                            pic(p, "f", s, side)
+                            for s, side in (
+                                ("w=2em", "left"),
+                                ("w=24px", "right"),
+                                ("w=12pt", "left"),
+                                ("h=50%", "right"),
+                                ("h=2em", "left"),
+                                ("h=30", "right"),
+                                ("h=12pt", "left"),
+                                ("", "right"),
+                                ("w=30%", "up"),
+                            )
+                        ),
+                        "end.",
+                    )
+                ),
+                _para(words("Spaces after", pic(p, "f", "w=20%", "left") + "   dropped.")),
+                _para(words("Its own side", pic(p, "f", "w=20%", "left", "fl=right"), "wins.")),
+                _para(
+                    "Ends at the float" + pic(p, "f", "w=10%", "left") + " after.",
+                    [(12, 5, _link("s.xhtml#a"))],
+                ),
+                _para(
+                    pic(p, "lead", "w=20%", "left")
+                    + words("Then", linked_float, "linked", pic(p, "f", "w=10%", "right"), "end."),
+                    [(len(pic(p, "lead", "w=20%", "left")) + 5, len(linked_float),
+                      _link("s.xhtml#a"))],
+                ),
+            ],
+        ),
+        _chapter(
+            "Scene first",
+            [_para("Opens after a scene break.", above="absent", scene=2.0)],
+        ),
+        _chapter(
+            "Small",
+            [
+                _block("Small", heading=True, level=1),
+                _block(words("Small", pic(q, "q"), pic(p, "p", "w=24px"), pic(p, "p", "h=2em"))),
+                _block(linked, [(0, len(linked), _link("s.xhtml#a"))]),
+            ],
+            font_size=0.75,
+        ),
+        {
+            "title": "Plain",
+            "text": "Plain\n\nOne line.\n \nAfter a blank line.",
+            "blocks": None,
+            "toc_level": 0,
+        },
+    ]
+
+
 _APP0 = b"\xff\xe0\x00\x04\x00\x00"
 #: The covers of `cover_paths` and `cover_page`, each also a picture in its book's text.
 _COVER = _jpeg(600, 800, _APP0)
@@ -1413,10 +1720,21 @@ ARG_BOOKS = {
     ],
     # Frames (#382, #565) past what the Calibre-path `frames` reaches.
     "frame_edges": _frame_edges(),
+    # Pictures among words, linked pictures and paragraphs cut at their picture and empty
+    # lines, past what the Calibre-path `floats` and `floats_697` reach.
+    "inline_pictures": _inline_pictures(),
 }
 
 #: The image books' other arguments.
 ARG_BOOK_EXTRAS = {
+    "inline_pictures": {
+        "images": {
+            "OEBPS/p.png": _png(600, 400),
+            "OEBPS/q.png": _png(256, 100),
+            "OEBPS/eoi.jpg": b"\xff\xd8\xff\xd9",
+        },
+        "resolved_image_refs": True,
+    },
     "box_titles": {"footnote_keys": {"s7.xhtml#cellnote"}},
     "frame_edges": {
         "images": {"OEBPS/p.png": _png(600, 400), "OEBPS/q.png": _png(256, 100)},
