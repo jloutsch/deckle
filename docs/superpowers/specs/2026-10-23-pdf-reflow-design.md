@@ -111,7 +111,9 @@ Coordinates are points, origin top left. In order:
    gap over 1.4 times the usual line step, a list item (a bullet, "1.", "(a)"), an indented first
    line, a sentence that ends on a line stopping before three quarters of its column, a change of
    size (of heading level, between large sizes, into or out of small type, or by 15% of the body
-   size or more), or a bold line followed by a plain one. Across a column or a page it runs on unless
+   size or more), or a bold line followed by a plain one. A line ends a sentence when its text
+   does, a citation set small after the full stop ("it.¹²⁻¹⁵") aside; a number set full size
+   ("3.14") doesn't end one. Across a column or a page it runs on unless
    the sentence ended. A small line of three characters or fewer with no letters (a stray
    superscript) is dropped.
 8. **Headings.** The three largest sizes at least 15% over the body size are h1–h3, counting

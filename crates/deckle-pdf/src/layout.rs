@@ -242,6 +242,22 @@ struct Line {
     text: String,
     /// The text ends with a hyphen the PDF marks as a break.
     soft_end: bool,
+    /// How many of the text's last characters (spaces aside) are set small: a citation after
+    /// the sentence's full stop ("it.¹²⁻¹⁵").
+    script_end: usize,
+}
+
+impl Line {
+    /// Whether the line ends a sentence, a citation set small after its full stop aside.
+    fn ends_sentence(&self) -> bool {
+        let mut text = self.text.trim_end();
+        for _ in 0..self.script_end {
+            let mut chars = text.chars();
+            chars.next_back();
+            text = chars.as_str().trim_end();
+        }
+        ends_sentence(text)
+    }
 }
 
 /// A line or a picture, the units reading order arranges.
@@ -411,6 +427,8 @@ fn lines_of(page: usize, p: &Page) -> (Vec<Line>, Option<f32>) {
             if !t.is_empty() {
                 let ink: Vec<&&Glyph> = run.iter().filter(|g| !g.c.is_whitespace()).collect();
                 let n = ink.len().max(1) as f32;
+                let most = ink.iter().map(|g| g.size).fold(0.0, f32::max);
+                let small = |g: &Glyph| g.size < most * SCRIPT_SIZE;
                 out.push(Line {
                     page,
                     row: row_top,
@@ -428,18 +446,11 @@ fn lines_of(page: usize, p: &Page) -> (Vec<Line>, Option<f32>) {
                         .expect("a run has glyphs"),
                     // The size of its full-size text: a last line that's mostly a citation
                     // ("it.¹²⁻¹⁵") is the size of its sentence.
-                    size: {
-                        let most = ink.iter().map(|g| g.size).fold(0.0, f32::max);
-                        median(
-                            ink.iter()
-                                .map(|g| g.size)
-                                .filter(|&s| s >= most * SCRIPT_SIZE)
-                                .collect(),
-                        )
-                    },
+                    size: median(ink.iter().filter(|g| !small(g)).map(|g| g.size).collect()),
                     bold: ink.iter().filter(|g| g.bold).count() as f32 / n > 0.6,
                     math: ink.iter().filter(|g| g.math).count() as f32 / n,
                     soft_end: ink.last().is_some_and(|g| g.soft_hyphen),
+                    script_end: ink.iter().rev().take_while(|g| small(g)).count(),
                     text: t,
                 });
             }
@@ -1316,7 +1327,7 @@ fn paragraphs(flow: &[(usize, Vec<Item>)], body: f32, heights: &[f32]) -> Vec<Bl
             }
             let lone_bold = last.bold
                 && text.chars().count() < 100
-                && !ends_sentence(&text)
+                && !last.ends_sentence()
                 && !text.contains(". ");
             // Large type that runs on (an abstract, a paper's list of authors) is a paragraph
             // set large, not a heading.
@@ -1367,7 +1378,9 @@ fn paragraphs(flow: &[(usize, Vec<Item>)], body: f32, heights: &[f32]) -> Vec<Bl
                     // An image or table in the middle of a sentence floats ahead of the
                     // paragraph, which carries on after it; an equation stays where it is.
                     let open = *kind != Figure::Equation
-                        && para.as_ref().is_some_and(|(t, _, _)| !ends_sentence(t));
+                        && para
+                            .as_ref()
+                            .is_some_and(|(_, last, _)| !last.ends_sentence());
                     let held = if open { para.take() } else { None };
                     last = Some((*page_no, rect.y1));
                     flush(&mut para, &mut out, first);
@@ -1427,11 +1440,11 @@ fn paragraphs(flow: &[(usize, Vec<Item>)], body: f32, heights: &[f32]) -> Vec<Bl
                         && prev.rect.x0 <= col_left + 1.0
                         // A list item's own lines hang under its first.
                         && !(lines_in_para == 1 && starts_item(&prev.text)))
-                    || (ends_sentence(&prev.text) && short(prev))
+                    || (prev.ends_sentence() && short(prev))
                     || (prev.bold && !l.bold)
             } else {
                 // Across a column or page: the sentence decides.
-                ends_sentence(&prev.text) && !l.text.starts_with(|c: char| c.is_lowercase())
+                prev.ends_sentence() && !l.text.starts_with(|c: char| c.is_lowercase())
             };
             if new_para {
                 flush(&mut para, &mut out, first);
@@ -2014,7 +2027,28 @@ mod tests {
         text_at(&mut g, 72.0, 124.0, "Next sentence goes on and on here.");
         let (b, _) = blocks(&[page(g)]);
         let t = texts(&b);
-        assert!(t[0].contains("of the column it.12-15,18"), "{t:?}");
+        assert_eq!(
+            t,
+            [
+                "A sentence that runs the whole width of the column it.12-15,18",
+                "Next sentence goes on and on here."
+            ]
+        );
+    }
+
+    #[test]
+    fn a_number_set_full_size_at_a_line_end_does_not_end_the_sentence() {
+        let mut g = Vec::new();
+        text_at(
+            &mut g,
+            72.0,
+            100.0,
+            "A sentence that runs the whole width of the column",
+        );
+        text_at(&mut g, 72.0, 112.0, "pi is 3.14");
+        text_at(&mut g, 72.0, 124.0, "Roughly, and it goes on here.");
+        let (b, _) = blocks(&[page(g)]);
+        assert_eq!(texts(&b).len(), 1, "{:?}", texts(&b));
     }
 
     #[test]
