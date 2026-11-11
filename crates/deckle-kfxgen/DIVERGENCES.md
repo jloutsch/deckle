@@ -120,3 +120,11 @@ None and `text` an ARGB int (`converter.py:2653`). The port reads exactly that; 
 is a `GenerateError::Model` naming the runs, where kfxgen writes a value of another type as
 that Ion type or raises measuring it against the page. A run carrying two link colours is
 `GenerateError::Unsupported`: kfxgen would take the first in set order.
+
+## Contents entries of another shape
+
+The converter writes a chapter's `sub_entries` as dicts of a `title` string, a `key` string
+or None and a `level` int (`converter.py:7705`, #363), and a contents line's `target_key` as a
+string or None (:8665). The port reads exactly those; anything else is a `GenerateError::Model`
+naming the entry, where kfxgen opens the chapter for a key of another type, writes a title of
+another type as that Ion type, and raises on a missing key or title.

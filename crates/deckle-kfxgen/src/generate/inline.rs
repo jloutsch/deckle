@@ -255,6 +255,8 @@ pub(crate) struct TocLink {
     pub text: String,
     pub target: i64,
     pub level: i64,
+    /// A place in the chapter, landed on when a contents entry names it (#363).
+    pub key: Option<String>,
 }
 
 impl TocLink {
@@ -286,6 +288,11 @@ impl TocLink {
             },
             target: int(Some(target), "target_chapter_idx")?,
             level,
+            key: match link.get("target_key") {
+                None | Some(PyValue::None) => None,
+                Some(PyValue::Str(k)) => Some(k.clone()),
+                Some(_) => return Err(model_err(format!("{at}.target_key: a string or None"))),
+            },
         })
     }
 }
@@ -516,12 +523,14 @@ pub(crate) fn build_body_anchors(
     body_anchor_map
 }
 
-/// A contents line's `$266` (:6765): the start of the chapter it names.
+/// A contents line's `$266` (:6765): the start of the chapter it names, or the place in it
+/// its key names (#363).
 pub(crate) fn build_toc_anchor(
     g: &mut Generator,
     anchor_names: &mut Vec<String>,
     chapter_start_positions: &[i64],
     target: i64,
+    place: Option<(i64, i64)>,
 ) -> Result<String, GenerateError> {
     let n = chapter_start_positions.len() as i64;
     // `target < len(...)`, then Python's indexing: a negative index counts from the end.
@@ -536,8 +545,9 @@ pub(crate) fn build_toc_anchor(
         .ok()
         .and_then(|i| chapter_start_positions.get(i))
         .ok_or_else(|| model_err("toc_links: a target_chapter_idx out of range"))?;
+    let (position, offset) = place.unwrap_or((position, 0));
     let name = format!("toc_anchor_{}", anchor_names.len());
-    let f = build_fragment_266(g, &name, position, 0);
+    let f = build_fragment_266(g, &name, position, offset);
     g.push(f);
     anchor_names.push(name.clone());
     Ok(name)

@@ -1,18 +1,99 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The navigation, `$389` (`build_fragment_389_toc`, `native_generator.py:3066`): the book's
 //! headings, its contents, its pages, its cover and its landmarks.
+use std::collections::BTreeMap;
+
 use deckle_kfx::fragment::Fragment;
 use deckle_kfx::ion::Value;
 
+use super::chapters::Chapter;
+use super::chunks::Chunk;
+use super::inline::id_maps;
 use super::pages::BookNav;
 use super::text::ChapterData;
-use super::{Generator, annotated, place, st, sym};
+use super::{GenerateError, Generator, annotated, model_err, place, st, sym};
+use crate::pyvalue::PyValue;
 
-/// A contents entry: a chapter's title, where it starts and its depth.
+/// A contents entry: a chapter's title, where it starts and its depth, or a place inside it.
 pub(crate) struct NavEntry {
     pub title: String,
     pub position: i64,
+    pub offset: i64,
     pub level: i64,
+}
+
+/// A chapter's `sub_entries` (#363): a contents entry naming a place in the chapter, not a
+/// chapter of its own.
+pub(crate) struct SubEntry {
+    pub title: String,
+    pub key: Option<String>,
+    pub level: i64,
+}
+
+/// A chapter's `sub_entries`: dicts of a `title`, a `key` (None for none) and a `level`
+/// (0 when absent).
+pub(crate) fn read_sub_entries(
+    v: Option<&PyValue>,
+    at: &str,
+) -> Result<Vec<SubEntry>, GenerateError> {
+    let Some(v) = v.filter(|v| v.is_truthy()) else {
+        return Ok(Vec::new());
+    };
+    let list = v
+        .as_list()
+        .ok_or_else(|| model_err(format!("{at}: a list")))?;
+    list.iter()
+        .enumerate()
+        .map(|(i, sub)| {
+            let at = format!("{at}[{i}]");
+            Ok(SubEntry {
+                title: match sub.get("title") {
+                    Some(PyValue::Str(t)) => t.clone(),
+                    _ => return Err(model_err(format!("{at}.title: a string"))),
+                },
+                key: match sub.get("key") {
+                    Some(PyValue::None) => None,
+                    Some(PyValue::Str(k)) => Some(k.clone()),
+                    _ => return Err(model_err(format!("{at}.key: a string or None"))),
+                },
+                level: match sub.get("level") {
+                    None => 0,
+                    Some(PyValue::Int(n)) => *n,
+                    Some(_) => return Err(model_err(format!("{at}.level: an int"))),
+                },
+            })
+        })
+        .collect()
+}
+
+/// `key_positions` (:6741): the position and offset each contents entry's key lands on. A
+/// leaf, as for a chapter's start; past a container, the leaf's start. A key nothing
+/// declares is left out.
+pub(crate) fn key_positions(
+    chapters: &[Chapter],
+    chunks: &[Chunk],
+    chunk_positions: &[Option<i64>],
+) -> BTreeMap<String, (i64, i64)> {
+    let (key_to_chunk, _) = id_maps(chunks.iter().map(|c| &c.anchors));
+    let mut out = BTreeMap::new();
+    for sub in chapters.iter().flat_map(|ch| &ch.sub_entries) {
+        let Some((key, &(idx, offset))) = sub
+            .key
+            .as_deref()
+            .and_then(|k| Some((k, key_to_chunk.get(k)?)))
+        else {
+            continue;
+        };
+        let leaf = (idx..chunks.len())
+            .find(|&i| chunks[i].is_leaf())
+            .unwrap_or(idx);
+        let position = chunk_positions[leaf].expect("ids are on entries that take a position");
+        out.insert(
+            key.to_owned(),
+            (position, if leaf == idx { offset } else { 0 }),
+        );
+    }
+    out
 }
 
 /// `_book_headings` (:1850): (position, level) of the book's `<h1>`–`<h6>` in reading order.
@@ -82,7 +163,7 @@ fn nav_unit(entries: &[NavEntry], children: &[Vec<usize>], i: usize) -> Value {
     let entry = &entries[i];
     let Value::Struct(mut fields) = st([
         ("$241", st([("$244", Value::string(&entry.title))])),
-        ("$246", place(entry.position, 0)),
+        ("$246", place(entry.position, entry.offset)),
     ]) else {
         unreachable!()
     };

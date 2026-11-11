@@ -23,6 +23,22 @@ fn link_colour_runs_matches_kfxgen() {
     matches_kfxgen("link_colour_runs");
 }
 
+/// kfxgen's `test_books/navigation/nav-kfxgen.epub`: an NCX whose entries name places inside
+/// chapters (#363), one of no title and one of no place, and a contents page's line landing on
+/// one.
+#[test]
+fn navigation_matches_kfxgen() {
+    matches_kfxgen("navigation");
+}
+
+/// Contents entries inside a chapter past what a book reaches: part-way into a paragraph, on
+/// a table and a box, declared nowhere, of no key, nested, in a chapter left out of the
+/// contents; a contents page's lines landing on them (#363).
+#[test]
+fn contents_entries_matches_kfxgen() {
+    matches_kfxgen("contents_entries");
+}
+
 fn s(v: &str) -> PyValue {
     PyValue::Str(v.into())
 }
@@ -70,4 +86,49 @@ fn a_link_colour_of_another_shape_is_a_model_error() {
         ]),
         Err(GenerateError::Unsupported("a run of two link colours"))
     ));
+}
+
+/// A contents entry kfxgen can't read, or a contents line's key that isn't a string, is a
+/// model error naming it.
+#[test]
+fn a_contents_entry_of_another_shape_is_a_model_error() {
+    let dir = deckle_kfx::fixtures::kfxgen("models/contents_entries");
+    type Edit = fn(&mut PyValue);
+    let edits: [(&str, Edit); 5] = [
+        ("sub_entries[0].key", |sub| {
+            let PyValue::Dict(pairs) = sub else { panic!() };
+            pairs.retain(|(k, _)| k.as_str() != Some("key"));
+        }),
+        ("sub_entries[0].key", |sub| {
+            *entry(sub, "key") = PyValue::Int(1)
+        }),
+        ("sub_entries[0].title", |sub| {
+            *entry(sub, "title") = PyValue::None
+        }),
+        ("sub_entries[0].level", |sub| {
+            *entry(sub, "level") = PyValue::None
+        }),
+        ("sub_entries", |sub| *sub = s("x")),
+    ];
+    for (want, edit) in edits {
+        let mut model = load_model(&dir).unwrap();
+        let chapter = item(entry(&mut model.args, "chapters"), 1);
+        let subs = entry(chapter, "sub_entries");
+        if want == "sub_entries" {
+            edit(subs);
+        } else {
+            edit(item(subs, 0));
+        }
+        match generate(&model) {
+            Err(GenerateError::Model(m)) => assert!(m.contains(want), "{want}: {m}"),
+            other => panic!("{want}: {other:?}"),
+        }
+    }
+    let mut model = load_model(&dir).unwrap();
+    let contents = item(entry(&mut model.args, "chapters"), 0);
+    *entry(item(entry(contents, "toc_links"), 1), "target_key") = PyValue::Int(1);
+    match generate(&model) {
+        Err(GenerateError::Model(m)) => assert!(m.contains("toc_links[1].target_key"), "{m}"),
+        other => panic!("{other:?}"),
+    }
 }

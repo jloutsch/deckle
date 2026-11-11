@@ -18,8 +18,9 @@ use super::fragments::{
     ContentRef, build_fragment_145, build_fragment_259, pack_content_fragments, style_refs,
 };
 use super::images::{self, ImageStyles, Images, Picture};
-use super::inline::{self, ChunkLinks, RunBase};
+use super::inline::{self, ChunkLinks, RunBase, TocLink};
 use super::inline_picture_entries::{self, InlineStyles};
+use super::nav;
 use super::notes::{self, Popups};
 use super::styles::{Style157, StyleArgs, Styles};
 use super::table_chunks;
@@ -54,6 +55,8 @@ pub(crate) struct ChapterData {
     pub anchor_names: Vec<String>,
     /// The chapters' ruby fragments (#236).
     pub ruby_names: Vec<String>,
+    /// Where each contents entry's key lands, as (position, offset) (#363).
+    pub key_positions: BTreeMap<String, (i64, i64)>,
 }
 
 /// `_build_chapter_content` (:5396).
@@ -67,8 +70,8 @@ pub(crate) fn build_chapter_content(
     let mut chunks: Vec<Chunk> = Vec::new();
     let mut chapter_chunk_ranges = Vec::new();
     let mut heading_chunks = BTreeSet::new();
-    // chunk index -> (target chapter, depth in the contents) (:5451).
-    let mut toc_link_chunks: BTreeMap<usize, (i64, i64)> = BTreeMap::new();
+    // chunk index -> its contents line (:5451).
+    let mut toc_link_chunks: BTreeMap<usize, &TocLink> = BTreeMap::new();
 
     for chapter in chapters {
         let start_idx = chunks.len();
@@ -150,7 +153,7 @@ pub(crate) fn build_chapter_content(
 
         if toc {
             for link in &chapter.toc_links {
-                toc_link_chunks.insert(chunks.len(), (link.target, link.level));
+                toc_link_chunks.insert(chunks.len(), link);
                 chunks.push(Chunk {
                     style: page_bidi.clone().map(|bidi| BlockStyle {
                         bidi: Some(bidi),
@@ -374,12 +377,24 @@ pub(crate) fn build_chapter_content(
         })
         .collect();
 
+    let key_positions = nav::key_positions(chapters, &chunks, &chunk_positions);
+
     // $266: a contents line's target (:6763), then each link target the book declares.
     let mut anchor_names = Vec::new();
     let mut chunk_anchor_map = BTreeMap::new();
-    for (&idx, &(target, _)) in &toc_link_chunks {
-        let name =
-            inline::build_toc_anchor(g, &mut anchor_names, &chapter_start_positions, target)?;
+    for (&idx, link) in &toc_link_chunks {
+        let place = link
+            .key
+            .as_ref()
+            .and_then(|k| key_positions.get(k))
+            .copied();
+        let name = inline::build_toc_anchor(
+            g,
+            &mut anchor_names,
+            &chapter_start_positions,
+            link.target,
+            place,
+        )?;
         chunk_anchor_map.insert(idx, name);
     }
     let links: Vec<ChunkLinks> = chunks
@@ -539,7 +554,7 @@ pub(crate) fn build_chapter_content(
                 }
                 (_, Some(anchor)) => {
                     // A contents line: the page's style, its link underlined (:7707).
-                    let (_, level) = toc_link_chunks[&chunk_idx];
+                    let level = toc_link_chunks[&chunk_idx].level;
                     link = Some((
                         anchor.clone(),
                         toc_link_style_names[ch_idx].clone().unwrap_or_default(),
@@ -668,5 +683,6 @@ pub(crate) fn build_chapter_content(
         extra_style_names,
         anchor_names,
         ruby_names,
+        key_positions,
     })
 }

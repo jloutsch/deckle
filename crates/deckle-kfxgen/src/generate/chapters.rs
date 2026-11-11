@@ -7,6 +7,7 @@ use super::block_styles::{BlockStyle, number, read_block_style};
 use super::boxes::{BoxBlock, RuleStyle, read_box, read_rule};
 use super::images;
 use super::inline::{Anchors, Span, TocLink, read_spans};
+use super::nav::{SubEntry, read_sub_entries};
 use super::tables::{self, Table};
 use super::writing::Bidi;
 use super::{GenerateError, model_err};
@@ -15,10 +16,7 @@ use crate::pyvalue::{PyValue, truthy};
 use GenerateError::Unsupported;
 
 /// Chapter keys whose value, when true, takes kfxgen down a path not ported yet.
-const CHAPTER_UNPORTED: [(&str, &str); 2] = [
-    ("sub_entries", "contents entries inside a chapter"),
-    ("_is_cover", "a cover chapter in the arguments"),
-];
+const CHAPTER_UNPORTED: [(&str, &str); 1] = [("_is_cover", "a cover chapter in the arguments")];
 
 /// Block keys whose value, when true, takes kfxgen down a path not ported yet.
 const BLOCK_UNPORTED: [(&str, &str); 7] = [
@@ -42,6 +40,8 @@ pub(crate) struct Chapter {
     /// The keys of blocks the converter replaced (#436).
     pub anchor_keys: Vec<String>,
     pub toc_links: Vec<TocLink>,
+    /// Contents entries that name a place in the chapter (#363).
+    pub sub_entries: Vec<SubEntry>,
     /// Pictures of a contents page the converter replaced, as tokens (#117).
     pub preserved_images: Vec<String>,
     /// kfxgen's cover page (#32): no heading, not in the contents.
@@ -67,6 +67,7 @@ impl Chapter {
             heading_level: None,
             anchor_keys: Vec::new(),
             toc_links: Vec::new(),
+            sub_entries: Vec::new(),
             preserved_images: Vec::new(),
             is_cover: true,
             omit_title_heading: false,
@@ -222,6 +223,7 @@ fn read_chapter(ch: &PyValue, at: &str) -> Result<Chapter, GenerateError> {
         heading_level,
         anchor_keys: Anchors::read(ch, at)?.keys,
         toc_links,
+        sub_entries: read_sub_entries(ch.get("sub_entries"), &format!("{at}.sub_entries"))?,
         preserved_images,
         is_cover: false,
         omit_title_heading: truthy(ch.get("_omit_title_heading")),

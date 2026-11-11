@@ -1439,6 +1439,51 @@ def _link_colour_runs():
     ]
 
 
+def _contents_entries():
+    """Contents entries that name a place inside a chapter (#363), and a rebuilt contents
+    page's lines that land on them."""
+    return [
+        {
+            "title": "Contents",
+            "text": "Contents",
+            "toc_level": 0,
+            "toc_links": [
+                {"text": "Places", "target_chapter_idx": 1, "level": 0},
+                {"text": "Middle", "target_chapter_idx": 1, "level": 1, "target_key": "p.xhtml#mid"},
+                {"text": "Table", "target_chapter_idx": 1, "level": 1, "target_key": "p.xhtml#tbl"},
+                {"text": "Lost", "target_chapter_idx": 2, "level": 1, "target_key": "p.xhtml#lost"},
+            ],
+            "anchor_keys": ["toc.xhtml"],
+        },
+        _chapter(
+            "Places",
+            [
+                _block("Places", heading=True, level=1),
+                _block("Words then the middle.", keys=["p.xhtml#mid"], offsets={"p.xhtml#mid": 15}),
+                _table(
+                    [_row([_cell("Cell one"), _cell("Cell two")])],
+                    block_keys=["p.xhtml#tbl"],
+                ),
+                _box([_block("Boxed words.")], keys=["p.xhtml#box"]),
+            ],
+            sub_entries=[
+                {"title": "The middle", "key": "p.xhtml#mid", "level": 1},
+                {"title": "The table", "key": "p.xhtml#tbl", "level": 2},
+                {"title": "The box", "key": "p.xhtml#box", "level": 1},
+                {"title": "Nowhere", "key": "p.xhtml#lost", "level": 1},
+                {"title": "No key", "key": None},
+            ],
+        ),
+        _chapter(
+            "Hidden",
+            [_block("Hidden words here.", keys=["h.xhtml#in"], offsets={"h.xhtml#in": 7})],
+            _omit_from_toc=True,
+            sub_entries=[{"title": "Inside hidden", "key": "h.xhtml#in", "level": 0}],
+        ),
+        _chapter("After", [_block("After words.")]),
+    ]
+
+
 _APP0 =b"\xff\xe0\x00\x04\x00\x00"
 #: The covers of `cover_paths` and `cover_page`, each also a picture in its book's text.
 _COVER = _jpeg(600, 800, _APP0)
@@ -2280,6 +2325,11 @@ ARG_BOOKS = {
     # colour found and not, none for it, a run inside a link not found, on the page, in a
     # filled box and cell and on a box filled 0.
     "link_colour_runs": _link_colour_runs(),
+    # Contents entries inside a chapter (#363) past what the Calibre-path `navigation`
+    # reaches: places on a paragraph part-way in, on a table and a box (their first entry's
+    # start), declared nowhere, of no key; levels nested and left out; in a chapter left out
+    # of the contents; a rebuilt contents page's lines landing on them.
+    "contents_entries": _contents_entries(),
 }
 
 #: The image books' other arguments.

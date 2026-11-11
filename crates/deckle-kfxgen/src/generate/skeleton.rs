@@ -202,16 +202,32 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
     declare_writing_mode_features(&mut g, writing_mode, &chapters, base_language == "ja");
 
     // The cover's page, and a chapter its caller leaves out, are in no contents (:4988).
-    let nav_entries: Vec<NavEntry> = chapters
-        .iter()
-        .zip(&data.chapter_start_positions)
-        .filter(|(ch, _)| !ch.omit_from_toc)
-        .map(|(ch, &position)| NavEntry {
-            title: ch.title.clone(),
-            position,
-            level: ch.toc_level,
-        })
-        .collect();
+    let mut nav_entries = Vec::new();
+    for (ch, &position) in chapters.iter().zip(&data.chapter_start_positions) {
+        if !ch.omit_from_toc {
+            nav_entries.push(NavEntry {
+                title: ch.title.clone(),
+                position,
+                offset: 0,
+                level: ch.toc_level,
+            });
+        }
+        // Entries that name a place in the chapter (#363). One that can't be found opens it.
+        for sub in &ch.sub_entries {
+            let (position, offset) = sub
+                .key
+                .as_ref()
+                .and_then(|k| data.key_positions.get(k))
+                .copied()
+                .unwrap_or((position, 0));
+            nav_entries.push(NavEntry {
+                title: sub.title.clone(),
+                position,
+                offset,
+                level: sub.level,
+            });
+        }
+    }
     let book_nav = pages::read(args, &data, &pos.pages)?;
     let cover_position = chapters[0].is_cover.then(|| data.section_positions[0]);
     let f = build_fragment_389(
