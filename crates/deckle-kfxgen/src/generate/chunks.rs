@@ -2,29 +2,38 @@
 //! A chapter's entries: [`Chunk`], one per paragraph, picture or contents line, and
 //! `_emit_paragraph`'s paragraph of text.
 
+use super::block_styles::{BlockStyle, HeadingStyle, keep_space};
+use super::boxes::{BoxOpen, RuleStyle};
 use super::chapters::Block;
 use super::images::{self, Images, Picture};
 use super::inline::{self, Anchors, Span};
+use super::styles::LINE_EM;
 use super::table_chunks::{CellInfo, TableOpen};
 use super::tables::Border;
 use super::{GenerateError, py};
 
-use GenerateError::Unsupported;
-
 /// `_ASCII_SPACE` (:1061): a paragraph's edges are trimmed of these only.
 const ASCII_SPACE: [char; 5] = [' ', '\t', '\n', '\r', '\x0c'];
 
-/// One entry of a storyline: a paragraph of text, a picture, or a table container's start
-/// or end.
+/// One entry of a storyline: a paragraph of text, a picture, a rule, or a table's or box's
+/// container's start or end.
 pub(crate) struct Chunk {
     pub text: String,
     pub heading_level: Option<i64>,
     pub spans: Vec<Span>,
     pub anchors: Anchors,
     pub picture: Option<Picture>,
+    pub rule: Option<RuleStyle>,
     pub marker: Option<Marker>,
     /// A text entry in a table cell.
     pub in_cell: Option<InCell>,
+    /// Its block's `block_style`; a cell's for a cell's text or container.
+    pub style: Option<BlockStyle>,
+    /// In ems: the book's margins (#553), a scene break's space (#230).
+    pub space_above: Option<f64>,
+    pub space_below: Option<f64>,
+    /// kfxgen's heading: what prints in it of the book's own (#490).
+    pub heading: HeadingStyle,
 }
 
 /// A table container's (#219) `open`, which takes a position, or `close`, which takes none.
@@ -40,6 +49,8 @@ pub(crate) enum Node {
     Row(Option<Border>),
     /// A cell holding several blocks, or none.
     Cell(CellInfo),
+    /// A box (#238).
+    Box(BoxOpen),
 }
 
 pub(crate) enum InCell {
@@ -57,8 +68,13 @@ impl Chunk {
             spans: Vec::new(),
             anchors: Anchors::default(),
             picture: None,
+            rule: None,
             marker: None,
             in_cell: None,
+            style: None,
+            space_above: None,
+            space_below: None,
+            heading: HeadingStyle::default(),
         }
     }
 
@@ -69,9 +85,13 @@ impl Chunk {
         }
     }
 
-    /// A text or picture entry, not a container's marker: what a chapter's start and an id
-    /// can land on.
+    /// A text or picture entry: what a chapter's start lands on (:6597, :6713).
     pub(crate) fn is_leaf(&self) -> bool {
+        self.marker.is_none() && self.rule.is_none()
+    }
+
+    /// Not a container's marker: what `_emitted_content` (:5940) counts, ids can go on.
+    pub(crate) fn is_content(&self) -> bool {
         self.marker.is_none()
     }
 
@@ -85,13 +105,32 @@ impl Chunk {
     }
 }
 
-/// `_print_book_heading` (:1477): kfxgen's heading takes the place of the book's. With no
-/// style, no sized runs and no margins, its runs and level carry over.
+/// `_print_book_heading` (:1477): kfxgen's heading takes the place of the book's: its runs,
+/// its style (#490), the space above and below it (#665) and its level (#461). With no
+/// sized runs.
 pub(crate) fn print_book_heading(heading: &mut Chunk, block: &Block, title: &str) {
     heading.spans = inline::title_spans(&block.text, &block.spans, py::len(title));
+    heading.heading.book_style = block.style.clone();
+    keep_space(
+        &mut heading.heading,
+        block.style.as_ref(),
+        block.margin_above,
+        block.margin_below,
+    );
     if let Some(level) = block.heading_level {
         heading.heading_level = Some(level);
     }
+}
+
+/// `_space_to_write` (:1080): a scene break's space above, or None to keep kfxgen's own when
+/// that is as much: a line above an unindented paragraph, none above an indented one.
+fn space_to_write(block: &Block, space_above: f64) -> Option<f64> {
+    if space_above == 0.0 {
+        return None;
+    }
+    let indented = block.style.as_ref().is_some_and(|b| b.indent.is_some());
+    let own = if indented { 0.0 } else { LINE_EM };
+    (space_above > own + 0.01).then_some(space_above)
 }
 
 /// `_emit_paragraph` (:5745) for a paragraph of text alone, one chunk, or of pictures alone,
@@ -105,21 +144,36 @@ pub(crate) fn emit_paragraph(
 ) -> Result<Vec<String>, GenerateError> {
     let para = block.text.trim_matches(ASCII_SPACE);
     if images::has_picture(para) {
+        // A picture has no text for a level, a style or space to go on (:5862).
         return images::emit_picture_paragraph(para, block, images, chunks);
-    }
-    // A chapter's first paragraph loses its space above (:6496).
-    if block.space_above && !first_in_chapter {
-        return Err(Unsupported("space above a paragraph"));
     }
     if py::strip(para).is_empty() {
         return Ok(Vec::new());
     }
+    // A chapter's first paragraph opens a page or sits under its heading (#230, :6496).
+    let scene = if first_in_chapter {
+        0.0
+    } else {
+        block.space_above
+    };
+    let space_above = if block.tight {
+        Some(0.0)
+    } else {
+        match block.margin_above {
+            // The book's margins, as Previewer writes them (#553).
+            Some(margin) => margin,
+            None => space_to_write(block, scene),
+        }
+    };
     // Spans and offsets count from the block's text, not the trimmed paragraph (:5530).
     let (spans, anchors) = inline::place(&block.spans, &block.anchors, py::len(para) as i64);
     chunks.push(Chunk {
         heading_level: block.heading_level,
         spans,
         anchors,
+        style: block.style.clone(),
+        space_above,
+        space_below: (block.margin_below != 0.0).then_some(block.margin_below),
         ..Chunk::text(para.to_owned())
     });
     Ok(Vec::new())

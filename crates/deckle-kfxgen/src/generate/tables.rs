@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 
+use super::block_styles::{BlockStyle, read_block_style};
 use super::chapters::Block;
 use super::images;
 use super::inline::{Anchors, Span, read_spans};
@@ -69,6 +70,7 @@ pub(crate) struct Cell {
     pub background: Option<i64>,
     /// A cell holding several blocks (#261).
     pub paragraphs: Vec<Paragraph>,
+    pub style: Option<BlockStyle>,
 }
 
 #[derive(Clone)]
@@ -101,7 +103,7 @@ fn opt<T>(
 const SIDES: [&str; 4] = ["top", "right", "bottom", "left"];
 
 /// A dict of sides, sorted, as `_border_key` (:1986) keys it; None when empty.
-fn read_sides<T>(
+pub(crate) fn read_sides<T>(
     v: Option<&PyValue>,
     at: &str,
     expected: &str,
@@ -125,7 +127,7 @@ fn read_sides<T>(
     Ok((!out.is_empty()).then_some(out))
 }
 
-fn read_border(v: Option<&PyValue>, at: &str) -> Result<Option<Border>, GenerateError> {
+pub(crate) fn read_border(v: Option<&PyValue>, at: &str) -> Result<Option<Border>, GenerateError> {
     read_sides(v, at, "{side: (style, width, colour)}", |spec| {
         let [kind, width, colour] = spec.as_list()? else {
             return None;
@@ -138,7 +140,10 @@ fn read_border(v: Option<&PyValue>, at: &str) -> Result<Option<Border>, Generate
     })
 }
 
-fn read_padding(v: Option<&PyValue>, at: &str) -> Result<Option<Padding>, GenerateError> {
+pub(crate) fn read_padding(
+    v: Option<&PyValue>,
+    at: &str,
+) -> Result<Option<Padding>, GenerateError> {
     read_sides(v, at, "{side: ems or (\"%\", n)}", |p| match p {
         PyValue::Tuple(_) | PyValue::List(_) => Some(Pad::Pct(number(p.as_list()?.get(1)?)?)),
         p => Some(Pad::Em(number(p)?)),
@@ -151,8 +156,7 @@ fn read_keys(d: &PyValue, at: &str) -> Result<Vec<String>, GenerateError> {
 
 /// A block of type "table".
 pub(crate) fn read_table_block(b: &PyValue, at: &str) -> Result<Block, GenerateError> {
-    // Read by `_emit_table_chunks` (#381, #680), `page_bidi` and `_chapter_writing_mode`
-    // (:942), and not ported.
+    // Read by `_emit_table_chunks` (#381, #680) and `page_bidi`, and not ported.
     if truthy(b.get("clear")) {
         return Err(Unsupported("clearing floats"));
     }
@@ -161,9 +165,6 @@ pub(crate) fn read_table_block(b: &PyValue, at: &str) -> Result<Block, GenerateE
     }
     if truthy(b.get("block_style")) {
         return Err(Unsupported("block styles"));
-    }
-    if truthy(b.get("writing_mode")) {
-        return Err(Unsupported("vertical text"));
     }
     let text = match b.get("text") {
         Some(PyValue::Str(s)) => s.clone(),
@@ -227,13 +228,9 @@ pub(crate) fn read_table_block(b: &PyValue, at: &str) -> Result<Block, GenerateE
         }
     }
     Ok(Block {
-        text,
-        heading: false,
-        heading_level: None,
-        space_above: false,
-        spans: Vec::new(),
         anchors: Anchors::read(b, at)?,
         table: Some(Box::new(table)),
+        ..Block::plain(text)
     })
 }
 
@@ -268,9 +265,6 @@ fn read_row(r: &PyValue, at: &str) -> Result<Row, GenerateError> {
 }
 
 fn read_cell(c: &PyValue, at: &str) -> Result<Cell, GenerateError> {
-    if truthy(c.get("block_style")) {
-        return Err(Unsupported("block styles"));
-    }
     let text = match c.get("text") {
         Some(PyValue::None) => String::new(),
         Some(PyValue::Str(s)) => s.clone(),
@@ -321,6 +315,7 @@ fn read_cell(c: &PyValue, at: &str) -> Result<Cell, GenerateError> {
             model_err(format!("{at}.background: an ARGB int"))
         })?,
         paragraphs,
+        style: read_block_style(c.get("block_style"), at)?,
     })
 }
 

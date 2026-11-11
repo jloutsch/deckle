@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Whether and how a chapter's title is already in its text: kfxgen's heading takes the title's
 //! place, so the text and blocks are cut of it (`_normalize_title` :827 and its callers).
+use super::boxes::{drop_edge_rules, unboxed};
 use super::chapters::Block;
-use super::{py, tables};
+use super::{GenerateError, py, tables};
+
+use GenerateError::Unsupported;
 
 /// `_MAX_SPLIT_TITLE_BLOCKS` (:824).
 pub(crate) const MAX_SPLIT_TITLE_BLOCKS: usize = 3;
@@ -38,14 +41,15 @@ pub(crate) fn opens_with_title(text: &str, title: &str) -> bool {
     !(py::is_alpha(last) && matches!(next, '\'' | '\u{2019}') && after.is_some_and(py::is_alpha))
 }
 
-/// `_label_blocks` (:1269): how many of the first blocks `title` spells out, or 0; a table
-/// among them says 0. With no rules (`_drop_edge_rules`) and no equations (`label_texts`).
-pub(crate) fn label_blocks(blocks: &[Block], title: &str) -> usize {
+/// `_label_blocks` (:1269): how many of the first blocks `title` spells out, or 0; a table,
+/// a rule or a box among them says 0. With no equations (`label_texts`).
+pub(crate) fn label_blocks(blocks: &[&Block], title: &str) -> usize {
     let want = py::without_spaces(title);
     let target = normalize_title(title);
     let mut joined = String::new();
+    let blocks = drop_edge_rules(blocks);
     for (i, block) in blocks.iter().take(MAX_SPLIT_TITLE_BLOCKS).enumerate() {
-        if block.table.is_some() {
+        if !block.is_paragraph() {
             return 0;
         }
         joined.push_str(&block.text);
@@ -58,12 +62,21 @@ pub(crate) fn label_blocks(blocks: &[Block], title: &str) -> usize {
     0
 }
 
-/// `_title_runs_in` (:1169).
+/// The first of `blocks` after any rule at their start, through the boxes it opens.
+fn first_unboxed(blocks: &[Block]) -> Option<&Block> {
+    let mut first = drop_edge_rules(blocks).first();
+    while let Some(bx) = first.and_then(|b| b.boxed.as_deref()) {
+        first = bx.blocks.first();
+    }
+    first
+}
+
+/// `_title_runs_in` (:1169): a box's first paragraph counts too (#654).
 pub(crate) fn title_runs_in(blocks: &[Block], title: &str) -> bool {
-    let Some(first) = blocks.first() else {
+    let Some(first) = first_unboxed(blocks) else {
         return false;
     };
-    if first.heading || first.table.is_some() {
+    if first.heading || !first.is_paragraph() {
         return false;
     }
     let text = py::lstrip(&first.text);
@@ -89,15 +102,24 @@ fn consume_split_title(texts: &[&str], title: &str) -> usize {
     0
 }
 
+/// The blocks left after a title cut, and the ids of those it dropped.
+pub(crate) type Eaten = (Vec<Block>, Vec<String>);
+
 /// `_eat_split_title` (:1524): the blocks less the leading ones that make up `title`, and
 /// their ids; None when they don't. A table counts one block per row with text, and one
-/// partly eaten keeps its other rows (#64, #219). With no boxes.
-pub(crate) fn eat_split_title(blocks: &[Block], title: &str) -> Option<(Vec<Block>, Vec<String>)> {
+/// partly eaten keeps its other rows (#64, #219). A box's lines (#238) are not ported.
+pub(crate) fn eat_split_title(
+    blocks: &[Block],
+    title: &str,
+) -> Result<Option<Eaten>, GenerateError> {
     // (block, its row, the text)
     let mut entries: Vec<(usize, Option<usize>, String)> = Vec::new();
     for (i, b) in blocks.iter().enumerate() {
         if entries.len() >= MAX_SPLIT_TITLE_BLOCKS {
             break;
+        }
+        if b.boxed.is_some() {
+            return Err(Unsupported("a title split over a box's lines"));
         }
         match &b.table {
             Some(t) => entries.extend(
@@ -112,7 +134,7 @@ pub(crate) fn eat_split_title(blocks: &[Block], title: &str) -> Option<(Vec<Bloc
     let texts: Vec<&str> = entries.iter().map(|e| e.2.as_str()).collect();
     let eaten = consume_split_title(&texts, title);
     if eaten == 0 {
-        return None;
+        return Ok(None);
     }
     let (last, last_row, _) = entries[eaten - 1];
     let mut carried: Vec<String> = blocks[..last]
@@ -125,33 +147,55 @@ pub(crate) fn eat_split_title(blocks: &[Block], title: &str) -> Option<(Vec<Bloc
         if let Some(kept) = tables::drop_rows(&blocks[last], &order[..=upto]) {
             let mut rest = vec![kept];
             rest.extend_from_slice(&blocks[last + 1..]);
-            return Some((rest, carried));
+            return Ok(Some((rest, carried)));
         }
     }
     carried.extend(blocks[last].anchors.keys.iter().cloned());
-    Some((blocks[last + 1..].to_vec(), carried))
+    Ok(Some((blocks[last + 1..].to_vec(), carried)))
 }
 
-/// `_title_in_table` (:1187): the chapter opens with a table whose first rows print its
-/// title, in one row or spelled over rows. The table prints as written, and kfxgen prints no
-/// heading (#470). With no boxes.
-pub(crate) fn title_in_table(blocks: &[Block], title: &str) -> bool {
-    match blocks.first().and_then(|b| b.table.as_deref()) {
-        Some(t) => tables::opens_with_title(t, title) || eat_split_title(blocks, title).is_some(),
-        None => false,
+/// `_title_in_table` (:1187): the chapter opens with a table, or a box opening with one,
+/// whose first rows print its title, in one row or spelled over rows. The table prints as
+/// written, and kfxgen prints no heading (#470).
+pub(crate) fn title_in_table(blocks: &[Block], title: &str) -> Result<bool, GenerateError> {
+    match first_unboxed(blocks).and_then(|b| b.table.as_deref()) {
+        Some(t) if tables::opens_with_title(t, title) => Ok(true),
+        Some(_) => Ok(eat_split_title(drop_edge_rules(blocks), title)?.is_some()),
+        None => Ok(false),
     }
 }
 
 /// `_heading_near_start` (:1204): the book prints its own heading among the first blocks,
-/// a table cell's included (#492, #660). With no boxes.
-pub(crate) fn heading_near_start(blocks: &[Block]) -> bool {
-    blocks.iter().take(MAX_SPLIT_TITLE_BLOCKS).any(|b| {
-        b.heading
-            || b.table.as_deref().is_some_and(|t| {
+/// a box's or a table cell's included (#492, #654, #660). A heading opening the first box
+/// counts only when it is not `title` (#646, #749).
+pub(crate) fn heading_near_start(blocks: &[Block], title: &str) -> bool {
+    let blocks = drop_edge_rules(blocks);
+    blocks
+        .iter()
+        .take(MAX_SPLIT_TITLE_BLOCKS)
+        .enumerate()
+        .any(|(i, b)| {
+            if b.heading {
+                return true;
+            }
+            if let Some(bx) = &b.boxed {
+                let kids = unboxed(&bx.blocks);
+                if i == 0
+                    && kids.first().is_some_and(|k| k.heading)
+                    && label_blocks(&kids[..1], title) == 0
+                {
+                    return true;
+                }
+                let skip = if i == 0 { 1 } else { 0 };
+                if kids.iter().skip(skip).any(|k| k.heading) {
+                    return true;
+                }
+            }
+            b.table.as_deref().is_some_and(|t| {
                 t.rows
                     .iter()
                     .flat_map(|r| &r.cells)
                     .any(|c| c.heading || c.paragraphs.iter().any(|p| p.heading))
             })
-    })
+        })
 }

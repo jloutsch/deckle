@@ -125,7 +125,10 @@ pub(crate) fn emit_table_chunks(block: &Block, t: &Table, chunks: &mut Vec<Chunk
             if !cell.paragraphs.is_empty() {
                 // A container styled as a cell, a text entry per block (#261).
                 let header_bold = info.header && !info.not_bold;
-                chunks.push(Chunk::marker(Marker::Open(Node::Cell(info))));
+                chunks.push(Chunk {
+                    style: cell.style.clone(),
+                    ..Chunk::marker(Marker::Open(Node::Cell(info)))
+                });
                 for p in &cell.paragraphs {
                     chunks.push(Chunk {
                         spans: p.spans.clone(),
@@ -145,7 +148,10 @@ pub(crate) fn emit_table_chunks(block: &Block, t: &Table, chunks: &mut Vec<Chunk
             {
                 // An empty cell is a cell with nothing in it (#480); one holding an id keeps
                 // its entry, for a link to land on.
-                chunks.push(Chunk::marker(Marker::Open(Node::Cell(info))));
+                chunks.push(Chunk {
+                    style: cell.style.clone(),
+                    ..Chunk::marker(Marker::Open(Node::Cell(info)))
+                });
                 chunks.push(Chunk::marker(Marker::Close));
                 continue;
             }
@@ -158,6 +164,7 @@ pub(crate) fn emit_table_chunks(block: &Block, t: &Table, chunks: &mut Vec<Chunk
                 },
                 anchors: cell.anchors.clone(),
                 in_cell: Some(InCell::Text(info)),
+                style: cell.style.clone(),
                 ..Chunk::text(if empty {
                     " ".to_owned()
                 } else {
@@ -187,11 +194,18 @@ pub(crate) fn emit_table_chunks(block: &Block, t: &Table, chunks: &mut Vec<Chunk
     chunks.push(Chunk::marker(Marker::Close));
 }
 
-/// `_attach_keys`' table (:5899): the chunk at `index`, or the first row of the table it
-/// opens: rows, not the `$278`, are link targets (#219).
+/// `_attach_keys` (:5899): the chunk at `index`, or the first row of the table it opens:
+/// rows, not the `$278`, are link targets (#219); or the first entry in the box it opens
+/// (#238).
 pub(crate) fn link_target(chunks: &[Chunk], index: usize) -> usize {
-    if !matches!(chunks[index].marker, Some(Marker::Open(Node::Table(_)))) {
-        return index;
+    match chunks[index].marker {
+        Some(Marker::Open(Node::Table(_))) => {}
+        Some(Marker::Open(Node::Box(_))) => {
+            return (index..chunks.len())
+                .find(|&i| chunks[i].is_content())
+                .expect("a box is opened only around an entry");
+        }
+        _ => return index,
     }
     let mut depth = 0;
     for (i, c) in chunks.iter().enumerate().skip(index) {

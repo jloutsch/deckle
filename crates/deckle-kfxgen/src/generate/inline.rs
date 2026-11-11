@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use deckle_kfx::fragment::Fragment;
 use deckle_kfx::ion::{Struct, Value};
 
+use super::notes::Popups;
 use super::styles::{Style157, Styles};
 use super::{GenerateError, Generator, model_err, py, st, sym};
 use crate::pyvalue::{PyValue, truthy};
@@ -32,6 +33,8 @@ pub(crate) enum Flag {
     Baseline,
     Underline,
     Strike,
+    /// A link to a note (#445).
+    NoteRef,
     Link(String),
 }
 
@@ -60,7 +63,7 @@ fn flag_of(f: &PyValue) -> Result<Flag, GenerateError> {
             "baseline" => Flag::Baseline,
             "underline" => Flag::Underline,
             "line-through" => Flag::Strike,
-            "noteref" => return Err(Unsupported("pop-up notes")),
+            "noteref" => Flag::NoteRef,
             s if s.contains('@') => return Err(Unsupported("a shift inside another")),
             _ => return Err(Unsupported("a span flag")),
         },
@@ -337,6 +340,8 @@ pub(crate) struct ChunkLinks<'a> {
     pub spans: &'a [Span],
     pub anchors: &'a Anchors,
     pub position: i64,
+    /// A cell's text or a paragraph in one (:6846).
+    pub in_cell: bool,
 }
 
 /// The body's `$266` anchors (:6728, :6783): one per link target something in the book
@@ -345,6 +350,7 @@ pub(crate) fn build_body_anchors(
     g: &mut Generator,
     chunks: &[ChunkLinks],
     anchor_names: &mut Vec<String>,
+    popups: &mut Popups,
 ) -> BTreeMap<String, String> {
     let mut key_to_chunk: BTreeMap<&str, (usize, i64)> = BTreeMap::new();
     let mut file_to_chunk: BTreeMap<&str, usize> = BTreeMap::new();
@@ -410,6 +416,7 @@ pub(crate) fn build_body_anchors(
         let name = format!("body_anchor_{}", body_anchor_map.len());
         let f = build_fragment_266(g, &name, chunks[idx].position, offset);
         g.push(f);
+        popups.landed(target, &name, chunks[idx].position, chunks[idx].in_cell);
         body_anchor_map.insert(target.to_owned(), name.clone());
         anchor_names.push(name);
     }
@@ -505,8 +512,15 @@ fn link_layers(spans: &[Span]) -> Vec<(i64, i64, Flags, Vec<Flags>)> {
         .collect()
 }
 
-/// `_emphasis_style` (:7245) with no font, size or typography: a run's `$157`.
-fn emphasis_style(flags: &Flags, blk_bold: bool, blk_italic: bool, in_cell: bool) -> Style157 {
+/// `_emphasis_style` (:7245) with no embedded font, size or typography: a run's `$157`.
+/// `family`: its paragraph's, "monospace" or none (`_family` :7233).
+fn emphasis_style(
+    flags: &Flags,
+    blk_bold: bool,
+    blk_italic: bool,
+    family: Option<&'static str>,
+    in_cell: bool,
+) -> Style157 {
     let has = |f: Flag| flags.contains(&f);
     let bold = has(Flag::Bold) || (blk_bold && !has(Flag::NotBold));
     let italic = has(Flag::Italic) || (blk_italic && !has(Flag::NotItalic));
@@ -517,6 +531,7 @@ fn emphasis_style(flags: &Flags, blk_bold: bool, blk_italic: bool, in_cell: bool
         upright: blk_italic && !italic,
         underline: has(Flag::Underline),
         strike: has(Flag::Strike),
+        font_family: family,
         no_align: in_cell,
         ..Style157::default()
     };
@@ -542,25 +557,34 @@ pub(crate) struct Run {
     len: i64,
     style: Option<String>,
     anchor: Option<String>,
+    /// Its anchor is a pop-up note's (#445).
+    popup: bool,
+}
+
+/// What a chunk's runs start from (:7820): its paragraph's weight, slant and family, and
+/// whether it is in a table cell. `bold`: a chapter heading, a header cell, a bold block.
+pub(crate) struct RunBase {
+    pub bold: bool,
+    pub italic: bool,
+    pub family: Option<&'static str>,
+    pub in_cell: bool,
 }
 
 /// The runs of a chunk's entry (:7851–8037): each layered span's style, and its link's
 /// anchor when the book declares the target. A run that is only a found link has no style.
-/// `blk_bold`: the entry's own text is bold (a chapter heading, a header cell). `in_cell`: it
-/// is in a table cell.
 pub(crate) fn entry_runs(
     g: &mut Generator,
     styles: &mut Styles,
     extra_style_names: &mut Vec<String>,
     spans: &[Span],
-    blk_bold: bool,
-    in_cell: bool,
+    base: &RunBase,
     body_anchor_map: &BTreeMap<String, String>,
+    popups: &Popups,
 ) -> Vec<Run> {
     let mut runs = Vec::new();
     for (start, len, flags, under) in link_layers(spans) {
         // A run layered on others starts from their weight and slant (#715).
-        let (mut run_b, mut run_i) = (blk_bold, false);
+        let (mut run_b, mut run_i) = (base.bold, base.italic);
         for u in &under {
             if u.contains(&Flag::Bold) {
                 run_b = true;
@@ -582,9 +606,10 @@ pub(crate) fn entry_runs(
         });
         let has_emphasis = flags
             .iter()
-            .any(|f| !matches!(f, Flag::Link(_) | Flag::Baseline));
+            .any(|f| !matches!(f, Flag::Link(_) | Flag::Baseline | Flag::NoteRef));
         let style = (has_emphasis || anchor.is_none()).then(|| {
-            let name = styles.allocate(g, "_em", emphasis_style(&flags, run_b, run_i, in_cell));
+            let style = emphasis_style(&flags, run_b, run_i, base.family, base.in_cell);
+            let name = styles.allocate(g, "_em", style);
             if !extra_style_names.contains(&name) {
                 extra_style_names.push(name.clone());
             }
@@ -594,6 +619,7 @@ pub(crate) fn entry_runs(
             start,
             len,
             style,
+            popup: anchor.as_ref().is_some_and(|a| popups.anchors.contains(a)),
             anchor,
         });
     }
@@ -634,6 +660,9 @@ pub(crate) fn write_runs(
         };
         if let Some(anchor) = &run.anchor {
             g.local(anchor);
+            if run.popup {
+                span.insert("$616", sym("$617"));
+            }
             span.insert("$179", sym(anchor));
         }
         if let Some(style) = &run.style {

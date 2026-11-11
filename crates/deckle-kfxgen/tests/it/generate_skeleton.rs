@@ -81,7 +81,6 @@ fn unicode_text_matches_kfxgen() {
 }
 
 #[test]
-#[ignore = "a list item (Task 9); chapters with no heading and left out of the contents (no task names them yet)"]
 fn publisher_structure_matches_kfxgen() {
     matches_kfxgen("publisher_structure");
 }

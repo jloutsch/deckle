@@ -4,6 +4,8 @@
 //!
 //! What isn't ported yet is [`GenerateError::Unsupported`], so a book needing it fails rather
 //! than coming out different from kfxgen's.
+mod block_styles;
+mod boxes;
 mod chapters;
 mod chunks;
 mod fragments;
@@ -11,6 +13,7 @@ mod images;
 mod inline;
 mod metadata;
 mod nav;
+mod notes;
 mod positions;
 mod py;
 mod skeleton;

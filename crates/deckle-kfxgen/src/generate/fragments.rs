@@ -9,6 +9,7 @@ use deckle_kfx::ion::{Struct, Value};
 use super::chunks::{Chunk, Marker, Node};
 use super::images;
 use super::inline::{self, EntryLink, Run};
+use super::notes::Popups;
 use super::table_styles::column_widths_152;
 use super::{Generator, measure, py, st, sym};
 
@@ -65,7 +66,9 @@ pub(crate) fn pack_content_fragments(
 /// `build_fragment_259` (:4199): one entry per chunk, text or picture, the first leaf marked
 /// `$790`, a text entry with its link and runs. A table's `open` starts a container whose
 /// `$146` holds the entries up to its `close` (#219): `$278` table, `$151`/`$454`/`$455` row
-/// group, `$279` row, `$269` cell of several blocks. `parts`: a row's or group's own `$157`.
+/// group, `$279` row, `$269` cell of several blocks, `$270` box (#238). `parts`: a row's,
+/// group's or box's own `$157`. A rule is a `$596` entry (#230); a pop-up note's entry is
+/// marked `$615` (#445).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_fragment_259(
     g: &mut Generator,
@@ -76,6 +79,7 @@ pub(crate) fn build_fragment_259(
     positions: &[Option<i64>],
     runs: &[(Option<EntryLink>, Vec<Run>)],
     chunks: &[Chunk],
+    popups: &Popups,
 ) -> Fragment {
     g.local(name);
     for (content, _) in refs.iter().flatten() {
@@ -130,13 +134,32 @@ pub(crate) fn build_fragment_259(
                     g.local(style);
                     entry.insert("$157", sym(style));
                 }
-                Node::Group(..) | Node::Row(_) => {
+                Node::Group(..) | Node::Row(_) | Node::Box(_) => {
                     if let Some(part) = &parts[i] {
                         entry.insert("$157", sym(part));
                     }
                 }
             }
             open.push((entry, Vec::new()));
+            continue;
+        }
+        if chunk.rule.is_some() {
+            g.local(style);
+            let Value::Struct(mut entry) = st([
+                ("$155", Value::Int(position)),
+                ("$157", sym(style)),
+                ("$159", sym("$596")),
+            ]) else {
+                unreachable!()
+            };
+            if first_leaf {
+                entry.insert("$790", Value::Int(1));
+                first_leaf = false;
+            }
+            match open.last_mut() {
+                Some((_, siblings)) => siblings.push(Value::Struct(entry)),
+                None => root.push(Value::Struct(entry)),
+            }
             continue;
         }
         let mut entry = match &chunk.picture {
@@ -163,6 +186,9 @@ pub(crate) fn build_fragment_259(
             first_leaf = false;
         }
         if chunk.picture.is_none() {
+            if popups.positions.contains(&position) {
+                entry.insert("$615", sym("$281"));
+            }
             let (link, runs) = &runs[i];
             inline::write_runs(g, &mut entry, link.as_ref(), runs);
         }
@@ -184,6 +210,7 @@ fn node_type(node: &Node) -> &'static str {
         Node::Group(..) => "$454",
         Node::Row(_) => "$279",
         Node::Cell(_) => "$269",
+        Node::Box(_) => "$270",
     }
 }
 

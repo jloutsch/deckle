@@ -5,8 +5,9 @@
 //! :4007), and the table's `$152` columns.
 use deckle_kfx::ion::{Decimal, Struct, Value};
 
-use super::chunks::{Chunk, InCell, Marker, Node};
-use super::styles::{Style157, StyleArgs, Styles};
+use super::block_styles::{BlockStyle, family};
+use super::chunks::{Marker, Node};
+use super::styles::{StyleArgs, Styles, g6};
 use super::table_chunks::CellInfo;
 use super::tables::{Border, ColumnWidths, Pad, Padding};
 use super::{Generator, measure, py, st, sym};
@@ -24,12 +25,13 @@ pub(crate) struct PartStyle {
     pub border: Option<Border>,
 }
 
-/// The arguments `_cell_style` (:7326) gives `build_cell_style_157` for a cell with no block
-/// style: no font, italic or typography.
+/// The arguments `_cell_style` (:7326) gives `build_cell_style_157`: no typography.
 #[derive(Clone, PartialEq)]
 pub(crate) struct CellStyle {
-    pub align: Option<&'static str>,
+    pub align: Option<String>,
     pub bold: bool,
+    pub italic: bool,
+    pub font_family: Option<&'static str>,
     pub colspan: i64,
     pub rowspan: i64,
     pub font_size: f64,
@@ -43,10 +45,14 @@ pub(crate) struct CellStyle {
 
 impl CellStyle {
     /// `_cell_style` (:7326): a header is bold and centred on its own.
-    pub(crate) fn of(cell: &CellInfo, font_size: f64) -> Self {
+    pub(crate) fn of(cell: &CellInfo, bs: Option<&BlockStyle>, font_size: f64) -> Self {
+        let (blk_bold, blk_italic) = bs.map_or((false, false), |b| (b.bold, b.italic));
+        let align = bs.and_then(|b| b.align.clone());
         CellStyle {
-            align: cell.header.then_some("center"),
-            bold: cell.header && !cell.not_bold,
+            align: align.or_else(|| cell.header.then(|| "center".to_owned())),
+            bold: (cell.header && !cell.not_bold) || blk_bold,
+            italic: blk_italic,
+            font_family: bs.and_then(|b| family(&b.family)),
             colspan: cell.colspan,
             rowspan: cell.rowspan,
             font_size,
@@ -64,13 +70,15 @@ impl CellStyle {
     }
 }
 
-/// A container's `$157` (:7441), and a row's or group's own for its border (:7556): (the
-/// entry's style, its part style).
+/// A table container's `$157` (:7441), and a row's or group's own for its border (:7556):
+/// (the entry's style, its part style). `bs`, `font_size`, `lang`: a cell's.
 pub(crate) fn marker_styles(
     g: &mut Generator,
     styles: &mut Styles,
     marker: &Marker,
+    bs: Option<&BlockStyle>,
     font_size: f64,
+    lang: Option<&str>,
 ) -> (Option<String>, Option<String>) {
     match marker {
         Marker::Open(Node::Table(t)) => {
@@ -84,8 +92,9 @@ pub(crate) fn marker_styles(
             )
         }
         Marker::Open(Node::Cell(cell)) => {
-            let cell = CellStyle::of(cell, font_size);
-            (Some(styles.allocate(g, "_td", StyleArgs::Cell(cell))), None)
+            let cell = CellStyle::of(cell, bs, font_size);
+            let name = styles.allocate_in(g, "_td", StyleArgs::Cell(cell), lang);
+            (Some(name), None)
         }
         Marker::Open(Node::Group(_, Some(border)) | Node::Row(Some(border))) => {
             let part = PartStyle {
@@ -97,30 +106,8 @@ pub(crate) fn marker_styles(
     }
 }
 
-/// A text entry's `$157` in a cell, None outside one: a cell's text takes its cell's (:7786);
-/// a block in a cell is a paragraph, bold in a header cell (#261).
-pub(crate) fn cell_text_style(
-    g: &mut Generator,
-    styles: &mut Styles,
-    chunk: &Chunk,
-    font_size: f64,
-) -> Option<String> {
-    Some(match chunk.in_cell.as_ref()? {
-        InCell::Text(cell) => {
-            styles.allocate(g, "_td", StyleArgs::Cell(CellStyle::of(cell, font_size)))
-        }
-        InCell::Paragraph { .. } => {
-            let body = Style157 {
-                bold: chunk.cell_bold(),
-                ..Style157::body(font_size)
-            };
-            styles.allocate(g, "", body)
-        }
-    })
-}
-
 /// `inline_style.ALIGN_MAP` (:934).
-fn align_symbol(align: &str) -> Option<&'static str> {
+pub(crate) fn align_symbol(align: &str) -> Option<&'static str> {
     match align {
         "left" => Some("$59"),
         "right" => Some("$61"),
@@ -141,7 +128,7 @@ fn valign_symbol(valign: &str) -> Option<&'static str> {
 }
 
 /// `_BORDER_STYLE_SYMBOLS` (:1967).
-fn border_style_symbol(kind: &str) -> Option<&'static str> {
+pub(crate) fn border_style_symbol(kind: &str) -> Option<&'static str> {
     Some(match kind {
         "solid" => "$328",
         "double" => "$329",
@@ -156,7 +143,7 @@ fn border_style_symbol(kind: &str) -> Option<&'static str> {
 }
 
 /// `_BORDER_SIDE_KEYS` (:1978): a side's width, style and colour keys.
-fn side_keys(side: &str) -> [&'static str; 3] {
+pub(crate) fn side_keys(side: &str) -> [&'static str; 3] {
     match side {
         "top" => ["$94", "$89", "$84"],
         "right" => ["$97", "$92", "$87"],
@@ -165,13 +152,9 @@ fn side_keys(side: &str) -> [&'static str; 3] {
     }
 }
 
-fn g_measure(x: f64, unit: &str) -> Value {
-    measure(py::decimal(&py::format_g(x, 6)), unit)
-}
-
 /// `_apply_border` (:1991): equal sides as `$93`/`$88` (and `$83` unless black), else each
 /// drawn side's own. A table's default grey `$83` goes when its border is black.
-fn apply_border(value: &mut Struct, border: Option<&Border>, is_table: bool) {
+pub(crate) fn apply_border(value: &mut Struct, border: Option<&Border>, is_table: bool) {
     let sides: Vec<_> = border
         .into_iter()
         .flatten()
@@ -183,7 +166,7 @@ fn apply_border(value: &mut Struct, border: Option<&Border>, is_table: bool) {
     let colour_of = |c: &Option<i64>| c.filter(|&c| c != 0);
     if sides.len() == 4 && sides.iter().all(|(_, spec)| spec == first) {
         let (kind, width, colour) = first;
-        value.insert("$93", g_measure(*width, "$318"));
+        value.insert("$93", g6(*width, "$318"));
         value.insert("$88", sym(border_style_symbol(kind).unwrap()));
         match colour_of(colour) {
             Some(c) => value.insert("$83", Value::Int(c)),
@@ -196,7 +179,7 @@ fn apply_border(value: &mut Struct, border: Option<&Border>, is_table: bool) {
     }
     for (side, (kind, width, colour)) in sides {
         let [w, s, c] = side_keys(side);
-        value.insert(w, g_measure(*width, "$318"));
+        value.insert(w, g6(*width, "$318"));
         value.insert(s, sym(border_style_symbol(kind).unwrap()));
         if let Some(colour) = colour_of(colour) {
             value.insert(c, Value::Int(colour));
@@ -218,7 +201,7 @@ pub(crate) fn column_widths_152(widths: Option<&ColumnWidths>) -> Option<Value> 
     if widths.is_empty() {
         return None;
     }
-    let pct = |w: f64| g_measure(w, "$314");
+    let pct = |w: f64| g6(w, "$314");
     let mut out = Vec::new();
     if source == "col" {
         for w in widths {
@@ -277,7 +260,7 @@ pub(crate) fn padding_values(
             _ => "$53",
         };
         let v = if matches!(side.as_str(), "top" | "bottom") {
-            g_measure(em / 1.2, "$310")
+            g6(em / 1.2, "$310")
         } else {
             measure(py::quantize_milli(pct)?, "$314")
         };
@@ -305,7 +288,7 @@ pub(crate) fn build_table_style_157(g: &mut Generator, name: &str, s: &TableStyl
     apply_border(&mut v, s.border.as_ref(), true);
     if let Some(width) = s.width {
         // A min-width, and at 100% the width too (#264).
-        let pct = g_measure(width, "$314");
+        let pct = g6(width, "$314");
         if width == 100.0 {
             v.insert("$56", pct.clone());
         }
@@ -343,17 +326,23 @@ pub(crate) fn build_cell_style_157(g: &mut Generator, name: &str, s: &CellStyle)
         // First, where it has always been written.
         v.0.insert(0, ("$633".into(), sym(valign)));
     }
-    if let Some(align) = s.align.and_then(align_symbol) {
+    if let Some(align) = s.align.as_deref().and_then(align_symbol) {
         v.insert("$34", sym(align));
     }
     if s.bold {
         v.insert("$13", sym("$361"));
+    }
+    if s.italic {
+        v.insert("$12", sym("$382"));
     }
     if s.colspan > 1 {
         v.insert("$148", Value::Int(s.colspan));
     }
     if s.rowspan > 1 {
         v.insert("$149", Value::Int(s.rowspan));
+    }
+    if let Some(family) = s.font_family {
+        v.insert("$11", Value::string(family));
     }
     if s.font_size != 1.0 {
         v.insert("$16", measure(py::decimal_of_float(s.font_size), "$505"));

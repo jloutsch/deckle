@@ -16,6 +16,7 @@ use super::fragments::build_fragment_260;
 use super::images;
 use super::metadata::{BookMetadata, build_fragment_490};
 use super::nav::{NavEntry, book_headings, build_fragment_389};
+use super::notes;
 use super::positions::{
     build_fragment_264, build_fragment_265, build_fragment_550, build_position_data,
 };
@@ -150,6 +151,14 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
 
     let mut g = Generator::new();
     let mut chapters = read_chapters(chapters_arg)?;
+    // A chapter set otherwise than the book writes its own on its section (#247).
+    if chapters
+        .iter()
+        .any(|c| c.writing_mode.is_some() && c.writing_mode.as_deref() != writing_mode)
+    {
+        return Err(Unsupported("a chapter's own writing mode"));
+    }
+    let footnote_keys = notes::read_footnote_keys(args.get("footnote_keys"))?;
     let table_version =
         tables::feature_version(chapters.iter().flat_map(|c| c.blocks.iter().flatten()));
     let f = build_fragment_585(&mut g, table_version);
@@ -179,7 +188,7 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
     if images.cover {
         images::add_cover_page(&mut chapters, &images);
     }
-    let data = build_chapter_content(&mut g, &chapters, &images)?;
+    let data = build_chapter_content(&mut g, &chapters, &images, &footnote_keys)?;
     // Pictures no entry shows are dropped (#102).
     let shown: Vec<&str> = data
         .chunks
@@ -200,11 +209,11 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
     let f = build_fragment_538(&mut g, &section_names);
     g.push(f);
 
-    // The cover's page is in no contents (:4988).
+    // The cover's page, and a chapter its caller leaves out, are in no contents (:4988).
     let nav_entries: Vec<NavEntry> = chapters
         .iter()
         .zip(&data.chapter_start_positions)
-        .filter(|(ch, _)| !ch.is_cover)
+        .filter(|(ch, _)| !ch.omit_from_toc)
         .map(|(ch, &position)| NavEntry {
             title: ch.title.clone(),
             position,

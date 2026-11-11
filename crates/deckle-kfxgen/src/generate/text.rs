@@ -2,24 +2,33 @@
 //! A book's text: `_build_chapter_content` (`native_generator.py:5396`), the chapter loop that
 //! makes chunks of the chapters' titles, paragraphs and contents lines, their positions, and
 //! the `$145`, `$157` and `$259` fragments they fill. The pieces are `chapters`' (reading),
-//! `title`, `chunks`, `styles` and `fragments`; runs, links and anchors are `inline`'s,
-//! pictures `images`'.
+//! `title`, `chunks`, `styles`, `block_styles` and `fragments`; runs, links and anchors are
+//! `inline`'s, pictures `images`', boxes and rules `boxes`', pop-up notes `notes`'.
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::block_styles::{
+    self, HeadingStyle, Sizes, bidi_diff, heading_attrs, heading_style, keep_space,
+    text_entry_style,
+};
+use super::boxes::{
+    self, BoxStyle, box_heading, cut_title_from_box, drop_edge_rules, emit_box_chunks,
+    leading_blocks, rule_chunk, unboxed,
+};
 use super::chapters::{Block, Chapter, cut_at_empty_line};
-use super::chunks::{Chunk, Marker, emit_paragraph, print_book_heading};
+use super::chunks::{Chunk, Marker, Node, emit_paragraph, print_book_heading};
 use super::fragments::{
     ContentRef, build_fragment_145, build_fragment_259, pack_content_fragments, style_refs,
 };
 use super::images::{self, ImageStyles, Images, Picture};
-use super::inline::{self, Anchors, ChunkLinks};
-use super::styles::{Style157, Styles};
+use super::inline::{self, ChunkLinks, RunBase};
+use super::notes::{self, Popups};
+use super::styles::{Style157, StyleArgs, Styles};
 use super::title::{
     eat_split_title, heading_near_start, label_blocks, opens_with_title, title_in_table,
     title_runs_in,
 };
 use super::{GenerateError, Generator, py};
-use super::{table_chunks, table_styles, tables};
+use super::{table_chunks, table_styles};
 
 use GenerateError::Unsupported;
 
@@ -28,7 +37,6 @@ const CONTENT_POS_BASE: i64 = 1000;
 const CONTENT_POS_STEP: i64 = 2;
 const SECTION_POS_BASE: i64 = 10000;
 const SECTION_POS_STEP: i64 = 2;
-const HEADING_FONT_SIZE: f64 = 1.2;
 
 /// What `_build_chapter_content` returns.
 pub(crate) struct ChapterData {
@@ -51,6 +59,7 @@ pub(crate) fn build_chapter_content(
     g: &mut Generator,
     chapters: &[Chapter],
     images: &Images,
+    footnote_keys: &BTreeSet<String>,
 ) -> Result<ChapterData, GenerateError> {
     let mut chunks: Vec<Chunk> = Vec::new();
     let mut chapter_chunk_ranges = Vec::new();
@@ -65,18 +74,18 @@ pub(crate) fn build_chapter_content(
         // Offsets in kfxgen's heading for ids of the block it prints (#491).
         let mut heading_offsets = BTreeMap::new();
         let blocks = chapter.blocks.as_deref().unwrap_or_default();
+        let all: Vec<&Block> = blocks.iter().collect();
         let toc = !chapter.toc_links.is_empty();
         // `_ruby_heading_title` finds no ruby, so `_book_heading_title` (:1304) decides.
         let mut title = chapter.title.clone();
         let mut title_spans = None;
-        let matched = label_blocks(blocks, &title);
+        let matched = label_blocks(&all, &title);
+        let first_block = drop_edge_rules(blocks).first();
         let book_block = if matched == 1 {
-            blocks.first()
+            first_block
         } else if matched == 0 {
             // Not a heading holding a picture, which kfxgen's heading can't print.
-            blocks
-                .first()
-                .filter(|b| b.heading && !images::has_picture(&b.text))
+            first_block.filter(|b| b.heading && !images::has_picture(&b.text))
         } else {
             None
         };
@@ -94,20 +103,23 @@ pub(crate) fn build_chapter_content(
             stripped
         };
         let image_only = !toc && images::only_pictures(body_after_title);
-        // A table says no (:1161): the texts stop there.
+        // Rules are passed over and boxes opened; a table says no (:1148).
         let title_after_pictures = !toc
             && images::title_after_pictures(
-                blocks
-                    .iter()
+                leading_blocks(blocks)
+                    .into_iter()
+                    .filter(|b| b.rule.is_none())
                     .map_while(|b| b.table.is_none().then_some(b.text.as_str())),
                 &title,
             );
         let runs_in = !toc && title_runs_in(blocks, &title);
-        let in_table = !toc && title_in_table(blocks, &title);
-        let heading_near_start = !toc && title_spans.is_none() && heading_near_start(blocks);
-        let label_over_blocks = !toc && label_blocks(blocks, &title) > 1;
+        let in_table = !toc && title_in_table(blocks, &title)?;
+        let heading_near_start =
+            !toc && title_spans.is_none() && heading_near_start(blocks, &title);
+        let label_over_blocks = !toc && label_blocks(&unboxed(blocks), &title) > 1;
         let omit_heading = chapter.is_cover
             || py::strip(&title).is_empty()
+            || chapter.omit_title_heading
             || image_only
             || title_after_pictures
             || runs_in
@@ -116,11 +128,19 @@ pub(crate) fn build_chapter_content(
             || label_over_blocks;
         let mut heading_chunk = None;
         if !omit_heading {
-            heading_chunks.insert(chunks.len());
             heading_chunk = Some(chunks.len());
+            // The page's language, for kfxgen's heading (#714).
+            let page_bidi = block_styles::page_bidi(blocks.iter().map(|b| {
+                block_styles::lang(b.style.as_ref())
+                    .or_else(|| b.boxed.as_ref()?.spec.bidi.as_ref()?.as_deref())
+            }));
             chunks.push(Chunk {
                 heading_level: chapter.heading_level,
                 spans: title_spans.unwrap_or_default(),
+                heading: HeadingStyle {
+                    page_bidi,
+                    ..HeadingStyle::default()
+                },
                 ..Chunk::text(title.clone())
             });
         }
@@ -131,8 +151,12 @@ pub(crate) fn build_chapter_content(
                 chunks.push(Chunk::text(link.text.clone()));
             }
         } else {
-            let cut_title =
-                !image_only && !runs_in && !in_table && !heading_near_start && !label_over_blocks;
+            let cut_title = !chapter.omit_title_heading
+                && !image_only
+                && !runs_in
+                && !in_table
+                && !heading_near_start
+                && !label_over_blocks;
             let n = py::len(&title);
             let stripped = py::lstrip(&chapter.text);
             let text = if cut_title && opens_with_title(stripped, &title) {
@@ -143,12 +167,51 @@ pub(crate) fn build_chapter_content(
             if !text.is_empty() {
                 let para_iter: Vec<Block> = match &chapter.blocks {
                     Some(blocks) => {
-                        let mut iter_blocks = blocks.clone();
+                        let mut iter_blocks = drop_edge_rules(blocks).to_vec();
                         // An opening table printing the title is kept whole; one that
                         // doesn't has none to cut (:6382).
                         if !iter_blocks.is_empty() && cut_title && iter_blocks[0].table.is_none() {
                             let first_stripped = py::lstrip(&iter_blocks[0].text);
-                            if opens_with_title(first_stripped, &title) {
+                            if let Some((kept, keys)) = cut_title_from_box(&iter_blocks[0], &title)
+                            {
+                                let first = iter_blocks.remove(0);
+                                carried.extend(keys);
+                                let first_box = first.boxed.as_deref().expect("a box");
+                                let kept_fewer = kept.as_ref().is_none_or(|k| {
+                                    let kids = &k.boxed.as_deref().expect("a box").blocks;
+                                    kids.len() < first_box.blocks.len()
+                                });
+                                let mut kept = kept;
+                                // Only when the title was a block of its own: a paragraph
+                                // running it in keeps the rest in the box, the heading above.
+                                if let Some(h) = heading_chunk
+                                    && h + 1 == chunks.len()
+                                    && first_box.blocks[0].boxed.is_none()
+                                    && kept_fewer
+                                {
+                                    let close = kept.is_none();
+                                    let at = box_heading(&first, &mut chunks, h, close);
+                                    heading_chunk = Some(at);
+                                    let kid = &first_box.blocks[0];
+                                    keep_space(
+                                        &mut chunks[at].heading,
+                                        kid.style.as_ref(),
+                                        None,
+                                        kid.margin_below,
+                                    );
+                                    if let Some(k) = kept.as_mut().and_then(|k| k.boxed.as_mut()) {
+                                        k.opened = true;
+                                    }
+                                }
+                                iter_blocks.splice(0..0, kept);
+                            } else if iter_blocks[0].boxed.is_some() {
+                                // A box is written from its blocks: a title split over its
+                                // lines is eaten from them (#344).
+                                if let Some((rest, keys)) = eat_split_title(&iter_blocks, &title)? {
+                                    iter_blocks = rest;
+                                    carried.extend(keys);
+                                }
+                            } else if opens_with_title(first_stripped, &title) {
                                 let remainder = py::lstrip(py::skip(first_stripped, n)).to_owned();
                                 if !remainder.is_empty() {
                                     // `_trim_text` (:909): runs and offsets move with the cut.
@@ -169,12 +232,17 @@ pub(crate) fn build_chapter_content(
                                         print_book_heading(&mut chunks[h], &first, &title);
                                     }
                                 }
-                            } else if let Some((rest, keys)) = eat_split_title(&iter_blocks, &title)
-                            {
-                                // Split over blocks or a table's rows (#64, #219). The heading
-                                // takes the first block's style, which is none.
-                                iter_blocks = rest;
-                                carried.extend(keys);
+                            } else {
+                                // Split over blocks or a table's rows (#64, #219). The book's
+                                // heading prints: its style (#490).
+                                let first_style = iter_blocks[0].style.clone();
+                                if let Some((rest, keys)) = eat_split_title(&iter_blocks, &title)? {
+                                    if let Some(h) = heading_chunk {
+                                        chunks[h].heading.book_style = first_style;
+                                    }
+                                    iter_blocks = rest;
+                                    carried.extend(keys);
+                                }
                             }
                         }
                         iter_blocks
@@ -185,15 +253,7 @@ pub(crate) fn build_chapter_content(
                             if !images::has_picture(p) && cut_at_empty_line(p) {
                                 return Err(Unsupported("a paragraph cut at an empty line"));
                             }
-                            Ok(Block {
-                                text: p.to_owned(),
-                                heading: false,
-                                heading_level: None,
-                                space_above: false,
-                                spans: Vec::new(),
-                                anchors: Anchors::default(),
-                                table: None,
-                            })
+                            Ok(Block::plain(p.to_owned()))
                         })
                         .collect::<Result<_, _>>()?,
                 };
@@ -203,16 +263,20 @@ pub(crate) fn build_chapter_content(
                 let mut pending: Vec<String> = Vec::new();
                 for (b_idx, block) in para_iter.iter().enumerate() {
                     let first = chunks.len();
-                    let unplaced = match &block.table {
-                        Some(t) => {
-                            table_chunks::emit_table_chunks(block, t, &mut chunks);
-                            Vec::new()
-                        }
-                        None => emit_paragraph(block, b_idx == 0, images, &mut chunks)?,
+                    let unplaced = if let Some(t) = &block.table {
+                        table_chunks::emit_table_chunks(block, t, &mut chunks);
+                        Vec::new()
+                    } else if let Some(rule) = &block.rule {
+                        chunks.push(rule_chunk(rule));
+                        block.anchors.keys.clone()
+                    } else if let Some(bx) = &block.boxed {
+                        emit_box_chunks(block, bx, images, &mut chunks)?
+                    } else {
+                        emit_paragraph(block, b_idx == 0, images, &mut chunks)?
                     };
-                    // `_emitted_content` (:5940): a table of rows with no cells is only
-                    // its markers.
-                    if !pending.is_empty() && chunks[first..].iter().any(Chunk::is_leaf) {
+                    // `_emitted_content` (:5940): a table of rows with no cells, a box of
+                    // paragraphs that emitted nothing, is only its markers.
+                    if !pending.is_empty() && chunks[first..].iter().any(Chunk::is_content) {
                         let at = table_chunks::link_target(&chunks, first);
                         chunks[at].anchors.attach(&pending);
                         pending.clear();
@@ -228,37 +292,57 @@ pub(crate) fn build_chapter_content(
                         None => carried.extend(pending),
                     }
                 }
-            } else if let Some(first) = blocks.first() {
+            } else if !blocks.is_empty() {
                 // Only its title: the blocks' ids still name this chapter (#338), and the
-                // book's heading prints as kfxgen's (:6522).
+                // book's heading prints as kfxgen's, the rules under it with it (:6522, #717).
                 for b in blocks {
-                    carried.extend(tables::block_keys(b));
+                    carried.extend(boxes::block_keys(b));
                 }
-                if let Some(h) = heading_chunk
+                if let (Some(h), Some(first)) = (heading_chunk, first_block)
                     && py::strip(&first.text) == title
                 {
+                    // A box holding the heading and only rules is drawn round it (#646).
+                    if first.boxed.as_deref().is_some_and(|bx| {
+                        bx.blocks[0].boxed.is_none()
+                            && bx.blocks[1..].iter().all(|b| b.rule.is_some())
+                    }) {
+                        return Err(Unsupported("a box round a chapter's title alone"));
+                    }
                     heading_offsets = inline::heading_offsets(&first.text, &first.anchors, &title);
                     print_book_heading(&mut chunks[h], first, &title);
+                    let at = blocks
+                        .iter()
+                        .position(|b| std::ptr::eq(b, first))
+                        .expect("first is one of the blocks");
+                    for b in &blocks[at + 1..] {
+                        if let Some(rule) = &b.rule {
+                            chunks.push(rule_chunk(rule));
+                        }
+                    }
                 }
             }
         }
         // Pictures of a contents page the converter replaced, after it (#117).
         images::push_preserved(&chapter.preserved_images, images, &mut chunks)?;
 
-        // Every chapter has an entry to land on (:6597): a no-break space. A table's markers
-        // don't count.
+        // Every chapter has an entry to land on (:6597): a no-break space. Containers and
+        // rules don't count.
         if !chunks[start_idx..].iter().any(Chunk::is_leaf) {
             chunks.push(Chunk::text("\u{a0}".to_owned()));
         }
         if !carried.is_empty() {
-            // Offsets of the block kfxgen's heading prints, else the chapter's start (:6622);
-            // a table's first row, not the table (#219).
-            let offsets = match heading_chunk {
-                Some(_) => heading_offsets,
-                None => BTreeMap::new(),
-            };
+            // A table's first row, a box's first entry, not the container (#219, #238); the
+            // offsets of the block kfxgen's heading prints, else the chapter's start (:6622).
             let at = table_chunks::link_target(&chunks, start_idx);
+            let offsets = if Some(at) == heading_chunk {
+                heading_offsets
+            } else {
+                BTreeMap::new()
+            };
             chunks[at].anchors.attach_at(&carried, &offsets);
+        }
+        if let Some(h) = heading_chunk {
+            heading_chunks.insert(h);
         }
         chapter_chunk_ranges.push((start_idx, chunks.len()));
     }
@@ -310,9 +394,14 @@ pub(crate) fn build_chapter_content(
             anchors: &c.anchors,
             // Only a `close` has none, and it holds no ids or runs.
             position: position.unwrap_or_default(),
+            in_cell: c.in_cell.is_some(),
         })
         .collect();
-    let body_anchor_map = inline::build_body_anchors(g, &links, &mut anchor_names);
+    let mut popups = Popups {
+        targets: notes::popup_targets(chunks.iter().flat_map(|c| &c.spans), footnote_keys),
+        ..Popups::default()
+    };
+    let body_anchor_map = inline::build_body_anchors(g, &links, &mut anchor_names, &mut popups);
 
     // $145: each chapter's text in fragments under the cap (:6863); a chapter of pictures
     // alone, a cover's, has none (#102).
@@ -354,14 +443,7 @@ pub(crate) fn build_chapter_content(
         story_names.push(styles.allocate(g, "", Style157::body(fs)));
         let mut heading_name = None;
         if heading_chunks.range(start..end).next().is_some() {
-            let heading = Style157 {
-                font_size: py::round((fs * HEADING_FONT_SIZE).max(1.0), 4),
-                bold: true,
-                margin_top: (i > 0).then_some(2.0),
-                is_heading: true,
-                ..Style157::default()
-            };
-            let name = styles.allocate(g, "_h", heading);
+            let name = styles.allocate(g, "_h", heading_attrs(fs, i == 0));
             if !extra_style_names.contains(&name) {
                 extra_style_names.push(name.clone());
             }
@@ -385,6 +467,7 @@ pub(crate) fn build_chapter_content(
     }
     let pictures: Vec<&Picture> = chunks.iter().filter_map(|c| c.picture.as_ref()).collect();
     let image_styles = ImageStyles::allocate(g, &pictures, images, &mut extra_style_names)?;
+    let sizes = Sizes::of(&chunks);
 
     // $259: a storyline per chapter (:7359).
     let mut storyline_names = Vec::new();
@@ -392,20 +475,72 @@ pub(crate) fn build_chapter_content(
         let sl_name = format!("l{ch_idx}");
         let fs = chapters[ch_idx].font_size;
         let mut entry_styles = Vec::new();
-        // A row's or row group's own `$157`, for its border (:7556).
+        // A container's own `$157`: a row's or group's border (:7556), a box's (:7520).
         let mut entry_parts = Vec::new();
         let mut entry_runs = Vec::new();
+        // Each open container's size when it is a cell (#681), and its language (#246).
+        let mut open_sizes: Vec<Option<f64>> = Vec::new();
+        let mut open_bidi: Vec<Option<String>> = Vec::new();
         for chunk_idx in start..end {
             let chunk = &chunks[chunk_idx];
+            let around = open_bidi.last().cloned().flatten();
+            let around = around.as_deref();
             if let Some(marker) = &chunk.marker {
-                // A `close`, or a row or group drawing no border, takes the chapter's, unused.
-                let (style, part) = table_styles::marker_styles(g, &mut styles, marker, fs);
+                let (style, part) = match marker {
+                    Marker::Open(node) => {
+                        // A table's and a row's direction aren't ported: theirs is None.
+                        let own = match node {
+                            Node::Cell(_) => chunk.style.as_ref().and_then(|b| b.bidi.clone()),
+                            Node::Box(b) => b.spec.bidi.clone(),
+                            _ => None,
+                        };
+                        let cont_lang = bidi_diff(own.as_ref().and_then(|o| o.as_deref()), around)
+                            .map(str::to_owned);
+                        open_bidi.push(own.unwrap_or_else(|| around.map(str::to_owned)));
+                        let cell_size =
+                            matches!(node, Node::Cell(_)).then(|| sizes.block_font_size(fs, chunk));
+                        open_sizes.push(cell_size);
+                        match node {
+                            Node::Box(b) => {
+                                let style = BoxStyle::of(b, sizes.rem(b.spec.font_px));
+                                style.check()?;
+                                let name = styles.allocate_in(
+                                    g,
+                                    "_box",
+                                    StyleArgs::Box(style),
+                                    cont_lang.as_deref(),
+                                );
+                                (None, Some(name))
+                            }
+                            _ => table_styles::marker_styles(
+                                g,
+                                &mut styles,
+                                marker,
+                                chunk.style.as_ref(),
+                                cell_size.unwrap_or(fs),
+                                cont_lang.as_deref(),
+                            ),
+                        }
+                    }
+                    Marker::Close => {
+                        open_sizes.pop();
+                        open_bidi.pop();
+                        (None, None)
+                    }
+                };
+                // A `close`, a box, or a row or group drawing no border, takes the
+                // chapter's, unused.
                 entry_styles.push(style.unwrap_or_else(|| story_names[ch_idx].clone()));
                 entry_parts.push(part);
                 entry_runs.push((None, Vec::new()));
                 continue;
             }
             entry_parts.push(None);
+            if let Some(rule) = &chunk.rule {
+                entry_styles.push(styles.allocate(g, "_r", StyleArgs::Rule(rule.clone())));
+                entry_runs.push((None, Vec::new()));
+                continue;
+            }
             if let Some(p) = &chunk.picture {
                 let style = image_styles.style_for(p)?;
                 entry_styles.push(style.unwrap_or_else(|| story_names[ch_idx].clone()));
@@ -418,7 +553,11 @@ pub(crate) fn build_chapter_content(
                 &heading_style_names[ch_idx],
                 chunk_anchor_map.get(&chunk_idx),
             ) {
-                (Some(name), _) if heading => name.clone(),
+                (Some(name), _) if heading => {
+                    let attrs = heading_attrs(fs, ch_idx == 0);
+                    heading_style(g, &mut styles, &sizes, chunk, &attrs, around)
+                        .unwrap_or_else(|| name.clone())
+                }
                 (_, Some(anchor)) => {
                     // A contents line: the page's style, its link underlined (:7707).
                     let (_, level) = toc_link_chunks[&chunk_idx];
@@ -430,7 +569,10 @@ pub(crate) fn build_chapter_content(
                     if level != 0 {
                         // Indented by depth, 6.25% a level (#238, #313).
                         let indent = Style157 {
-                            margin_left: Some(format!("{}", 6.25 * level as f64)),
+                            margin_left: Some((
+                                py::format_g(6.25 * level as f64, 6),
+                                "$314".into(),
+                            )),
                             ..Style157::body(fs)
                         };
                         styles.allocate(g, "", indent)
@@ -438,21 +580,28 @@ pub(crate) fn build_chapter_content(
                         story_names[ch_idx].clone()
                     }
                 }
-                // `_block_font_size` with no CSS size: the chapter's.
-                _ => table_styles::cell_text_style(g, &mut styles, chunk, fs)
-                    .unwrap_or_else(|| styles.allocate(g, "", Style157::body(fs))),
+                _ => text_entry_style(g, &mut styles, &sizes, chunk, fs, &open_sizes, around),
             };
             entry_styles.push(style);
-            // kfxgen's chapter heading is bold, and so are the runs in it (#366), as a header
-            // cell's are (#219).
+            // kfxgen's chapter heading is bold, and so are the runs in it (#366), unless it
+            // prints the book's heading in that heading's weight (#490); a header cell's are
+            // (#219).
+            let bs = chunk.style.as_ref();
+            let book_bold = chunk.heading.book_style.as_ref().is_none_or(|b| b.bold);
+            let base = RunBase {
+                bold: bs.is_some_and(|b| b.bold) || chunk.cell_bold() || (heading && book_bold),
+                italic: bs.is_some_and(|b| b.italic),
+                family: bs.and_then(|b| block_styles::family(&b.family)),
+                in_cell: chunk.in_cell.is_some(),
+            };
             let runs = inline::entry_runs(
                 g,
                 &mut styles,
                 &mut extra_style_names,
                 &chunk.spans,
-                heading || chunk.cell_bold(),
-                chunk.in_cell.is_some(),
+                &base,
                 &body_anchor_map,
+                &popups,
             );
             entry_runs.push((link, runs));
         }
@@ -465,6 +614,7 @@ pub(crate) fn build_chapter_content(
             &chunk_positions[start..end],
             &entry_runs,
             &chunks[start..end],
+            &popups,
         );
         g.push(fragment);
         storyline_names.push(sl_name);
@@ -473,7 +623,7 @@ pub(crate) fn build_chapter_content(
     // Every allocated style is registered, and one no storyline uses is dropped (:8088).
     let mut registered: BTreeSet<String> = story_names.iter().cloned().collect();
     registered.extend(extra_style_names.iter().cloned());
-    for (_, _, name) in &styles.cache {
+    for (.., name) in &styles.cache {
         if registered.insert(name.clone()) {
             extra_style_names.push(name.clone());
         }

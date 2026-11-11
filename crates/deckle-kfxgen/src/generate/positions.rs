@@ -27,8 +27,8 @@ pub(crate) struct PositionData {
     pub max_section_pids: i64,
 }
 
-/// `_build_position_data` (:3290) for entries of text, pictures and table containers: a
-/// picture or a container's `open` takes one position, a `close` none (:3372).
+/// `_build_position_data` (:3290) for entries of text, pictures, rules and containers: a
+/// picture, a rule or a container's `open` takes one position, a `close` none (:3372).
 pub(crate) fn build_position_data(section_names: &[String], data: &ChapterData) -> PositionData {
     let mut entries = Vec::new();
     let mut char_offset = 0;
@@ -45,12 +45,13 @@ pub(crate) fn build_position_data(section_names: &[String], data: &ChapterData) 
             let Some(pid) = data.chunk_positions[idx] else {
                 continue;
             };
-            let length = if chunk.picture.is_some() || chunk.marker.is_some() {
-                1
-            } else {
-                page_texts.insert(pid, chunk.text.as_str());
-                py::len(&chunk.text) as i64
-            };
+            let length =
+                if chunk.picture.is_some() || chunk.marker.is_some() || chunk.rule.is_some() {
+                    1
+                } else {
+                    page_texts.insert(pid, chunk.text.as_str());
+                    py::len(&chunk.text) as i64
+                };
             entries.push((char_offset, pid));
             char_offset += length;
             located.push((pid, length));
