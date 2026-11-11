@@ -10,7 +10,7 @@ use super::table_styles::{
     CellStyle, PartStyle, TableStyle, align_symbol, build_cell_style_157, build_part_style_157,
     build_table_style_157,
 };
-use super::writing::{BidiKeys, bidi_value};
+use super::writing::{BidiKeys, bidi_value, rotate_margins};
 use super::{Generator, measure, py, st, sym};
 
 /// `_LINE_EM` (:1055): one line of space, in ems.
@@ -43,6 +43,9 @@ pub(crate) struct Style157 {
     /// A size of 1 written, not left to the container's (#241, #681). None: not given, a
     /// style apart from one given False, as `_allocate_style` keys them.
     pub explicit_size: Option<bool>,
+    /// A run's text-orientation and emphasis marks in vertical text (#247).
+    pub text_orientation: Option<String>,
+    pub text_emphasis: Option<String>,
 }
 
 impl Default for Style157 {
@@ -67,6 +70,8 @@ impl Default for Style157 {
             space_above: None,
             space_below: None,
             explicit_size: None,
+            text_orientation: None,
+            text_emphasis: None,
         }
     }
 }
@@ -99,12 +104,14 @@ impl From<Style157> for StyleArgs {
     }
 }
 
-/// `_allocate_style` (:6941): one `$157` per kind, arguments and direction keys, named
-/// `s<n><kind>`.
+/// `_allocate_style` (:6941): one `$157` per kind, arguments, direction keys and rotation,
+/// named `s<n><kind>`.
 #[derive(Default)]
 pub(crate) struct Styles {
-    pub cache: Vec<(&'static str, StyleArgs, BidiKeys, String)>,
+    pub cache: Vec<(&'static str, StyleArgs, BidiKeys, bool, String)>,
     counts: Vec<(&'static str, usize)>,
+    /// `rotation`: styles are written for a vertical-rl chapter, their margins moved (#247).
+    pub vertical: bool,
 }
 
 impl Styles {
@@ -126,11 +133,9 @@ impl Styles {
         bidi: &[(&'static str, String)],
     ) -> String {
         let style = style.into();
-        if let Some((.., name)) = self
-            .cache
-            .iter()
-            .find(|(k, s, b, _)| *k == kind && *s == style && b[..] == *bidi)
-        {
+        if let Some((.., name)) = self.cache.iter().find(|(k, s, b, v, _)| {
+            *k == kind && *s == style && b[..] == *bidi && *v == self.vertical
+        }) {
             return name.clone();
         }
         let idx = match self.counts.iter_mut().find(|(k, _)| *k == kind) {
@@ -158,14 +163,47 @@ impl Styles {
             }
         };
         if let Value::Struct(v) = &mut value {
+            if self.vertical {
+                rotate_margins(v);
+            }
             for (key, text) in bidi {
                 v.insert(*key, bidi_value(key, text));
             }
         }
         g.push(Fragment::new("$157", Some(&name), value));
-        self.cache.push((kind, style, bidi.to_vec(), name.clone()));
+        self.cache
+            .push((kind, style, bidi.to_vec(), self.vertical, name.clone()));
         name
     }
+}
+
+/// `_ORIENTATION_SYMBOLS` (:937).
+fn orientation_symbol(value: &str) -> Option<&'static str> {
+    match value {
+        "upright" => Some("$779"),
+        "sideways" => Some("$778"),
+        "mixed" => Some("$383"),
+        _ => None,
+    }
+}
+
+/// `_EMPHASIS_SYMBOLS` (:1006): text-emphasis-style as kfxlib maps it.
+fn emphasis_symbol(value: &str) -> Option<&'static str> {
+    Some(match value {
+        "filled" => "$724",
+        "open" => "$725",
+        "filled dot" => "$726",
+        "open dot" => "$727",
+        "filled circle" => "$728",
+        "open circle" => "$729",
+        "filled double-circle" => "$730",
+        "open double-circle" => "$731",
+        "filled triangle" => "$732",
+        "open triangle" => "$733",
+        "filled sesame" => "$734",
+        "open sesame" => "$735",
+        _ => return None,
+    })
 }
 
 /// `measure(Decimal(f"{x:.6g}"), unit)`.
@@ -235,6 +273,27 @@ fn build_fragment_157(g: &mut Generator, name: &str, style: &Style157) -> Value 
             "$16",
             measure(py::decimal_of_float(style.font_size), "$505"),
         );
+    }
+    // `_write_typography` (:1023).
+    if let Some(o) = style
+        .text_orientation
+        .as_deref()
+        .and_then(orientation_symbol)
+    {
+        v.insert("$706", sym(o));
+    }
+    if let Some(e) = style.text_emphasis.as_deref() {
+        if let Some(mark) = emphasis_symbol(e) {
+            v.insert("$717", sym(mark));
+        } else if e.starts_with('"') {
+            // A mark of the book's own, as the string (QA's P748).
+            let inner: String = e
+                .chars()
+                .skip(1)
+                .take(py::len(e).saturating_sub(2))
+                .collect();
+            v.insert("$717", Value::string(&inner));
+        }
     }
     if style.underline {
         v.insert("$23", sym("$328"));

@@ -11,7 +11,7 @@ use deckle_kfx::symtab::SymbolTable;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 
-use super::chapters::read_chapters;
+use super::chapters::{Chapter, read_chapters};
 use super::fonts::FontTable;
 use super::fragments::build_fragment_260;
 use super::images;
@@ -24,11 +24,10 @@ use super::positions::{
 };
 use super::standard_symbols::YJ_SYMBOLS_MAX_ID;
 use super::text::build_chapter_content;
+use super::writing;
 use super::{GenerateError, GenerateOutput, Generator, measure, model_err, py, st, sym};
 use super::{table_chunks, tables};
 use crate::pyvalue::{PyValue, truthy};
-
-use GenerateError::Unsupported;
 
 /// `generate_full_book`'s parameters, all but `output_path`.
 const PARAMS: [&str; 20] = [
@@ -102,9 +101,7 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
         .len();
 
     let rtl = truthy(args.get("rtl"));
-    if writing_mode == Some("vertical-rl") {
-        return Err(Unsupported("vertical text"));
-    }
+    let vertical = writing_mode == Some("vertical-rl");
     let base_language = language.replace('_', "-");
     let base_language = base_language.split('-').next().unwrap_or("").to_lowercase();
 
@@ -136,13 +133,6 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
 
     let mut g = Generator::new();
     let mut chapters = read_chapters(chapters_arg)?;
-    // A chapter set otherwise than the book writes its own on its section (#247).
-    if chapters
-        .iter()
-        .any(|c| c.writing_mode.is_some() && c.writing_mode.as_deref() != writing_mode)
-    {
-        return Err(Unsupported("a chapter's own writing mode"));
-    }
     let footnote_keys = notes::read_footnote_keys(args.get("footnote_keys"))?;
     let table_version =
         tables::feature_version(chapters.iter().flat_map(|c| c.blocks.iter().flatten()));
@@ -178,7 +168,7 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
     if images.cover {
         images::add_cover_page(&mut chapters, &images);
     }
-    let data = build_chapter_content(&mut g, &chapters, &images, &footnote_keys)?;
+    let data = build_chapter_content(&mut g, &chapters, &images, &footnote_keys, vertical)?;
     // Pictures no entry shows are dropped (#102).
     let shown: Vec<&str> = data
         .chunks
@@ -197,13 +187,19 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
     let mut section_names = Vec::new();
     for (i, storyline) in data.storyline_names.iter().enumerate() {
         let name = format!("c{i}");
-        let f = build_fragment_260(&mut g, storyline, &name, data.section_positions[i]);
+        // A chapter set otherwise than the book writes its own on its section (#247).
+        let own = chapters[i]
+            .writing_mode
+            .as_deref()
+            .filter(|&m| Some(m) != writing_mode);
+        let f = build_fragment_260(&mut g, storyline, &name, data.section_positions[i], own);
         g.push(f);
         section_names.push(name);
     }
     let pos = build_position_data(&section_names, &data);
-    let f = build_fragment_538(&mut g, &section_names, rtl);
+    let f = build_fragment_538(&mut g, &section_names, rtl, writing_mode);
     g.push(f);
+    declare_writing_mode_features(&mut g, writing_mode, &chapters, base_language == "ja");
 
     // The cover's page, and a chapter its caller leaves out, are in no contents (:4988).
     let nav_entries: Vec<NavEntry> = chapters
@@ -314,8 +310,9 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
     if data.chunks.iter().any(table_chunks::has_zoom_button) {
         declare_table_viewer(&mut g);
     }
-    if !data.ruby_names.is_empty() {
-        // `_declare_ruby` (:2304), as Kindle Previewer declares a book with ruby (#236).
+    if !data.ruby_names.is_empty() && !vertical {
+        // `_declare_ruby` (:2304), as Kindle Previewer declares a book with ruby (#236); not
+        // in a vertical book, its ruby written all the same (P247a V06).
         declare_feature(&mut g, "yj_ruby");
     }
     if REFLOW_LANGUAGES.contains(&base_language.as_str()) {
@@ -483,16 +480,25 @@ fn reading_order(section_names: &[String]) -> Value {
     ])])
 }
 
-/// `build_fragment_538` (:3011) for a horizontal book. Its `max_id` is set once
-/// the book's symbols are known.
-fn build_fragment_538(g: &mut Generator, section_names: &[String], rtl: bool) -> Fragment {
+/// `build_fragment_538` (:3011). Its `max_id` is set once the book's symbols are known.
+fn build_fragment_538(
+    g: &mut Generator,
+    section_names: &[String],
+    rtl: bool,
+    writing_mode: Option<&str>,
+) -> Fragment {
     for name in section_names {
         g.local(name);
     }
-    let value = st([
-        ("$560", sym("$557")),
-        // Page direction: right to left when the spine says so (#246).
-        ("$192", sym(if rtl { "$375" } else { "$376" })),
+    let vertical = writing_mode == Some("vertical-rl");
+    let Value::Struct(mut value) = st([
+        (
+            "$560",
+            sym(writing::writing_mode_symbol(writing_mode).unwrap_or("$557")),
+        ),
+        // Page direction: right to left when the spine says so (#246). A vertical-rl book is
+        // direction ltr: its pages turn right to left by its writing mode (P247a, #247).
+        ("$192", sym(if rtl && !vertical { "$375" } else { "$376" })),
         (
             "$16",
             measure(
@@ -507,10 +513,55 @@ fn build_fragment_538(g: &mut Generator, section_names: &[String], rtl: bool) ->
         ("$436", sym("$441")),
         ("max_id", Value::Int(0)),
         ("$42", measure(py::decimal("1.2"), "$308")),
-        ("$477", sym("$56")),
-        ("$169", reading_order(section_names)),
-    ]);
-    Fragment::root("$538", value)
+    ]) else {
+        unreachable!()
+    };
+    if !vertical {
+        // Previewer writes no $477 in a vertical book (P247a).
+        value.insert("$477", sym("$56"));
+    }
+    value.insert("$169", reading_order(section_names));
+    Fragment::root("$538", Value::Struct(value))
+}
+
+/// `_declare_writing_mode_features` (:2218): the layout features Kindle Previewer 4.0.3
+/// declares for vertical text (#247), first in `$585`: a vertical book's, or a horizontal
+/// book's with vertical sections.
+fn declare_writing_mode_features(
+    g: &mut Generator,
+    writing_mode: Option<&str>,
+    chapters: &[Chapter],
+    japanese: bool,
+) {
+    let add: Vec<(&str, i64)> = if writing_mode == Some("vertical-rl") {
+        vec![("jp-reflow-language", 1), ("jpvertical-reflow-language", 6)]
+    } else if chapters
+        .iter()
+        .any(|c| c.writing_mode.as_deref() == Some("vertical-rl"))
+    {
+        let mut add = if japanese {
+            vec![("jp-reflow-language", 1)]
+        } else {
+            Vec::new()
+        };
+        add.push(("jpvertical-reflow-language", if japanese { 4 } else { 2 }));
+        add.push(("yj_mixed_writing_mode", 1));
+        add
+    } else {
+        return;
+    };
+    for (n, (name, major)) in add.into_iter().enumerate() {
+        g.local(name);
+        if let Some(features) = g
+            .fragments
+            .get_single_mut(&"$585".into())
+            .and_then(|f| f.value.as_struct_mut())
+            .and_then(|s| s.get_mut("$590"))
+            .and_then(Value::as_list_mut)
+        {
+            features.insert(n, feature("com.amazon.yjconversion", name, major));
+        }
+    }
 }
 
 /// `build_fragment_258` (:2983).

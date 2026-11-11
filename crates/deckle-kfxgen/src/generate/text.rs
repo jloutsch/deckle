@@ -62,6 +62,7 @@ pub(crate) fn build_chapter_content(
     chapters: &[Chapter],
     images: &Images,
     footnote_keys: &BTreeSet<String>,
+    vertical_book: bool,
 ) -> Result<ChapterData, GenerateError> {
     let mut chunks: Vec<Chunk> = Vec::new();
     let mut chapter_chunk_ranges = Vec::new();
@@ -481,6 +482,11 @@ pub(crate) fn build_chapter_content(
     for (ch_idx, &(start, end)) in chapter_chunk_ranges.iter().enumerate() {
         let sl_name = format!("l{ch_idx}");
         let mut readings = Vec::new();
+        // A vertical-rl chapter's styles have their margins moved (#247, :7383).
+        styles.vertical = match chapters[ch_idx].writing_mode.as_deref() {
+            Some(mode) => mode == "vertical-rl",
+            None => vertical_book,
+        };
         let fs = chapters[ch_idx].font_size;
         let mut entry_styles = Vec::new();
         // A container's own `$157`: a row's or group's border (:7556), a box's (:7520).

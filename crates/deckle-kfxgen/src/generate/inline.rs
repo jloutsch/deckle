@@ -49,6 +49,10 @@ pub(crate) enum Flag {
     Lang(String),
     /// `make_ruby_flag` (#236): the base of a reading, as (serial, reading).
     Ruby(i64, String),
+    /// `ORIENTATION_FLAG` (#247): text-orientation in vertical text.
+    Orientation(String),
+    /// `EMPHASIS_MARKS_FLAG` (#247): text-emphasis-style, marks beside vertical text.
+    EmphasisMarks(String),
 }
 
 /// A size in CSS px, ordered by `total_cmp` so a run's flags can be a set; read with no sign
@@ -143,13 +147,16 @@ fn flag_of(f: &PyValue, at: &str) -> Result<Flag, GenerateError> {
             }
             (Some("link-colour"), _) => return Err(Unsupported("link colours")),
             (Some("picture"), _) => return Err(Unsupported("images")),
-            (
-                Some(
-                    "small-caps" | "transform" | "spacing" | "colour" | "orientation"
-                    | "emphasis-marks",
-                ),
-                _,
-            ) => return Err(Unsupported("small caps, case, spacing and colour in runs")),
+            (Some("orientation"), PyValue::Str(v)) => Flag::Orientation(v.clone()),
+            (Some("emphasis-marks"), PyValue::Str(v)) => Flag::EmphasisMarks(v.clone()),
+            (Some("orientation" | "emphasis-marks"), _) => {
+                return Err(model_err(format!(
+                    "{at}.spans: a typography value, a string"
+                )));
+            }
+            (Some("small-caps" | "transform" | "spacing" | "colour"), _) => {
+                return Err(Unsupported("small caps, case, spacing and colour in runs"));
+            }
             _ => return Err(Unsupported("a span flag")),
         },
         _ => return Err(Unsupported("a span flag")),
@@ -213,6 +220,13 @@ pub(crate) fn read_spans(v: Option<&PyValue>, at: &str) -> Result<Vec<Span>, Gen
         }
         if count(|f| matches!(f, Flag::Ruby(..))) > 1 {
             return Err(Unsupported("a run under two rubies"));
+        }
+        if count(|f| matches!(f, Flag::Orientation(_))) > 1
+            || count(|f| matches!(f, Flag::EmphasisMarks(_))) > 1
+        {
+            return Err(Unsupported(
+                "a run of two orientations or two emphasis marks",
+            ));
         }
         if count(|f| matches!(f, Flag::Size(_))) > 1 || count(|f| matches!(f, Flag::Mono(_))) > 1 {
             return Err(Unsupported("a run of two sizes or two monospace families"));
@@ -550,6 +564,13 @@ fn emphasis_style(
     }
     // Superscript wins if a run is marked both (#52, #123). kfxgen's
     // KFXGEN_SUPERSCRIPT_FONT_SIZE override isn't read (DIVERGENCES.md).
+    for f in flags {
+        match f {
+            Flag::Orientation(v) => style.text_orientation = Some(v.clone()),
+            Flag::EmphasisMarks(v) => style.text_emphasis = Some(v.clone()),
+            _ => {}
+        }
+    }
     if has(Flag::Super) {
         (style.font_size, style.baseline_style) = (SHIFT_FONT_SIZE, Some("$370"));
     } else if has(Flag::Sub) {

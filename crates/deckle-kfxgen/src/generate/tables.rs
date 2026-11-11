@@ -175,7 +175,7 @@ pub(crate) fn read_table_block(b: &PyValue, at: &str) -> Result<Block, GenerateE
     let at_t = format!("{at}.table");
     let bidi = Bidi::read(t.get("bidi"), &format!("{at_t}.bidi"))?;
     if truthy(t.get("horizontal")) {
-        return Err(Unsupported("vertical text"));
+        return Err(Unsupported("a horizontal table in vertical text"));
     }
     let rows = t
         .get("rows")

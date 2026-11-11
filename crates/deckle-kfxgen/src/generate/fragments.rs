@@ -13,6 +13,7 @@ use super::inline::{self, EntryLink, Run};
 use super::inline_picture_entries::InlineStyles;
 use super::notes::Popups;
 use super::table_styles::column_widths_152;
+use super::writing;
 use super::{GenerateError, Generator, measure, py, st, sym};
 
 /// `MAX_CONTENT_FRAGMENT_SIZE` (:1585).
@@ -243,14 +244,20 @@ pub(crate) fn build_fragment_260(
     storyline: &str,
     section: &str,
     position: i64,
+    writing_mode: Option<&str>,
 ) -> Fragment {
     g.local(section);
     g.local(storyline);
-    let entry = st([
-        ("$155", Value::Int(position)),
-        ("$176", sym(storyline)),
-        ("$159", sym("$269")),
-    ]);
+    let Value::Struct(mut entry) = st([("$155", Value::Int(position)), ("$176", sym(storyline))])
+    else {
+        unreachable!()
+    };
+    if let Some(mode) = writing::writing_mode_symbol(writing_mode) {
+        // A file set otherwise than the book: its own on its page template (P247c, #247).
+        entry.insert("$560", sym(mode));
+    }
+    entry.insert("$159", sym("$269"));
+    let entry = Value::Struct(entry);
     let value = st([("$174", sym(section)), ("$141", Value::List(vec![entry]))]);
     Fragment::new("$260", Some(section), value)
 }

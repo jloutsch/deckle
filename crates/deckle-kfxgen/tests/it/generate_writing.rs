@@ -33,6 +33,29 @@ fn ruby_matches_kfxgen() {
     matches_kfxgen("ruby");
 }
 
+/// kfxgen's `test_books/vertical_247/s746k.epub`: a vertical-rl Japanese book on a
+/// right-to-left spine (#247), its margins moved for vertical text, upright and sideways
+/// runs, a ruby, a link, and a horizontal colophon page.
+#[test]
+fn vertical_matches_kfxgen() {
+    matches_kfxgen("vertical");
+}
+
+/// A vertical-rl book whose contents page kfxgen rebuilds: a chapter of no writing mode of
+/// its own takes the book's (#247).
+#[test]
+fn vertical_contents_matches_kfxgen() {
+    matches_kfxgen("vertical_contents");
+}
+
+/// kfxgen's `test_books/tcy_emphasis_748/s748k.epub`: tate-chu-yoko, bold and in bold, and
+/// emphasis marks of four kinds, one the book's own, in a vertical-rl book (#247).
+#[test]
+#[ignore = "tate-chu-yoko, the next commit"]
+fn ruby_tcy_matches_kfxgen() {
+    matches_kfxgen("ruby_tcy");
+}
+
 fn directions() -> Model {
     load_model(&deckle_kfx::fixtures::kfxgen("models/directions")).unwrap()
 }

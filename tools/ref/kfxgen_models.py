@@ -123,9 +123,10 @@ def shim(kfxgen, out):
             print(f"shim {name}: {len(replay)} bytes")
 
 
-def _epub(path, title, lang, chapters, css="", rtl=False, extra=(), bare=()):
+def _epub(path, title, lang, chapters, css="", rtl=False, extra=(), bare=(), vertical=()):
     """A small EPUB 3 with an NCX: chapters are (id, title, body_xhtml_inner), each opening
-    with its title as an <h1> unless its id is in `bare`."""
+    with its title as an <h1> unless its id is in `bare`, written vertical-rl if its id is in
+    `vertical`."""
     items, spine, nav, ncx = [], [], [], []
     for i, (cid, ctitle, body) in enumerate(chapters, 1):
         items.append(f'<item id="{cid}" href="{cid}.xhtml" media-type="application/xhtml+xml"/>')
@@ -189,7 +190,8 @@ def _epub(path, title, lang, chapters, css="", rtl=False, extra=(), bare=()):
                 '<?xml version="1.0" encoding="utf-8"?>'
                 f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{lang}" lang="{lang}"{dir_attr}>'
                 f'<head><title>{ctitle}</title><link rel="stylesheet" href="style.css"/></head>'
-                f"<body>{'' if cid in bare else f'<h1>{ctitle}</h1>'}{body}</body></html>",
+                f"<body{' style=\"writing-mode: vertical-rl\"' if cid in vertical else ''}>"
+                f"{'' if cid in bare else f'<h1>{ctitle}</h1>'}{body}</body></html>",
             )
         for href, _, data in extra:
             write(f"OEBPS/{href}", data)
@@ -306,8 +308,10 @@ def synth(out):
                 'it.</p></div><div class="box" dir="rtl"><p>בתיבה.</p></div>',
             ),
             ("c4", "A table alone", '<table dir="rtl"><tr><td>טבלה</td></tr></table>'),
+            ("c5", "Vertical", "<p>An English chapter set vertical-rl.</p>"),
         ],
         bare=("c4",),
+        vertical=("c5",),
         css="span.emb { direction: rtl; unicode-bidi: embed; }\n"
         "span.big { font-size: 1.5em; }\n"
         "p.start { text-align: start; }\n"
@@ -347,9 +351,39 @@ def synth(out):
                 "四の章",
                 "<h1><ruby>四<rt>よん</rt></ruby>の章</h1><p>読みの無い題。</p>",
             ),
+            (
+                "c5",
+                "縦書きの章",
+                '<p>縦に<ruby>書<rt>か</rt></ruby>く。<span class="up">ABC</span>は立てる。</p>'
+                '<p class="m">余白のある段落。</p>'
+                '<div class="box"><p>枠の中。</p></div>'
+                "<table><tr><td>表</td><td>二</td></tr></table>",
+            ),
         ],
-        css="p.t { font-size: 1.5em; font-weight: bold; }",
+        css="p.t { font-size: 1.5em; font-weight: bold; }\n"
+        "p.m { margin: 1em 2em 0.5em 3em; }\n"
+        "span.up { text-orientation: upright; }\n"
+        "div.box { border: 1px solid black; padding: 1em 0.5em 0.25em 2em; }",
         bare=("c1", "c2", "c3", "c4"),
+        vertical=("c5",),
+    )
+    # A vertical book's rebuilt contents page, a chapter of no writing mode (#247).
+    _epub(
+        out / "vertical_contents.epub",
+        "縦の目次",
+        "ja",
+        [
+            (
+                "c0",
+                "Contents",
+                '<ul><li><a href="c1.xhtml">第一章</a></li><li><a href="c2.xhtml">第二章</a>'
+                "</li></ul>",
+            ),
+            ("c1", "第一章", "<p>縦に書いた本文。</p>"),
+            ("c2", "第二章", "<p>二つ目の章。</p>"),
+        ],
+        rtl=True,
+        vertical=("c0", "c1", "c2"),
     )
     # Shaped as kfxgen's test_books/figures (#382) and floats (#243, #565), less what isn't
     # ported (a linked picture, a picture among words).
@@ -419,7 +453,7 @@ def synth(out):
         "img.fl { float: left; width: 30%; } img.fr { float: right; width: 25%; }",
         extra=[("p.png", "image/png", _png_image(600, 400))],
     )
-    for name in ("lists", "fonts", "rtl", "directions", "ruby", "frames"):
+    for name in ("lists", "fonts", "rtl", "directions", "ruby", "vertical_contents", "frames"):
         print(out / f"{name}.epub")
 
 

@@ -4,7 +4,7 @@
 //! (#246, #605, #710, #714), and the runs an inline element's direction lays out
 //! (`_direction_layers`, `native_generator.py:402`); ruby (#236).
 use deckle_kfx::fragment::Fragment;
-use deckle_kfx::ion::Value;
+use deckle_kfx::ion::{Struct, Value};
 
 use super::chapters::Block;
 use super::inline::{Flag, Flags, Run, Span, title_spans};
@@ -545,4 +545,56 @@ pub(crate) fn build_fragment_756(
         Some(name),
         st([("$757", sym(name)), ("$146", Value::List(entries))]),
     )
+}
+
+/// `_WRITING_MODE_SYMBOLS` (:939).
+pub(crate) fn writing_mode_symbol(mode: Option<&str>) -> Option<&'static str> {
+    match mode? {
+        "horizontal-tb" => Some("$557"),
+        "vertical-rl" => Some("$559"),
+        _ => None,
+    }
+}
+
+/// `_VERTICAL_KEYS` (:962): in vertical-rl text, the key each of kfxgen's margin and padding
+/// keys moves to (#247).
+const VERTICAL_KEYS: [(&str, &str); 8] = [
+    ("$47", "$50"),
+    ("$49", "$48"),
+    ("$48", "$47"),
+    ("$50", "$49"),
+    ("$52", "$55"),
+    ("$54", "$53"),
+    ("$53", "$52"),
+    ("$55", "$54"),
+];
+
+/// `_rotate_margins` (:989): a `$157`'s margins and paddings moved for vertical-rl text, as
+/// Kindle Previewer 4.0.3 writes them, kfxgen's own 0.5% left margin dropped.
+pub(crate) fn rotate_margins(v: &mut Struct) {
+    // `_drop_default_left` (:982): Python compares the measure as an OrderedDict, its
+    // magnitude by value.
+    let default_left = v.get("$48").and_then(Value::as_struct).is_some_and(|m| {
+        matches!(&m.0[..], [(k, Value::Decimal(d)), (u, unit)]
+        if k.0 == "$307" && u.0 == "$306" && *unit == sym("$314")
+            && d.coefficient != 0
+            && {
+                let (mut c, mut e) = (d.coefficient, d.exponent);
+                while c % 10 == 0 {
+                    c /= 10;
+                    e += 1;
+                }
+                (c, e) == (5, -1)
+            })
+    });
+    if default_left {
+        v.remove("$48");
+    }
+    let moved: Vec<(&str, Value)> = VERTICAL_KEYS
+        .iter()
+        .filter_map(|(old, new)| Some((*new, v.remove(old)?)))
+        .collect();
+    for (key, value) in moved {
+        v.insert(key, value);
+    }
 }
