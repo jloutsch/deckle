@@ -134,15 +134,7 @@ pub(crate) fn build_chapter_content(
             || heading_near_start
             || label_over_blocks;
         let mut heading_chunk = None;
-        // The page's direction and language, for kfxgen's lines with no block of the book's
-        // to take them from: its heading, a rebuilt contents page's lines (#714, :6307).
-        let page_bidi = chapter.page_bidi.clone().filter(|b| b.set).or_else(|| {
-            writing::page_bidi(blocks.iter().flat_map(|b| {
-                let boxed = b.boxed.as_ref().and_then(|x| x.spec.bidi.as_ref());
-                let table = b.table.as_ref().and_then(|t| t.bidi.as_ref());
-                [b.style.as_ref().and_then(|s| s.bidi.as_ref()), boxed, table]
-            }))
-        });
+        let page_bidi = writing::page_bidi(chapter, blocks);
         if !omit_heading {
             heading_chunk = Some(chunks.len());
             chunks.push(Chunk {
@@ -646,19 +638,7 @@ pub(crate) fn build_chapter_content(
         story_names.retain(|n| !unused.contains(n));
         extra_style_names.retain(|n| !unused.contains(n));
     }
-    // Ruby, built after the pruning, which looks only in the storylines (:8126).
-    if !ruby_readings.is_empty() {
-        let f = writing::build_ruby_style_157(g);
-        g.push(f);
-        extra_style_names.push(writing::RUBY_STYLE_NAME.to_owned());
-    }
-    let mut ruby_names = Vec::new();
-    for (ch_idx, readings) in &ruby_readings {
-        let name = format!("ruby{ch_idx}");
-        let f = writing::build_fragment_756(g, &name, readings);
-        g.push(f);
-        ruby_names.push(name);
-    }
+    let ruby_names = writing::build_ruby_fragments(g, &ruby_readings, &mut extra_style_names);
     // Pictures among words: their styles after the pruning (:8133).
     for (name, value) in inline_styles.into_styles() {
         g.push(Fragment::new("$157", Some(&name), value));

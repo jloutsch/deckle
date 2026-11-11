@@ -7,7 +7,7 @@
 use deckle_kfx::fragment::Fragment;
 use deckle_kfx::ion::{Struct, Value};
 
-use super::chapters::Block;
+use super::chapters::{Block, Chapter};
 use super::chunks::Chunk;
 use super::fragments::{MAX_CONTENT_FRAGMENT_SIZE, build_fragment_145};
 use super::inline::{Flag, Flags, Run, Span, title_spans};
@@ -144,9 +144,23 @@ pub(crate) fn bidi_diff(own: Option<&Bidi>, around: Option<&Bidi>) -> BidiKeys {
         .collect()
 }
 
-/// `page_bidi` (`inline_style.py:442`): the first of `bidis` that is set.
-pub(crate) fn page_bidi<'a>(bidis: impl IntoIterator<Item = Option<&'a Bidi>>) -> Option<Bidi> {
-    bidis.into_iter().flatten().find(|b| b.set).cloned()
+/// The page's direction and language, for kfxgen's lines with no block of the book's to take
+/// them from: its heading, a rebuilt contents page's lines (#714, :6307). The converter's
+/// `page_bidi`, else `page_bidi(blocks)` (`inline_style.py:442`): the first block's that is
+/// set, of its style, box or table.
+pub(crate) fn page_bidi(chapter: &Chapter, blocks: &[Block]) -> Option<Bidi> {
+    chapter.page_bidi.clone().filter(|b| b.set).or_else(|| {
+        blocks
+            .iter()
+            .flat_map(|b| {
+                let boxed = b.boxed.as_ref().and_then(|x| x.spec.bidi.as_ref());
+                let table = b.table.as_ref().and_then(|t| t.bidi.as_ref());
+                [b.style.as_ref().and_then(|s| s.bidi.as_ref()), boxed, table]
+            })
+            .flatten()
+            .find(|b| b.set)
+            .cloned()
+    })
 }
 
 /// A `$157` key's value: a language as written, a direction's symbol.
@@ -355,7 +369,7 @@ pub(crate) fn direction_layers(spans: &[Span]) -> Vec<Layer> {
 }
 
 /// `RUBY_STYLE_NAME` (:5261): every reading's style.
-pub(crate) const RUBY_STYLE_NAME: &str = "s0_rt";
+const RUBY_STYLE_NAME: &str = "s0_rt";
 
 /// `make_ruby_flag`'s `("ruby", (serial, reading))` (#236).
 pub(crate) fn read_ruby_flag(v: &PyValue, at: &str) -> Result<Flag, GenerateError> {
@@ -512,8 +526,31 @@ pub(crate) fn place_rubies(
     }
 }
 
+/// The readings' style and each chapter's ruby fragment, built after the pruning, which looks
+/// only in the storylines (:8126). `readings`: each chapter's (id, reading). Returns the
+/// fragments' names.
+pub(crate) fn build_ruby_fragments(
+    g: &mut Generator,
+    readings: &[(usize, Vec<(i64, String)>)],
+    extra_style_names: &mut Vec<String>,
+) -> Vec<String> {
+    if !readings.is_empty() {
+        let f = build_ruby_style_157(g);
+        g.push(f);
+        extra_style_names.push(RUBY_STYLE_NAME.to_owned());
+    }
+    let mut names = Vec::new();
+    for (ch_idx, readings) in readings {
+        let name = format!("ruby{ch_idx}");
+        let f = build_fragment_756(g, &name, readings);
+        g.push(f);
+        names.push(name);
+    }
+    names
+}
+
 /// `build_ruby_style_157` (:2328): half the base's size at a normal line height.
-pub(crate) fn build_ruby_style_157(g: &mut Generator) -> Fragment {
+fn build_ruby_style_157(g: &mut Generator) -> Fragment {
     g.local(RUBY_STYLE_NAME);
     let value = st([
         ("$16", measure(py::decimal("0.5"), "$308")),
@@ -525,11 +562,7 @@ pub(crate) fn build_ruby_style_157(g: &mut Generator) -> Fragment {
 
 /// `build_fragment_756` (:2342): a chapter's ruby fragment, one text entry per reading,
 /// numbered from 1 as the bases' events name them.
-pub(crate) fn build_fragment_756(
-    g: &mut Generator,
-    name: &str,
-    readings: &[(i64, String)],
-) -> Fragment {
+fn build_fragment_756(g: &mut Generator, name: &str, readings: &[(i64, String)]) -> Fragment {
     g.local(name);
     let entries = readings
         .iter()
