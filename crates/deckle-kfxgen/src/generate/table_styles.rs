@@ -5,8 +5,9 @@
 //! :4007), and the table's `$152` columns.
 use deckle_kfx::ion::{Decimal, Struct, Value};
 
-use super::block_styles::{BlockStyle, family};
+use super::block_styles::BlockStyle;
 use super::chunks::{Marker, Node};
+use super::fonts::FontTable;
 use super::styles::{StyleArgs, Styles, g6};
 use super::table_chunks::CellInfo;
 use super::tables::{Border, ColumnWidths, Pad, Padding};
@@ -31,7 +32,7 @@ pub(crate) struct CellStyle {
     pub align: Option<String>,
     pub bold: bool,
     pub italic: bool,
-    pub font_family: Option<&'static str>,
+    pub font_family: Option<String>,
     pub colspan: i64,
     pub rowspan: i64,
     pub font_size: f64,
@@ -44,15 +45,22 @@ pub(crate) struct CellStyle {
 }
 
 impl CellStyle {
-    /// `_cell_style` (:7326): a header is bold and centred on its own.
-    pub(crate) fn of(cell: &CellInfo, bs: Option<&BlockStyle>, font_size: f64) -> Self {
+    /// `_cell_style` (:7326): a header is bold and centred on its own, and names the face
+    /// of its weight (#50).
+    pub(crate) fn of(
+        fonts: &FontTable,
+        cell: &CellInfo,
+        bs: Option<&BlockStyle>,
+        font_size: f64,
+    ) -> Self {
         let (blk_bold, blk_italic) = bs.map_or((false, false), |b| (b.bold, b.italic));
         let align = bs.and_then(|b| b.align.clone());
+        let bold = (cell.header && !cell.not_bold) || blk_bold;
         CellStyle {
             align: align.or_else(|| cell.header.then(|| "center".to_owned())),
-            bold: (cell.header && !cell.not_bold) || blk_bold,
+            bold,
             italic: blk_italic,
-            font_family: bs.and_then(|b| family(&b.family)),
+            font_family: fonts.family(bs.map_or(&[], |b| &b.family), bold, blk_italic),
             colspan: cell.colspan,
             rowspan: cell.rowspan,
             font_size,
@@ -92,7 +100,7 @@ pub(crate) fn marker_styles(
             )
         }
         Marker::Open(Node::Cell(cell)) => {
-            let cell = CellStyle::of(cell, bs, font_size);
+            let cell = CellStyle::of(&g.fonts, cell, bs, font_size);
             let name = styles.allocate_in(g, "_td", StyleArgs::Cell(cell), lang);
             (Some(name), None)
         }
@@ -341,7 +349,7 @@ pub(crate) fn build_cell_style_157(g: &mut Generator, name: &str, s: &CellStyle)
     if s.rowspan > 1 {
         v.insert("$149", Value::Int(s.rowspan));
     }
-    if let Some(family) = s.font_family {
+    if let Some(family) = &s.font_family {
         v.insert("$11", Value::string(family));
     }
     if s.font_size != 1.0 {

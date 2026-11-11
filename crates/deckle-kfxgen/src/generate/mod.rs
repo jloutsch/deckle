@@ -8,6 +8,7 @@ mod block_styles;
 mod boxes;
 mod chapters;
 mod chunks;
+mod fonts;
 mod fragments;
 mod frames;
 mod images;
@@ -64,6 +65,8 @@ pub fn generate(model: &Model) -> Result<GenerateOutput, GenerateError> {
 pub struct Generator {
     pub(crate) fragments: FragmentList,
     pub(crate) symtab: SymbolTable,
+    /// `self.font_table`: the book's embedded faces.
+    pub(crate) fonts: fonts::FontTable,
 }
 
 impl Generator {
@@ -76,6 +79,7 @@ impl Generator {
         Generator {
             fragments: FragmentList::new(),
             symtab,
+            fonts: fonts::FontTable::default(),
         }
     }
 

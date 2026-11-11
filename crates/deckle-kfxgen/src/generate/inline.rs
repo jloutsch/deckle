@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use deckle_kfx::fragment::Fragment;
 use deckle_kfx::ion::{Struct, Value};
 
+use super::block_styles::{Sizes, number};
+use super::fonts::FontTable;
 use super::notes::Popups;
 use super::styles::{Style157, Styles};
 use super::{GenerateError, Generator, model_err, py, st, sym};
@@ -36,10 +38,55 @@ pub(crate) enum Flag {
     /// A link to a note (#445).
     NoteRef,
     Link(String),
+    /// `make_mono_flag` (#242): monospace, in these families.
+    Mono(Vec<String>),
+    /// `make_size_flag` (#241): a size of its own, in CSS px.
+    Size(Px),
+}
+
+/// A size in CSS px, ordered by `total_cmp` so a run's flags can be a set; read with no sign
+/// on 0, which Python's `==` ignores.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Px(f64);
+
+impl PartialEq for Px {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for Px {}
+
+impl PartialOrd for Px {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Px {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
 }
 
 /// A run's flags: a Python frozenset, kept sorted so nothing depends on set order.
 pub(crate) type Flags = BTreeSet<Flag>;
+
+/// `run_font_size`: the size a run's size flag carries.
+pub(crate) fn run_font_size(flags: &Flags) -> Option<f64> {
+    flags.iter().find_map(|f| match f {
+        Flag::Size(px) => Some(px.0),
+        _ => None,
+    })
+}
+
+/// `mono_families`: the families a run's monospace flag carries.
+fn mono_families(flags: &Flags) -> Option<&[String]> {
+    flags.iter().find_map(|f| match f {
+        Flag::Mono(families) => Some(&families[..]),
+        _ => None,
+    })
+}
 
 /// `(start, length, flags)`, in characters.
 #[derive(Clone, Debug)]
@@ -49,7 +96,7 @@ pub(crate) struct Span {
     pub flags: Flags,
 }
 
-fn flag_of(f: &PyValue) -> Result<Flag, GenerateError> {
+fn flag_of(f: &PyValue, at: &str) -> Result<Flag, GenerateError> {
     Ok(match f {
         PyValue::Str(s) => match s.as_str() {
             "bold" => Flag::Bold,
@@ -72,8 +119,17 @@ fn flag_of(f: &PyValue) -> Result<Flag, GenerateError> {
             (Some("ruby"), _) => return Err(Unsupported("ruby")),
             (Some("tcy"), _) => return Err(Unsupported("tate-chu-yoko")),
             (Some("bidi" | "lang"), _) => return Err(Unsupported("text direction")),
-            (Some("mono"), _) => return Err(Unsupported("monospace runs")),
-            (Some("size"), _) => return Err(Unsupported("sized runs")),
+            (Some("mono"), families) => Flag::Mono(
+                families
+                    .as_list()
+                    .and_then(|l| l.iter().map(|f| f.as_str().map(str::to_owned)).collect())
+                    .ok_or_else(|| model_err(format!("{at}.spans: monospace families, strings")))?,
+            ),
+            (Some("size"), px) => {
+                let px = number(px)
+                    .ok_or_else(|| model_err(format!("{at}.spans: a run's size, a number")))?;
+                Flag::Size(Px(if px == 0.0 { 0.0 } else { px }))
+            }
             (Some("link-colour"), _) => return Err(Unsupported("link colours")),
             (Some("picture"), _) => return Err(Unsupported("images")),
             (
@@ -131,10 +187,18 @@ pub(crate) fn read_spans(v: Option<&PyValue>, at: &str) -> Result<Vec<Span>, Gen
     }
     let mut out = Vec::with_capacity(parts.len());
     for (start, len, flags) in parts {
-        let flags: Flags = flags.iter().map(flag_of).collect::<Result<_, _>>()?;
-        // `_direction_layers` would take the links in set order.
-        if flags.iter().filter(|f| matches!(f, Flag::Link(_))).count() > 1 {
+        let flags: Flags = flags
+            .iter()
+            .map(|f| flag_of(f, at))
+            .collect::<Result<_, _>>()?;
+        // `_direction_layers` would take the links in set order, and `run_font_size` and
+        // `mono_families` the first size or family.
+        let count = |kind: fn(&Flag) -> bool| flags.iter().filter(|f| kind(f)).count();
+        if count(|f| matches!(f, Flag::Link(_))) > 1 {
             return Err(Unsupported("a run in two links"));
+        }
+        if count(|f| matches!(f, Flag::Size(_))) > 1 || count(|f| matches!(f, Flag::Mono(_))) > 1 {
+            return Err(Unsupported("a run of two sizes or two monospace families"));
         }
         out.push(Span { start, len, flags });
     }
@@ -487,18 +551,20 @@ fn link_layers(spans: &[Span]) -> Vec<(i64, i64, Flags, Vec<Flags>)> {
         .collect()
 }
 
-/// `_emphasis_style` (:7245) with no embedded font, size or typography: a run's `$157`.
-/// `family`: its paragraph's, "monospace" or none (`_family` :7233).
+/// `_emphasis_style` (:7245) with no typography: a run's `$157`, from its weight and slant
+/// and those it starts from (`run_b`, `run_i`), its family (#50) and its own size (#241).
 fn emphasis_style(
+    fonts: &FontTable,
+    sizes: &Sizes,
     flags: &Flags,
-    blk_bold: bool,
-    blk_italic: bool,
-    family: Option<&'static str>,
-    in_cell: bool,
+    (blk_bold, blk_italic): (bool, bool),
+    families: &[String],
+    base: &RunBase,
 ) -> Style157 {
     let has = |f: Flag| flags.contains(&f);
     let bold = has(Flag::Bold) || (blk_bold && !has(Flag::NotBold));
     let italic = has(Flag::Italic) || (blk_italic && !has(Flag::NotItalic));
+    let mono = mono_families(flags).filter(|m| !m.is_empty());
     let mut style = Style157 {
         bold,
         italic,
@@ -506,10 +572,18 @@ fn emphasis_style(
         upright: blk_italic && !italic,
         underline: has(Flag::Underline),
         strike: has(Flag::Strike),
-        font_family: family,
-        no_align: in_cell,
+        font_family: fonts.family(mono.unwrap_or(families), bold, italic),
+        no_align: base.in_cell,
         ..Style157::default()
     };
+    if let Some(px) = run_font_size(flags).filter(|_| base.sized) {
+        let size = sizes.rem(Some(px));
+        if size != base.blk_fs {
+            // 1 is written too, when the paragraph's isn't (#375 review).
+            style.font_size = size;
+            style.explicit_size = Some(size == 1.0);
+        }
+    }
     // Superscript wins if a run is marked both (#52, #123). kfxgen's
     // KFXGEN_SUPERSCRIPT_FONT_SIZE override isn't read (DIVERGENCES.md).
     if has(Flag::Super) {
@@ -536,21 +610,27 @@ pub(crate) struct Run {
     popup: bool,
 }
 
-/// What a chunk's runs start from (:7820): its paragraph's weight, slant and family, and
-/// whether it is in a table cell. `bold`: a chapter heading, a header cell, a bold block.
-pub(crate) struct RunBase {
+/// What a chunk's runs start from (:7820): its paragraph's weight, slant, families and size,
+/// and whether it is in a table cell. `bold`: a chapter heading, a header cell, a bold block.
+pub(crate) struct RunBase<'a> {
     pub bold: bool,
     pub italic: bool,
-    pub family: Option<&'static str>,
+    pub family: &'a [String],
     pub in_cell: bool,
+    /// `_block_font_size`, or the size of the book's heading printing as kfxgen's (#721).
+    pub blk_fs: f64,
+    /// Runs' own sizes are written: not in kfxgen's own heading (#241).
+    pub sized: bool,
 }
 
 /// The runs of a chunk's entry (:7851–8037): each layered span's style, and its link's
 /// anchor when the book declares the target. A run that is only a found link has no style.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn entry_runs(
     g: &mut Generator,
     styles: &mut Styles,
     extra_style_names: &mut Vec<String>,
+    sizes: &Sizes,
     spans: &[Span],
     base: &RunBase,
     body_anchor_map: &BTreeMap<String, String>,
@@ -558,8 +638,8 @@ pub(crate) fn entry_runs(
 ) -> Vec<Run> {
     let mut runs = Vec::new();
     for (start, len, flags, under) in link_layers(spans) {
-        // A run layered on others starts from their weight and slant (#715).
-        let (mut run_b, mut run_i) = (base.bold, base.italic);
+        // A run layered on others starts from their weight, slant and font (#715).
+        let (mut run_b, mut run_i, mut run_fam) = (base.bold, base.italic, base.family);
         for u in &under {
             if u.contains(&Flag::Bold) {
                 run_b = true;
@@ -571,6 +651,9 @@ pub(crate) fn entry_runs(
             } else if u.contains(&Flag::NotItalic) {
                 run_i = false;
             }
+            if let Some(mono) = mono_families(u).filter(|m| !m.is_empty()) {
+                run_fam = mono;
+            }
         }
         if flags.is_empty() {
             continue;
@@ -579,11 +662,21 @@ pub(crate) fn entry_runs(
             Flag::Link(t) => body_anchor_map.get(t).cloned(),
             _ => None,
         });
-        let has_emphasis = flags
-            .iter()
-            .any(|f| !matches!(f, Flag::Link(_) | Flag::Baseline | Flag::NoteRef));
+        let mut has_emphasis = flags.iter().any(|f| match f {
+            Flag::Link(_) | Flag::Baseline | Flag::NoteRef | Flag::Size(_) => false,
+            Flag::Mono(families) => !families.is_empty(),
+            _ => true,
+        });
+        let run_px = run_font_size(&flags);
+        if base.sized && run_px.is_some_and(|px| sizes.rem(Some(px)) != base.blk_fs) {
+            has_emphasis = true;
+        } else if flags.iter().all(|f| matches!(f, Flag::Size(_))) {
+            // Only a size, and the paragraph's: no run, as a paragraph wholly in a sized
+            // span has none (#375). kfxgen also asks for no anchor, which only a link has.
+            continue;
+        }
         let style = (has_emphasis || anchor.is_none()).then(|| {
-            let style = emphasis_style(&flags, run_b, run_i, base.family, base.in_cell);
+            let style = emphasis_style(&g.fonts, sizes, &flags, (run_b, run_i), run_fam, base);
             let name = styles.allocate(g, "_em", style);
             if !extra_style_names.contains(&name) {
                 extra_style_names.push(name.clone());

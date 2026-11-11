@@ -50,3 +50,12 @@ port holds them in an i64, subtracts text lengths from a run's ends (`_title_spa
 `_trim_text`) and takes one end from another (`_direction_layers`). A run whose start or end
 (`start + length`) is past ±2^61 is a `GenerateError::Model` naming the spans, where kfxgen
 writes a book. A run's offsets count characters of the paragraph, so no converted book has one.
+
+## Run sizes and monospace families of another type
+
+The converter writes a run's size flag as `("size", px)`, px an int or float (`css_font_size`,
+`inline_style.py:513`), and its monospace flag as `("mono", families)`, a tuple of strings
+(`make_mono_flag`, :496). The port reads exactly those; anything else is a
+`GenerateError::Model` naming the runs. kfxgen raises on most of the rest (a string size, when
+it sorts it among the paragraphs' sizes), but writes a book for some: a bool size, which Python
+counts as 0 or 1, and families that aren't strings, which match no face.

@@ -113,11 +113,29 @@ impl Chunk {
 }
 
 /// `_print_book_heading` (:1477): kfxgen's heading takes the place of the book's: its runs,
-/// its style (#490), the space above and below it (#665) and its level (#461). With no
-/// sized runs.
+/// its style (#490), its size when its words are in runs of one (QA on #720), the space above
+/// and below it (#665) and its level (#461).
 pub(crate) fn print_book_heading(heading: &mut Chunk, block: &Block, title: &str) {
     heading.spans = inline::title_spans(&block.text, &block.spans, py::len(title));
     heading.heading.book_style = block.style.clone();
+    // Words all in runs of one size print at that size, as Kindle Previewer 4.0.3 writes a
+    // 0.75em heading holding a 2em span: 1.5em (QA on #720). A heading of no style then has
+    // one of only that size.
+    let mut sizes = vec![None; py::len(title)];
+    for sp in &heading.spans {
+        let px = inline::run_font_size(&sp.flags);
+        sizes[sp.start as usize..(sp.start + sp.len) as usize].fill(px);
+    }
+    let mut printed: Vec<Option<f64>> = Vec::new();
+    for (px, c) in sizes.into_iter().zip(title.chars()) {
+        if !py::is_space(c) && !printed.contains(&px) {
+            printed.push(px);
+        }
+    }
+    if let [Some(px)] = printed[..] {
+        let style = heading.heading.book_style.get_or_insert_default();
+        style.font_size = Some(px);
+    }
     keep_space(
         &mut heading.heading,
         block.style.as_ref(),

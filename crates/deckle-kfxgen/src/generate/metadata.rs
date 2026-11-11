@@ -17,6 +17,8 @@ pub(crate) struct BookMetadata<'a> {
     pub description: Option<&'a str>,
     /// The cover's `$164`.
     pub cover_image: Option<&'a str>,
+    /// `bool(self.font_table.faces)`.
+    pub override_kindle_font: bool,
 }
 
 /// The symbols `build_fragment_490` creates (:2878); its values are strings, so a book keeps
@@ -57,7 +59,7 @@ fn category(name: &str, entries: Vec<Value>) -> Value {
     ])
 }
 
-/// `build_fragment_490` with no embedded fonts.
+/// `build_fragment_490` (:2878).
 pub(crate) fn build_fragment_490(g: &mut Generator, m: &BookMetadata) -> Fragment {
     for name in SYMBOLS {
         g.local(name);
@@ -96,8 +98,8 @@ pub(crate) fn build_fragment_490(g: &mut Generator, m: &BookMetadata) -> Fragmen
     }
     title_meta.extend([
         entry("language", text(m.language)),
-        // bool(self.font_table.faces): no embedded fonts
-        entry("override_kindle_font", Value::Bool(false)),
+        // The book's embedded faces win over the reader's font (#15).
+        entry("override_kindle_font", Value::Bool(m.override_kindle_font)),
         entry("publisher", text(m.publisher)),
         entry("title", text(m.title)),
     ]);

@@ -2,6 +2,7 @@
 //! All integration tests in one binary: one link instead of one per file.
 
 mod generate_boxes;
+mod generate_fonts;
 mod generate_frames;
 mod generate_images;
 mod generate_inline;

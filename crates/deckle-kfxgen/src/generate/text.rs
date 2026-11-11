@@ -536,16 +536,25 @@ pub(crate) fn build_chapter_content(
             // (#219).
             let bs = chunk.style.as_ref();
             let book_bold = chunk.heading.book_style.as_ref().is_none_or(|b| b.bold);
+            // The book's heading printing as kfxgen's: its words in sized spans print at
+            // their size against its own (#721). kfxgen's own heading keeps its size (#241).
+            let heading_book = chunk.heading.book_style.as_ref().filter(|_| heading);
             let base = RunBase {
                 bold: bs.is_some_and(|b| b.bold) || chunk.cell_bold() || (heading && book_bold),
                 italic: bs.is_some_and(|b| b.italic),
-                family: bs.and_then(|b| block_styles::family(&b.family)),
+                family: bs.map_or(&[], |b| &b.family),
                 in_cell: chunk.in_cell.is_some(),
+                blk_fs: match heading_book {
+                    Some(book) => sizes.rem(book.font_size),
+                    None => sizes.block_font_size(fs, chunk),
+                },
+                sized: !heading || heading_book.is_some(),
             };
             let runs = inline::entry_runs(
                 g,
                 &mut styles,
                 &mut extra_style_names,
+                &sizes,
                 &chunk.spans,
                 &base,
                 &body_anchor_map,

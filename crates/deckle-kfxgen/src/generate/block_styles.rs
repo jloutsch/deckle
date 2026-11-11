@@ -6,6 +6,7 @@
 //! as kfxgen's (#490, :7646).
 use super::boxes::BoxStyle;
 use super::chunks::{Chunk, InCell, Marker, Node};
+use super::inline::run_font_size;
 use super::styles::{Style157, StyleArgs, Styles};
 use super::table_styles::{self, CellStyle};
 use super::{GenerateError, Generator, model_err, py};
@@ -18,7 +19,7 @@ pub(crate) type Length = (String, String);
 
 /// `block_style`: a dict of the keys below, all of them set (None when the CSS has none) on
 /// a Calibre-path block.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct BlockStyle {
     pub align: Option<String>,
     pub indent: Option<Length>,
@@ -150,40 +151,6 @@ fn read_length(v: &PyValue) -> Option<Length> {
     Some((m.to_owned(), u.as_str()?.to_owned()))
 }
 
-/// `inline_style._MONOSPACE_NAMES` (:461).
-const MONOSPACE_NAMES: [&str; 20] = [
-    "courier",
-    "courier new",
-    "consolas",
-    "menlo",
-    "monaco",
-    "lucida console",
-    "lucida sans typewriter",
-    "andale mono",
-    "dejavu sans mono",
-    "liberation mono",
-    "source code pro",
-    "inconsolata",
-    "fira mono",
-    "fira code",
-    "ubuntu mono",
-    "roboto mono",
-    "noto sans mono",
-    "droid sans mono",
-    "sf mono",
-    "pt mono",
-];
-
-/// `_family` (:7233) with no embedded fonts (Task 10): monospace text is "monospace" (#242).
-pub(crate) fn family(families: &[String]) -> Option<&'static str> {
-    // `inline_style.is_monospace` (:486).
-    let mono = families.iter().any(|f| f == "monospace")
-        || families
-            .first()
-            .is_some_and(|f| MONOSPACE_NAMES.contains(&f.as_str()));
-    mono.then_some("monospace")
-}
-
 /// `_bidi_diff` (:6927) for a language: written where it differs from the container's.
 pub(crate) fn bidi_diff<'a>(own: Option<&'a str>, around: Option<&str>) -> Option<&'a str> {
     own.filter(|&lang| !lang.is_empty() && Some(lang) != around)
@@ -194,11 +161,15 @@ pub(crate) fn lang(bs: Option<&BlockStyle>) -> Option<&str> {
     bs?.bidi.as_ref()?.as_deref()
 }
 
+/// Characters by size or line height: a Python `Counter`, its counts summed in an i128 where
+/// Python's ints have no bound.
+type Counts = Vec<(f64, i128)>;
+
 /// `_most` (:7163): the value most characters have, the smallest of a tie.
-fn most(counts: &[(f64, i64)]) -> Option<f64> {
-    let mut sorted = counts.to_vec();
+fn most(counts: &Counts) -> Option<f64> {
+    let mut sorted = counts.clone();
     sorted.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let mut best: Option<(f64, i64)> = None;
+    let mut best: Option<(f64, i128)> = None;
     for (v, n) in sorted {
         if best.is_none_or(|(_, m)| n > m) {
             best = Some((v, n));
@@ -207,20 +178,32 @@ fn most(counts: &[(f64, i64)]) -> Option<f64> {
     best.map(|(v, _)| v)
 }
 
-fn add(counts: &mut Vec<(f64, i64)>, value: f64, n: i64) {
+fn add(counts: &mut Counts, value: f64, n: i128) {
     match counts.iter_mut().find(|(v, _)| *v == value) {
         Some((_, m)) => *m += n,
         None => counts.push((value, n)),
     }
 }
 
-/// `_chars_by_px` (:7147) with no sized runs: a text entry's characters at its CSS size.
-fn chars_by_px(chunk: &Chunk) -> Option<(f64, i64)> {
-    let px = chunk.style.as_ref()?.font_size.filter(|&px| px != 0.0)?;
-    if chunk.marker.is_some() || chunk.rule.is_some() || chunk.picture.is_some() {
-        return None;
+/// `_chars_by_px` (:7147): a text entry's characters at their run's size, else at its CSS
+/// size (#375 review). A count goes below 0 where sized runs overlap, as in Python.
+fn chars_by_px(chunk: &Chunk) -> Counts {
+    let mut counts = Counts::new();
+    let Some(px) = chunk.style.as_ref().and_then(|b| b.font_size) else {
+        return counts;
+    };
+    if px == 0.0 || chunk.marker.is_some() || chunk.rule.is_some() || chunk.picture.is_some() {
+        return counts;
     }
-    Some((px, py::len(&chunk.text) as i64))
+    let mut in_runs = 0;
+    for sp in &chunk.spans {
+        if let Some(run_px) = run_font_size(&sp.flags).filter(|&p| p != 0.0) {
+            add(&mut counts, run_px, sp.len.into());
+            in_runs += i128::from(sp.len);
+        }
+    }
+    add(&mut counts, px, py::len(&chunk.text) as i128 - in_runs);
+    counts
 }
 
 /// The book's main text size and line height (:7171, :7183): what most of its text has.
@@ -233,7 +216,7 @@ impl Sizes {
     pub(crate) fn of(chunks: &[Chunk]) -> Self {
         let (mut px, mut lines) = (Vec::new(), Vec::new());
         for chunk in chunks {
-            if let Some((size, n)) = chars_by_px(chunk) {
+            for (size, n) in chars_by_px(chunk) {
                 add(&mut px, size, n);
             }
             let factor = chunk.style.as_ref().and_then(|bs| bs.line_height);
@@ -242,7 +225,7 @@ impl Sizes {
                 && chunk.rule.is_none()
                 && chunk.picture.is_none()
             {
-                add(&mut lines, f, py::len(&chunk.text) as i64);
+                add(&mut lines, f, py::len(&chunk.text) as i128);
             }
         }
         Sizes {
@@ -274,12 +257,21 @@ impl Sizes {
     }
 
     /// `_block_font_size` (:7201): a page kfxgen sizes keeps its size; any other block takes
-    /// its CSS size. With no sized runs `_chars_by_px` knows only that size.
+    /// the size of a span holding all its text, else its CSS size (#375 review).
     pub(crate) fn block_font_size(&self, chapter_fs: f64, chunk: &Chunk) -> f64 {
         if chapter_fs != 1.0 {
             return chapter_fs;
         }
-        self.rem(chunk.style.as_ref().and_then(|b| b.font_size))
+        // `+counts`: the sizes some characters have.
+        let sizes: Vec<f64> = chars_by_px(chunk)
+            .into_iter()
+            .filter(|&(_, n)| n > 0)
+            .map(|(px, _)| px)
+            .collect();
+        match sizes[..] {
+            [px] => self.rem(Some(px)),
+            _ => self.rem(chunk.style.as_ref().and_then(|b| b.font_size)),
+        }
     }
 }
 
@@ -299,7 +291,7 @@ pub(crate) fn text_entry_style(
     // At the main size in a cell that isn't: 1, or it takes the cell's (#681).
     let cell_fs = open_sizes.iter().rev().flatten().find(|&&f| f != 0.0);
     if cell_fs.is_some_and(|&f| f != 1.0) && attrs.font_size == 1.0 {
-        attrs.explicit_size = true;
+        attrs.explicit_size = Some(true);
     }
     attrs.line_height = sizes.line_ratio(bs);
     if let Some(bs) = bs {
@@ -315,13 +307,15 @@ pub(crate) fn text_entry_style(
         // A paragraph in a header cell is bold, as its own text is (#261).
         blk_bold = true;
     }
-    attrs.font_family = bs.and_then(|b| family(&b.family));
+    attrs.font_family = g
+        .fonts
+        .family(bs.map_or(&[], |b| &b.family), blk_bold, blk_italic);
     attrs.bold = blk_bold;
     attrs.italic = blk_italic;
     let lang = bidi_diff(lang(bs), around);
     match &chunk.in_cell {
         Some(InCell::Text(cell)) => {
-            let cell = CellStyle::of(cell, bs, attrs.font_size);
+            let cell = CellStyle::of(&g.fonts, cell, bs, attrs.font_size);
             styles.allocate_in(g, "_td", StyleArgs::Cell(cell), lang)
         }
         _ => styles.allocate_in(g, "", attrs, lang),

@@ -38,7 +38,7 @@ fn heading_runs_matches_kfxgen() {
 }
 
 #[test]
-#[ignore = "sized runs (no task names them yet), monospace runs (Task 10), ruby and a table's language (Task 12)"]
+#[ignore = "ruby and a table's language (Task 12)"]
 fn links_matches_kfxgen() {
     matches_kfxgen("links");
 }

@@ -31,7 +31,7 @@ pub(crate) struct Style157 {
     pub text_indent: Option<Length>,
     pub margin_left: Option<Length>,
     pub margin_right: Option<Length>,
-    pub font_family: Option<&'static str>,
+    pub font_family: Option<String>,
     pub baseline_style: Option<&'static str>,
     pub is_heading: bool,
     /// A run in a table cell: a span can't carry text-align (#281).
@@ -39,8 +39,9 @@ pub(crate) struct Style157 {
     /// In ems: none written for 0, kfxgen's own 1lh for None (#230, #331).
     pub space_above: Option<f64>,
     pub space_below: Option<f64>,
-    /// A size of 1 written, not left to the container's (#241, #681).
-    pub explicit_size: bool,
+    /// A size of 1 written, not left to the container's (#241, #681). None: not given, a
+    /// style apart from one given False, as `_allocate_style` keys them.
+    pub explicit_size: Option<bool>,
 }
 
 impl Default for Style157 {
@@ -64,7 +65,7 @@ impl Default for Style157 {
             no_align: false,
             space_above: None,
             space_below: None,
-            explicit_size: false,
+            explicit_size: None,
         }
     }
 }
@@ -219,7 +220,7 @@ fn build_fragment_157(g: &mut Generator, name: &str, style: &Style157) -> Value 
         }
         None => {}
     }
-    if style.font_size != 1.0 || style.explicit_size {
+    if style.font_size != 1.0 || style.explicit_size == Some(true) {
         v.insert(
             "$16",
             measure(py::decimal_of_float(style.font_size), "$505"),
@@ -236,7 +237,7 @@ fn build_fragment_157(g: &mut Generator, name: &str, style: &Style157) -> Value 
     } else if style.upright {
         v.insert("$12", sym("$350"));
     }
-    if let Some(family) = style.font_family {
+    if let Some(family) = &style.font_family {
         v.insert("$11", Value::string(family));
     }
     if let Some(top) = style.margin_top {

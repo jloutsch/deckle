@@ -12,6 +12,7 @@ use regex::Regex;
 use sha2::{Digest, Sha256};
 
 use super::chapters::read_chapters;
+use super::fonts::FontTable;
 use super::fragments::build_fragment_260;
 use super::images;
 use super::metadata::{BookMetadata, build_fragment_490};
@@ -108,12 +109,6 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
             return Err(Unsupported(feature));
         }
     }
-    if args
-        .get("font_table")
-        .is_some_and(|t| truthy(t.get("faces")))
-    {
-        return Err(Unsupported("embedded fonts"));
-    }
     if writing_mode == Some("vertical-rl") {
         return Err(Unsupported("vertical text"));
     }
@@ -164,6 +159,10 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
     let f = build_fragment_585(&mut g, table_version);
     g.push(f);
     let mut images = images::build_resources(&mut g, args)?;
+    let fonts = FontTable::read(args.get("font_table"))?;
+    fonts.build_fragments(&mut g);
+    let override_kindle_font = !fonts.is_empty();
+    g.fonts = fonts;
     let f = build_fragment_490(
         &mut g,
         &BookMetadata {
@@ -176,6 +175,7 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
             authors,
             description: description.filter(|d| !d.is_empty()),
             cover_image: images.cover.then_some(images::COVER_RESOURCE),
+            override_kindle_font,
         },
     );
     g.push(f);
@@ -311,6 +311,7 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
         .chain(&data.anchor_names)
         .chain(&section_ad_names)
         .chain(&picture_names)
+        .chain(g.fonts.locations())
         .filter(|name| seen.insert(*name))
         .collect();
     let dependencies = images::entity_dependencies(&g.fragments);
