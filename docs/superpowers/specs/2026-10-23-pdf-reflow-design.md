@@ -57,8 +57,9 @@ bindings are global.
 Coordinates are points, origin top left. In order:
 
 1. **Lines.** Glyphs go into rows by vertical overlap: a glyph joins the row its middle falls
-   in, as long as the row stays within 1.5 em of the smaller text in it (so a tall bracket or a
-   drop cap doesn't take in the lines beside it). Text under 75% of the page's usual size (a
+   in, as long as the row stays within 1.5 times the smaller text in it, each glyph's height
+   being its size or its box, whichever is taller (so a tall bracket or a drop cap doesn't take
+   in the lines beside it, and a font with boxes taller than an em still makes lines). Text under 75% of the page's usual size (a
    superscript, a subscript) is placed last and joins the row it sits in, without stretching
    it, so a citation's "53–55" stays in its sentence. Each row is then cut into runs at gaps
    wider than 1.5 em (a gutter or a table cell), and at the page's gutter when it's tight (a
@@ -68,7 +69,9 @@ Coordinates are points, origin top left. In order:
    row is cut there at a gap over 0.8 em and over 85% of the gutter's narrow end (its tenth
    narrowest gap, in points), so a quad between two names in a line across it isn't cut. A word
    space is a gap over 0.18 em, or a space the PDF itself has (PDFium's generated spaces have no
-   box, so they ride on the next glyph as `space_before`). A gap filled by small drawings or
+   box, so they ride on the next glyph as `space_before`). A line's size is the median of its
+   full-size glyphs, so a last line that's mostly a citation keeps its sentence's size. A gap
+   filled by small drawings or
    images no bigger than the text, each within 0.8 em of the next and of the text either side
    (an ORCID or e-mail icon after an author's name), is a word space, whatever its width; an
    icon at the end of a column line, with the gutter still to cross, isn't. Rotated glyphs are
@@ -86,8 +89,9 @@ Coordinates are points, origin top left. In order:
 5. **Equations.** Runs set mostly in math fonts (Computer Modern math, Symbol, STIX, Cambria
    Math, MathTime, Advent's math symbols and the like), merged with their neighbours. Each box
    then takes in the short runs (30 characters or fewer) on its own lines in its column, the
-   parts of a displayed equation set in a text font ("T" and its subscript "day", "heat ="), and
-   boxes that come to touch merge. The column is step 1's gutter, or else the one step 6 would
+   parts of a displayed equation set in a text font ("T" and its subscript "day", "heat ="): a
+   run three quarters inside the box's height, or half inside and set in from the column's left
+   edge (so "where" under a tall sum stays text). Boxes that come to touch merge. The column is step 1's gutter, or else the one step 6 would
    find from the lines. A box needs three characters of mathematics, each line counted once:
    every character of its math runs, and the equals signs of the text-font runs it took in.
    Inline math in a sentence stays text, and a lone footnote star or dagger stays text with what
@@ -99,7 +103,8 @@ Coordinates are points, origin top left. In order:
    page reads top to bottom. The runs cut from one row keep their order left to right. Narrow
    text set entirely beside a run of spanning items (a paper's sidebar of dates next to its
    authors and abstract) is read as a column of its own: before the run when it's on the left,
-   after it when on the right. The run goes on only while what waits beside it is beside the
+   after it when on the right. A sidebar is at most half the run's width: a column beside a
+   figure that crosses the gutter is a column. The run goes on only while what waits beside it is beside the
    next spanning item too: a label under a centred title, above a full-width abstract, isn't a
    sidebar.
 7. **Paragraphs.** Body size is the size most characters are set in. A paragraph ends at a
