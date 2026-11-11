@@ -114,7 +114,8 @@ pub(crate) fn read_block_style(
         match key {
             "align" => bs.align = Some(v.as_str().ok_or_else(|| err("a string"))?.to_owned()),
             "indent" | "margin_left" | "margin_right" => {
-                let length = read_length(v).ok_or_else(|| err("(magnitude, unit)"))?;
+                let length =
+                    read_length(v).ok_or_else(|| err("(a decimal of at most 38 digits, unit)"))?;
                 match key {
                     "indent" => bs.indent = Some(length),
                     "margin_left" => bs.margin_left = Some(length),
@@ -138,13 +139,14 @@ pub(crate) fn read_block_style(
     Ok(Some(bs))
 }
 
-/// `(magnitude, unit)`, the magnitude a number `float()` reads (`build_fragment_157` :3721).
+/// `(magnitude, unit)`, the magnitude a decimal kfxgen writes and deckle-kfx holds
+/// (`py::checked_decimal`; `build_fragment_157` :3640).
 fn read_length(v: &PyValue) -> Option<Length> {
     let [m, u] = v.as_list()? else {
         return None;
     };
     let m = m.as_str()?;
-    m.parse::<f64>().ok()?;
+    py::checked_decimal(m)?;
     Some((m.to_owned(), u.as_str()?.to_owned()))
 }
 

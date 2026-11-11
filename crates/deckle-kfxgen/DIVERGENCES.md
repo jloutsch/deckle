@@ -22,3 +22,13 @@ environment for the size of a raised or lowered run (`superscript_metrics`,
 `subscript_metrics`, `native_generator.py:785`, :807). The port always writes kfxgen's default,
 0.75 (:691, :695), so its output depends only on the model. With either variable set, kfxgen's
 book differs from the port's in those runs' `$16`.
+
+## Block lengths deckle-kfx's decimal can't hold
+
+A paragraph's indent and side margins come from the model as text, `(magnitude, unit)`, and
+kfxgen writes the magnitude as `IonDecimal(magnitude)` (`build_fragment_157`,
+`native_generator.py:3640`), any length of coefficient and exponent. deckle-kfx's Ion decimal
+holds an i128 coefficient (38 digits) and an i32 exponent. A magnitude past those, such as 40
+digits or `1.5e-2147483648`, is a `GenerateError::Model` naming the length, where kfxgen writes
+a book. No CSS length reaches them. "inf" and "NaN" are model errors too, but there kfxgen
+raises as well (`abs()` of a str when it serializes them).

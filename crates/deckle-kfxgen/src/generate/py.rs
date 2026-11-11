@@ -155,6 +155,31 @@ pub(crate) fn decimal(text: &str) -> Decimal {
     }
 }
 
+/// `Decimal(text)` for text from the model, or None where kfxgen can't write it (`abs()` of
+/// "inf" and "NaN" raises) or deckle-kfx's decimal can't hold it: a coefficient of more than
+/// an i128, an exponent past an i32 (DIVERGENCES.md). Digits, a point and an exponent only.
+pub(crate) fn checked_decimal(text: &str) -> Option<Decimal> {
+    let (mantissa, exponent) = match text.split_once(['e', 'E']) {
+        Some((m, e)) => (m, e.parse::<i32>().ok()?),
+        None => (text, 0),
+    };
+    let (int, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let digits = int.trim_start_matches(['+', '-']);
+    if int.len() - digits.len() > 1
+        || digits.is_empty() && frac.is_empty()
+        || !digits
+            .chars()
+            .chain(frac.chars())
+            .all(|c| c.is_ascii_digit())
+    {
+        return None;
+    }
+    Some(Decimal {
+        coefficient: format!("{int}{frac}").parse().ok()?,
+        exponent: exponent.checked_sub(i32::try_from(frac.len()).ok()?)?,
+    })
+}
+
 /// `f"{x:.{precision}g}"`: `precision` significant digits, no trailing zeros, an exponent
 /// below 1e-4 or from 10**precision.
 pub(crate) fn format_g(x: f64, precision: usize) -> String {
