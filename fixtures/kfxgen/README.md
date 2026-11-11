@@ -64,6 +64,7 @@ hrefs, unreadable JPEGs). The books are `ARG_BOOKS` in that script, their other 
 | `block_styles` | Calibre-shaped paragraphs: the book's heading aligned, indented, italic, spaced above and below, in its language; centred, italic, taller and closer lines; hanging and first-line indents with and without a scene break's space; a margin of None; a list item's tight line; monospace text with a bold run; a right margin; a language of its own; kfxgen's heading in the page's language from a box; a box's language, its padding in ems and % at another size; the title split over a heading and a table's row |
 | `box_titles` | a chapter's title split over a box's lines (through a box in a box, a paragraph and a row, stopped by a picture), in a box in a box, alone in a box (the box drawn round kfxgen's heading), running on in a box; a book heading in a box near the start or opening the first box; a box's own ids, a box in a box, a table in a box with styled, empty and big cells; a title over rules; a rule first in its storyline; a rule among the first blocks; a noteref to a footnote in a table cell |
 | `main_size_tie` | two text sizes with as many characters each: the smaller is the book's main size |
+| `frame_edges` | a paragraph opening with floats (#565): tight, a scene break's space, kfxgen's own above an indented and an unindented paragraph, a margin of None, first in its chapter, a heading level, ids before, at and after the cut, at its end and with no offset, a run over the cut, a float the book doesn't hold, in a bordered box; pictures in sized boxes (#382) in pt, em, px against a box in px, an unreadable size, a width of 0, nested a box deeper; a sized box bordered, floated right, to a side that isn't left, to ""; centred with no width |
 
 **Calibre path** (`ebook-convert` with kfxgen, CSS applied): the source is
 `sources/<name>.epub`. For each, the script also checks that replaying the model gives exactly
@@ -82,6 +83,7 @@ the KFX `ebook-convert` wrote.
 | `rtl` | synthetic | Hebrew, `page-progression-direction="rtl"`, `dir="rtl"`, Latin and digits inside |
 | `page_list` | kfxgen `test_books/landmarks_pages/l579-main.epub` | the EPUB's page-list, landmarks |
 | `links` | kfxgen `test_books/link_runs_726/s726k.epub` | links and link runs, ruby |
+| `frames` | synthetic, shaped as kfxgen `test_books/figures` and `floats` less a linked picture and a picture among words | figures 40% wide, centred at 60%, 300px and 12em wide, floated, shaded; pictures with no size, in px and high in a sized box; floats opening a paragraph, with ids; a float in a sized box |
 
 The `fonts` fixture embeds Liberation Serif 2.1.5 (SIL Open Font License 1.1), taken from
 calibre's bundled fonts. No fixture contains MathML.

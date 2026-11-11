@@ -3,7 +3,7 @@
 
     kfxgen_models.py shim <kfxgen> <out>    kfxgen's golden inputs, plus unicode_text and
                                             empty_chapter, through its Calibre-free shim
-    kfxgen_models.py synth <dir>            write the synthetic EPUBs (lists, fonts, rtl)
+    kfxgen_models.py synth <dir>            write the synthetic EPUBs (lists, fonts, rtl, frames)
     kfxgen_models.py args <kfxgen> <out>    books given as the generator's arguments, for
                                             run flags neither path above can make alone
 
@@ -16,6 +16,7 @@ import os
 import sys
 import tempfile
 import zipfile
+import zlib
 from pathlib import Path
 
 CALIBRE_FONTS = Path("/Applications/calibre.app/Contents/Resources/resources/fonts/liberation")
@@ -243,7 +244,75 @@ def synth(out):
         ],
         rtl=True,
     )
-    for name in ("lists", "fonts", "rtl"):
+    # Shaped as kfxgen's test_books/figures (#382) and floats (#243, #565), less what isn't
+    # ported (a linked picture, a picture among words).
+    after = "<p>The boats went out past the harbour wall, and the quay watched them go.</p>"
+    _epub(
+        out / "frames.epub",
+        "Frames",
+        "en",
+        [
+            (
+                "c1",
+                "Figure at 40%",
+                '<div class="w40"><img src="p.png" alt="picture"/>'
+                "<p>Figure 1. The harbour at low water.</p></div>" + after,
+            ),
+            (
+                "c2",
+                "Centred figures",
+                '<div class="fig" style="width:60%"><img src="p.png" alt="picture"/></div>'
+                '<div class="figcenter" style="width: 300px;">'
+                '<img src="p.png" alt="picture" style="width: 300px;"/>'
+                '<p class="caption">Figure 2. 300px in 300px.</p></div>'
+                '<div class="figcenter" style="width: 12em;">'
+                '<img src="p.png" alt="picture" style="width: 64px;"/></div>' + after,
+            ),
+            (
+                "c3",
+                "Floated figure",
+                '<div class="f40"><img src="p.png" alt="picture"/><p>Figure 3. Beside.</p></div>'
+                + after,
+            ),
+            (
+                "c4",
+                "Sizes in a box",
+                '<div class="half"><img src="p.png" alt="no size"/></div>'
+                '<div class="half"><img src="p.png" alt="px" style="width: 128px;"/></div>'
+                '<div class="half"><img src="p.png" alt="high" style="height: 100px;"/></div>'
+                '<div class="shaded"><img src="p.png" alt="shaded"/></div>' + after,
+            ),
+            (
+                "c5",
+                "Floats first",
+                '<p><img class="fl" src="p.png" alt="left"/>Words beside the picture.</p>'
+                '<p><img class="fl" src="p.png" alt="left"/> <img class="fr" src="p.png" '
+                'alt="right"/> Words <i>between</i> both, '
+                '<span id="mid">an id</span> in them.</p>'
+                '<p id="whole"><img class="fr" src="p.png" alt="right"/>Its own id.</p>'
+                + after
+                + '<p><a href="c5.xhtml#mid">To the id</a>, <a href="c5.xhtml#whole">to the '
+                "paragraph</a>.</p>",
+            ),
+            (
+                "c6",
+                "Float in a box",
+                '<div class="half"><p><img class="fl" src="p.png" alt="left" '
+                'style="width: 64px;"/>Words in a sized box.</p></div>' + after,
+            ),
+        ],
+        css="div.w40 { width: 40%; } div.w40 img { width: 100%; }\n"
+        "div.fig { display: block; margin: 0 auto; text-align: center; }"
+        " div.fig img { width: 100%; }\n"
+        "div.f40 { float: left; width: 40%; margin-right: 1em; } div.f40 img { width: 100%; }\n"
+        ".figcenter { margin: auto; text-align: center; }\n"
+        ".caption { font-size: smaller; text-align: center; }\n"
+        "div.half { width: 50%; }\n"
+        "div.shaded { width: 40%; background-color: #eeeeee; }\n"
+        "img.fl { float: left; width: 30%; } img.fr { float: right; width: 25%; }",
+        extra=[("p.png", "image/png", _png_image(600, 400))],
+    )
+    for name in ("lists", "fonts", "rtl", "frames"):
         print(out / f"{name}.epub")
 
 
@@ -291,6 +360,23 @@ def _png(width, height):
     """A PNG's signature and IHDR, which hold its size."""
     size = width.to_bytes(4, "big") + height.to_bytes(4, "big")
     return b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + size + b"\x08\x02\x00\x00\x00"
+
+
+def _png_image(width, height):
+    """A whole PNG of one grey, which Calibre reads as a picture."""
+
+    def chunk(kind, data):
+        body = kind + data
+        return len(data).to_bytes(4, "big") + body + zlib.crc32(body).to_bytes(4, "big")
+
+    ihdr = width.to_bytes(4, "big") + height.to_bytes(4, "big") + b"\x08\x02\x00\x00\x00"
+    rows = (b"\x00" + b"\x99" * 3 * width) * height
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr)
+        + chunk(b"IDAT", zlib.compress(rows, 9))
+        + chunk(b"IEND", b"")
+    )
 
 
 def _cell(text, spans=(), keys=(), **extra):
@@ -461,6 +547,92 @@ def _rule(**look):
         "anchor_offsets": {},
         "writing_mode": "horizontal-tb",
     }
+
+
+def _frame_edges():
+    """A floated paragraph's space (tight, a scene break's, kfxgen's own above an indented
+    paragraph and an unindented one, a margin of None, first in its chapter), its heading
+    level, its ids (before, at and after the cut, at its end, with no offset) and a run over
+    the cut, a float the book doesn't hold; pictures in sized boxes in pt, em, px against a
+    box in px whose % width disagrees, and a size kfxgen can't read; a box in a sized box; a
+    sized box bordered; floated right and to a side that isn't left; centred with no width; a
+    width of 0 and a float of ""."""
+    left = _pic("OEBPS/p.png", "left", "w=30%", "left")
+    ids = left + "Ids in both parts."
+    plain = {"border": None, "padding": None}
+
+    def sized(hint, **look):
+        return _box([_para(_pic("OEBPS/p.png", "p", hint), above=0.0)], **{**plain, **look})
+
+    return [
+        _chapter(
+            "Floated",
+            [
+                _para("Floated", heading=True, level=1, above=0.67),
+                {**_para(left + "A tight line."), "tight": True},
+                _para(left + "A scene break above.", above="absent", scene=2.0),
+                _para(left + "Indented, no margin.", above="absent", indent=("1.5", "$308")),
+                _para(left + "Unindented, no margin.", above="absent"),
+                _para(left + "A margin of None.", above=None, below=0.5),
+                _para(left + "A floated heading.", heading=True, level=2),
+                {
+                    **_para(ids, [(0, len(left) + 3, frozenset({"bold"}))]),
+                    "anchor_keys": [
+                        "f.xhtml#head",
+                        "f.xhtml#cut",
+                        "f.xhtml#mid",
+                        "f.xhtml#end",
+                        "f.xhtml#none",
+                    ],
+                    "anchor_offsets": {
+                        "f.xhtml#head": 1,
+                        "f.xhtml#cut": len(left),
+                        "f.xhtml#mid": len(left) + 4,
+                        "f.xhtml#end": len(ids),
+                    },
+                },
+                _para(
+                    _pic("missing.png", "lost", "w=30%", "left") + "After a lost float.",
+                    keys=["f.xhtml#lost"],
+                ),
+                _para("The lost float's id lands here."),
+                _box([_para(left + "Floated in a bordered box.", above=0.0)]),
+                _para(
+                    "To head, cut, mid, end, none, lost.",
+                    [
+                        (3, 4, _link("f.xhtml#head")),
+                        (9, 3, _link("f.xhtml#cut")),
+                        (14, 3, _link("f.xhtml#mid")),
+                        (19, 3, _link("f.xhtml#end")),
+                        (24, 4, _link("f.xhtml#none")),
+                        (30, 4, _link("f.xhtml#lost")),
+                    ],
+                ),
+            ],
+        ),
+        _chapter(
+            "First",
+            [_para(left + "First in its chapter, after a scene break.", above="absent", scene=2.0)],
+        ),
+        _chapter(
+            "Sized",
+            [
+                sized("w=12pt", width=50.0),
+                sized("w=2em", width=25.0, width_px=100.0),
+                _box([_para(_pic("OEBPS/q.png", "q", "w=50vw"), above=0.0)], **plain, width=50.0),
+                _box(
+                    [_box([_para(_pic("OEBPS/p.png", "inner", "w=100px"), above=0.0)], **plain)],
+                    **{**plain, "width": 50.0},
+                ),
+                sized("w=60%", width=40.0, border={"bottom": ("solid", 0.45, None)}),
+                sized("w=40%", width=30.0, float="right"),
+                sized("w=20%", width=30.0, float="up"),
+                sized("w=10%", width=30.0, float=""),
+                sized("w=128px", width=0.0),
+                _box([_para("Centred with no width.", above=0.0)], centred=True),
+            ],
+        ),
+    ]
 
 
 _APP0 = b"\xff\xe0\x00\x04\x00\x00"
@@ -1239,11 +1411,17 @@ ARG_BOOKS = {
             ],
         ),
     ],
+    # Frames (#382, #565) past what the Calibre-path `frames` reaches.
+    "frame_edges": _frame_edges(),
 }
 
 #: The image books' other arguments.
 ARG_BOOK_EXTRAS = {
     "box_titles": {"footnote_keys": {"s7.xhtml#cellnote"}},
+    "frame_edges": {
+        "images": {"OEBPS/p.png": _png(600, 400), "OEBPS/q.png": _png(256, 100)},
+        "resolved_image_refs": True,
+    },
     "image_refs": {
         "images": {
             "OEBPS/images/a.jpg": _jpeg(300, 400, _APP0),
