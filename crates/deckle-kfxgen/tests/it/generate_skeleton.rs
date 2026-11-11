@@ -22,17 +22,30 @@ fn types_in(kfx: &Path) -> Vec<String> {
     types
 }
 
-fn assert_matches(dir: &Path, fragments: &deckle_kfx::fragment::FragmentList) {
+/// Fragments first (they name the first difference), then the whole file:
+/// the bytes also catch symbol order and framing the fragment list can't.
+fn assert_matches(dir: &Path, out: &deckle_kfxgen::generate::GenerateOutput) {
     let expected = dir.join("expected.kfx");
     let types = types_in(&expected);
     let types: Vec<&str> = types.iter().map(String::as_str).collect();
-    assert_fragments_match(fragments, &expected, &types);
+    assert_fragments_match(&out.fragments, &expected, &types);
+    let want = std::fs::read(&expected).unwrap();
+    if out.bytes != want {
+        let at = out.bytes.iter().zip(&want).position(|(a, b)| a != b);
+        panic!(
+            "{}: bytes differ, first at offset {:?} (got {} bytes, want {})",
+            dir.display(),
+            at.unwrap_or(out.bytes.len().min(want.len())),
+            out.bytes.len(),
+            want.len()
+        );
+    }
 }
 
 pub(crate) fn matches_kfxgen(name: &str) {
     let dir = model_dir(name);
     let out = generate(&load_model(&dir).unwrap()).unwrap();
-    assert_matches(&dir, &out.fragments);
+    assert_matches(&dir, &out);
 }
 
 #[test]
@@ -78,7 +91,7 @@ fn publisher_structure_matches_kfxgen() {
 fn every_model_matches_kfxgen_or_is_unsupported() {
     for dir in model_dirs() {
         match generate(&load_model(&dir).unwrap()) {
-            Ok(out) => assert_matches(&dir, &out.fragments),
+            Ok(out) => assert_matches(&dir, &out),
             Err(GenerateError::Unsupported(_)) => {}
             Err(e) => panic!("{}: {e}", dir.display()),
         }
