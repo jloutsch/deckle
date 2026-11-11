@@ -266,6 +266,7 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
         .chain(&section_names)
         .chain(&data.story_names)
         .chain(&data.extra_style_names)
+        .chain(&data.anchor_names)
         .chain(&section_ad_names)
         .filter(|name| seen.insert(*name))
         .collect();

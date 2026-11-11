@@ -14,3 +14,11 @@ users: `src/generate/py.rs` holds tables made from it, and the `regex` crate's g
 categories are also 16.0. kfxgen run under another Python can class a character added to
 Unicode since then differently. The shim fixtures were made with Python 3.13 (Unicode 15.1);
 none of their text holds such a character.
+
+## Superscript and subscript size overrides
+
+kfxgen reads `KFXGEN_SUPERSCRIPT_FONT_SIZE` and `KFXGEN_SUBSCRIPT_FONT_SIZE` from the
+environment for the size of a raised or lowered run (`superscript_metrics`,
+`subscript_metrics`, `native_generator.py:785`, :807). The port always writes kfxgen's default,
+0.75 (:691, :695), so its output depends only on the model. With either variable set, kfxgen's
+book differs from the port's in those runs' `$16`.

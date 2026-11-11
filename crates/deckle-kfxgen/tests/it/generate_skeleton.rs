@@ -29,7 +29,7 @@ fn assert_matches(dir: &Path, fragments: &deckle_kfx::fragment::FragmentList) {
     assert_fragments_match(fragments, &expected, &types);
 }
 
-fn matches_kfxgen(name: &str) {
+pub(crate) fn matches_kfxgen(name: &str) {
     let dir = model_dir(name);
     let out = generate(&load_model(&dir).unwrap()).unwrap();
     assert_matches(&dir, &out.fragments);
@@ -63,13 +63,12 @@ fn empty_chapter_matches_kfxgen() {
 }
 
 #[test]
-#[ignore = "bold and italic spans make inline $157 runs: Task 6"]
 fn unicode_text_matches_kfxgen() {
     matches_kfxgen("unicode_text");
 }
 
 #[test]
-#[ignore = "a rebuilt contents page, link and superscript spans, a list item, a chapter font size: Tasks 6 and 9"]
+#[ignore = "a list item (Task 9); chapters with no heading and left out of the contents (no task names them yet)"]
 fn publisher_structure_matches_kfxgen() {
     matches_kfxgen("publisher_structure");
 }
