@@ -27,7 +27,8 @@ pub(crate) struct PositionData {
     pub max_section_pids: i64,
 }
 
-/// `_build_position_data` (:3290) for entries of text only.
+/// `_build_position_data` (:3290) for entries of text and pictures, a picture taking one
+/// position (:3372).
 pub(crate) fn build_position_data(section_names: &[String], data: &ChapterData) -> PositionData {
     let mut entries = Vec::new();
     let mut char_offset = 0;
@@ -40,9 +41,13 @@ pub(crate) fn build_position_data(section_names: &[String], data: &ChapterData) 
         char_offset += 1;
         let mut located = vec![(section, 1)];
         for idx in start..end {
-            let (pid, text) = (data.chunk_positions[idx], &data.chunks[idx].text);
-            let length = py::len(text) as i64;
-            page_texts.insert(pid, text.as_str());
+            let (pid, chunk) = (data.chunk_positions[idx], &data.chunks[idx]);
+            let length = if chunk.picture.is_some() {
+                1
+            } else {
+                page_texts.insert(pid, chunk.text.as_str());
+                py::len(&chunk.text) as i64
+            };
             entries.push((char_offset, pid));
             char_offset += length;
             located.push((pid, length));

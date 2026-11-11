@@ -2,27 +2,18 @@
 //! A book's text: `_build_chapter_content` (`native_generator.py:5396`) for chapters of
 //! paragraphs and rebuilt contents pages, with the `$145` content, `$157` paragraph styles and
 //! `$259` storylines it makes, and the `$260` sections that hold them. Runs, links and anchors
-//! are `inline`'s.
+//! are `inline`'s, pictures `images`'.
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::LazyLock;
 
 use deckle_kfx::fragment::Fragment;
 use deckle_kfx::ion::{Decimal, Value};
-use regex::Regex;
 
+use super::images::{self, ImageStyles, Images, Picture};
 use super::inline::{self, Anchors, ChunkLinks, EntryLink, Run, Span, TocLink, read_spans};
 use super::{GenerateError, Generator, measure, model_err, py, st, sym};
 use crate::pyvalue::{PyValue, truthy};
 
 use GenerateError::Unsupported;
-
-/// `_img_tokens.IMG_TOKEN_RE`: a picture in the text.
-static IMG_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"\x00IMG\x01([^\x01]*)\x01([^\x00\x01]*)(?:\x01([^\x00\x01]*))?(?:\x01([^\x00\x01]*))?(?:\x01([^\x00]*))?\x00",
-    )
-    .unwrap()
-});
 
 /// `_ASCII_SPACE` (:1061): a paragraph's edges are trimmed of these only.
 const ASCII_SPACE: [char; 5] = [' ', '\t', '\n', '\r', '\x0c'];
@@ -38,13 +29,12 @@ const SECTION_POS_STEP: i64 = 2;
 const HEADING_FONT_SIZE: f64 = 1.2;
 
 /// Chapter keys whose value, when true, takes kfxgen down a path not ported yet.
-const CHAPTER_UNPORTED: [(&str, &str); 6] = [
+const CHAPTER_UNPORTED: [(&str, &str); 5] = [
     ("sub_entries", "contents entries inside a chapter"),
-    ("_is_cover", "the cover"),
+    ("_is_cover", "a cover chapter in the arguments"),
     ("_omit_title_heading", "a chapter with no heading"),
     ("_omit_from_toc", "a chapter left out of the contents"),
     ("page_bidi", "text direction"),
-    ("preserved_images", "images"),
 ];
 
 /// Block keys whose value, when true, takes kfxgen down a path not ported yet.
@@ -67,33 +57,56 @@ const BLOCK_UNPORTED: [(&str, &str); 13] = [
 pub(crate) struct Chapter {
     pub title: String,
     text: String,
-    blocks: Option<Vec<Block>>,
+    pub blocks: Option<Vec<Block>>,
     pub toc_level: i64,
     font_size: f64,
     /// Its own heading's level: a rebuilt contents page's (#580).
     heading_level: Option<i64>,
     /// The keys of blocks the converter replaced (#436).
     anchor_keys: Vec<String>,
-    toc_links: Vec<TocLink>,
+    pub toc_links: Vec<TocLink>,
+    /// Pictures of a contents page the converter replaced, as tokens (#117).
+    preserved_images: Vec<String>,
+    /// kfxgen's cover page (#32): no heading, not in the contents.
+    pub is_cover: bool,
+}
+
+impl Chapter {
+    /// The cover's page (:4897).
+    pub(crate) fn cover() -> Self {
+        Chapter {
+            title: String::new(),
+            text: images::cover_token(),
+            blocks: None,
+            toc_level: 0,
+            font_size: 1.0,
+            heading_level: None,
+            anchor_keys: Vec::new(),
+            toc_links: Vec::new(),
+            preserved_images: Vec::new(),
+            is_cover: true,
+        }
+    }
 }
 
 /// A paragraph: a block of type None or "text".
 #[derive(Clone)]
-struct Block {
-    text: String,
+pub(crate) struct Block {
+    pub text: String,
     heading: bool,
     heading_level: Option<i64>,
     space_above: bool,
     spans: Vec<Span>,
-    anchors: Anchors,
+    pub anchors: Anchors,
 }
 
-/// One entry of a storyline: here always a paragraph of text.
+/// One entry of a storyline: a paragraph of text, or a picture.
 pub(crate) struct Chunk {
     pub text: String,
     pub heading_level: Option<i64>,
     spans: Vec<Span>,
     anchors: Anchors,
+    pub picture: Option<Picture>,
 }
 
 impl Chunk {
@@ -103,6 +116,7 @@ impl Chunk {
             heading_level: None,
             spans: Vec::new(),
             anchors: Anchors::default(),
+            picture: None,
         }
     }
 }
@@ -151,9 +165,6 @@ fn read_chapter(ch: &PyValue, at: &str) -> Result<Chapter, GenerateError> {
     };
     let title = text_of("title")?;
     let text = text_of("text")?;
-    if IMG_TOKEN.is_match(&text) {
-        return Err(Unsupported("images"));
-    }
     let blocks = match ch.get("blocks") {
         None | Some(PyValue::None) => None,
         Some(v) => Some(
@@ -188,6 +199,13 @@ fn read_chapter(ch: &PyValue, at: &str) -> Result<Chapter, GenerateError> {
             .collect::<Result<_, _>>()?,
         _ => Vec::new(),
     };
+    let preserved_images = match ch.get("preserved_images") {
+        Some(v) if v.is_truthy() => v
+            .as_list()
+            .and_then(|l| l.iter().map(|t| t.as_str().map(str::to_owned)).collect())
+            .ok_or_else(|| model_err(format!("{at}.preserved_images: a list of strings")))?,
+        _ => Vec::new(),
+    };
     Ok(Chapter {
         title,
         text,
@@ -197,6 +215,8 @@ fn read_chapter(ch: &PyValue, at: &str) -> Result<Chapter, GenerateError> {
         heading_level,
         anchor_keys: Anchors::read(ch, at)?.keys,
         toc_links,
+        preserved_images,
+        is_cover: false,
     })
 }
 
@@ -221,10 +241,9 @@ fn read_block(b: &PyValue, at: &str) -> Result<Block, GenerateError> {
         Some(PyValue::Str(s)) => s.clone(),
         _ => return Err(model_err(format!("{at}.text: a string"))),
     };
-    if IMG_TOKEN.is_match(&text) {
-        return Err(Unsupported("images"));
-    }
-    if cut_at_empty_line(&text) {
+    // With pictures, `_cut_after_picture_lines` cuts only a paragraph that also has words,
+    // which `emit_paragraph` reports.
+    if !images::has_picture(&text) && cut_at_empty_line(&text) {
         return Err(Unsupported("a paragraph cut at an empty line"));
     }
     let heading_level = match b.get("heading_level") {
@@ -348,20 +367,56 @@ fn print_book_heading(heading: &mut Chunk, block: &Block, title: &str) {
     }
 }
 
-/// `_emit_paragraph` (:5745) for a paragraph of text alone: one chunk. Its ids all land in
-/// it, so none waits for the next block (`pending`, :6483).
+/// `_emit_paragraph` (:5745) for a paragraph of text alone, one chunk, or of pictures alone,
+/// a chunk per picture the book holds. Returns the ids it could not place because it emitted
+/// nothing: only pictures the book doesn't hold.
 fn emit_paragraph(
     block: &Block,
     first_in_chapter: bool,
+    images: &Images,
     chunks: &mut Vec<Chunk>,
-) -> Result<(), GenerateError> {
+) -> Result<Vec<String>, GenerateError> {
+    let para = block.text.trim_matches(ASCII_SPACE);
+    if images::has_picture(para) {
+        // Pictures among words are cut at picture lines and written in the words (#529,
+        // #565), not ported.
+        if !images::only_pictures(para) {
+            return Err(Unsupported("pictures among words"));
+        }
+        let pictures = images::pictures(para, &block.spans, images)?;
+        if pictures.is_empty() {
+            return Ok(block.anchors.keys.clone());
+        }
+        // Ids at its start go on its first picture (#62), then the others, all at 0 (:5847);
+        // a picture has no text for a heading level or space above to go on.
+        let (at_start, rest): (Vec<String>, Vec<String>) = block
+            .anchors
+            .keys
+            .iter()
+            .cloned()
+            .partition(|k| block.anchors.offsets.get(k).is_none_or(|&o| o == 0));
+        let mut anchors = Anchors {
+            keys: at_start,
+            offsets: BTreeMap::new(),
+        };
+        if !rest.is_empty() {
+            anchors.attach(&rest);
+        }
+        for picture in pictures {
+            chunks.push(Chunk {
+                anchors: std::mem::take(&mut anchors),
+                picture: Some(picture),
+                ..Chunk::text(String::new())
+            });
+        }
+        return Ok(Vec::new());
+    }
     // A chapter's first paragraph loses its space above (:6496).
     if block.space_above && !first_in_chapter {
         return Err(Unsupported("space above a paragraph"));
     }
-    let para = block.text.trim_matches(ASCII_SPACE);
     if py::strip(para).is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     // Spans and offsets count from the block's text, not the trimmed paragraph (:5530).
     let (spans, anchors) = inline::place(&block.spans, &block.anchors, py::len(para) as i64);
@@ -370,8 +425,9 @@ fn emit_paragraph(
         heading_level: block.heading_level,
         spans,
         anchors,
+        picture: None,
     });
-    Ok(())
+    Ok(Vec::new())
 }
 
 /// `build_fragment_157`'s arguments that the ported paths set, defaulting as it does. Two
@@ -557,18 +613,19 @@ fn pack_content_fragments(
     (groups, refs)
 }
 
-/// `build_fragment_259` (:4199) for entries of text: one per chunk, the first marked `$790`,
-/// each with its link and runs.
+/// `build_fragment_259` (:4199): one entry per chunk, text or picture, the first marked
+/// `$790`, a text entry with its link and runs.
 fn build_fragment_259(
     g: &mut Generator,
     styles: &[String],
-    refs: &[ContentRef],
+    refs: &[Option<ContentRef>],
     name: &str,
     positions: &[i64],
     runs: &[(Option<EntryLink>, Vec<Run>)],
+    chunks: &[Chunk],
 ) -> Fragment {
     g.local(name);
-    for (content, _) in refs {
+    for (content, _) in refs.iter().flatten() {
         g.local(content);
     }
     let entries = styles
@@ -576,27 +633,36 @@ fn build_fragment_259(
         .zip(refs)
         .zip(positions)
         .zip(runs)
+        .zip(chunks)
         .enumerate()
-        .map(
-            |(i, (((style, (content, index)), &position), (link, runs)))| {
-                let Value::Struct(mut entry) = st([
-                    ("$155", Value::Int(position)),
-                    ("$157", sym(style)),
-                    ("$159", sym("$269")),
-                    (
-                        "$145",
-                        st([("name", sym(content)), ("$403", Value::Int(*index))]),
-                    ),
-                ]) else {
-                    unreachable!()
-                };
-                if i == 0 {
-                    entry.insert("$790", Value::Int(1));
+        .map(|(i, ((((style, r), &position), (link, runs)), chunk))| {
+            let mut entry = match &chunk.picture {
+                Some(p) => images::picture_entry(g, p, position, style),
+                None => {
+                    let Value::Struct(mut entry) = st([
+                        ("$155", Value::Int(position)),
+                        ("$157", sym(style)),
+                        ("$159", sym("$269")),
+                    ]) else {
+                        unreachable!()
+                    };
+                    if let Some((content, index)) = r {
+                        entry.insert(
+                            "$145",
+                            st([("name", sym(content)), ("$403", Value::Int(*index))]),
+                        );
+                    }
+                    entry
                 }
+            };
+            if i == 0 {
+                entry.insert("$790", Value::Int(1));
+            }
+            if chunk.picture.is_none() {
                 inline::write_runs(g, &mut entry, link.as_ref(), runs);
-                Value::Struct(entry)
-            },
-        )
+            }
+            Value::Struct(entry)
+        })
         .collect();
     let value = st([("$176", sym(name)), ("$146", Value::List(entries))]);
     Fragment::new("$259", Some(name), value)
@@ -648,6 +714,7 @@ fn style_refs(value: &Value, out: &mut BTreeSet<String>) {
 pub(crate) fn build_chapter_content(
     g: &mut Generator,
     chapters: &[Chapter],
+    images: &Images,
 ) -> Result<ChapterData, GenerateError> {
     let mut chunks: Vec<Chunk> = Vec::new();
     let mut chapter_chunk_ranges = Vec::new();
@@ -670,7 +737,10 @@ pub(crate) fn build_chapter_content(
         let book_block = if matched == 1 {
             blocks.first()
         } else if matched == 0 {
-            blocks.first().filter(|b| b.heading)
+            // Not a heading holding a picture, which kfxgen's heading can't print.
+            blocks
+                .first()
+                .filter(|b| b.heading && !images::has_picture(&b.text))
         } else {
             None
         };
@@ -679,8 +749,18 @@ pub(crate) fn build_chapter_content(
             title_spans = Some(inline::title_spans(&b.text, &b.spans, py::len(&title)));
         }
 
-        // With no pictures, no rules and no tables, the chapter isn't image-only, nor its
-        // title after pictures or in a table (:6258–6279).
+        // A body of pictures alone after the title prints no heading of kfxgen's on top of
+        // them, nor one under pictures above the book's own heading (#33, #346, :6258).
+        // With no rules and no tables, the title isn't in a table.
+        let stripped = py::lstrip(&chapter.text);
+        let body_after_title = if opens_with_title(stripped, &title) {
+            py::lstrip(py::skip(stripped, py::len(&title)))
+        } else {
+            stripped
+        };
+        let image_only = !toc && images::only_pictures(body_after_title);
+        let title_after_pictures =
+            !toc && images::title_after_pictures(blocks.iter().map(|b| b.text.as_str()), &title);
         let runs_in = !toc && title_runs_in(blocks, &title);
         let heading_near_start = !toc
             && title_spans.is_none()
@@ -689,8 +769,13 @@ pub(crate) fn build_chapter_content(
                 .take(MAX_SPLIT_TITLE_BLOCKS)
                 .any(|b| b.heading);
         let label_over_blocks = !toc && label_blocks(blocks, &title) > 1;
-        let omit_heading =
-            py::strip(&title).is_empty() || runs_in || heading_near_start || label_over_blocks;
+        let omit_heading = chapter.is_cover
+            || py::strip(&title).is_empty()
+            || image_only
+            || title_after_pictures
+            || runs_in
+            || heading_near_start
+            || label_over_blocks;
         let mut heading_chunk = None;
         if !omit_heading {
             heading_chunks.insert(chunks.len());
@@ -708,7 +793,7 @@ pub(crate) fn build_chapter_content(
                 chunks.push(Chunk::text(link.text.clone()));
             }
         } else {
-            let cut_title = !runs_in && !heading_near_start && !label_over_blocks;
+            let cut_title = !image_only && !runs_in && !heading_near_start && !label_over_blocks;
             let n = py::len(&title);
             let stripped = py::lstrip(&chapter.text);
             let text = if cut_title && opens_with_title(stripped, &title) {
@@ -757,7 +842,7 @@ pub(crate) fn build_chapter_content(
                     None => text
                         .split("\n\n")
                         .map(|p| {
-                            if cut_at_empty_line(p) {
+                            if !images::has_picture(p) && cut_at_empty_line(p) {
                                 return Err(Unsupported("a paragraph cut at an empty line"));
                             }
                             Ok(Block {
@@ -771,8 +856,25 @@ pub(crate) fn build_chapter_content(
                         })
                         .collect::<Result<_, _>>()?,
                 };
+                // Ids of a paragraph that emitted nothing, only pictures the book doesn't
+                // hold, wait for the next block's first chunk (#291), else go on the
+                // chapter's last, else its start (:6483).
+                let mut pending: Vec<String> = Vec::new();
                 for (b_idx, block) in para_iter.iter().enumerate() {
-                    emit_paragraph(block, b_idx == 0, &mut chunks)?;
+                    let first = chunks.len();
+                    let unplaced = emit_paragraph(block, b_idx == 0, images, &mut chunks)?;
+                    if !pending.is_empty() && chunks.len() > first {
+                        chunks[first].anchors.attach(&pending);
+                        pending.clear();
+                    }
+                    pending.extend(unplaced);
+                }
+                if !pending.is_empty() {
+                    if chunks.len() > start_idx {
+                        chunks.last_mut().unwrap().anchors.attach(&pending);
+                    } else {
+                        carried.extend(pending);
+                    }
                 }
             } else if let Some(first) = blocks.first() {
                 // Only its title: the blocks' ids still name this chapter (#338), and the
@@ -788,10 +890,22 @@ pub(crate) fn build_chapter_content(
                 }
             }
         }
+        // Pictures of a contents page the converter replaced, after it (#117).
+        for token in &chapter.preserved_images {
+            if !py::strip(&images::IMG_TOKEN.replace_all(token, "")).is_empty() {
+                return Err(Unsupported("words kept from a replaced contents page"));
+            }
+            for picture in images::pictures(token, &[], images)? {
+                chunks.push(Chunk {
+                    picture: Some(picture),
+                    ..Chunk::text(String::new())
+                });
+            }
+        }
 
-        // Every chapter has an entry to land on (:6597).
+        // Every chapter has an entry to land on (:6597): a no-break space.
         if chunks.len() == start_idx {
-            chunks.push(Chunk::text(" ".to_owned()));
+            chunks.push(Chunk::text("\u{a0}".to_owned()));
         }
         if !carried.is_empty() {
             // Offsets of the block kfxgen's heading prints, else the chapter's start (:6622).
@@ -844,20 +958,33 @@ pub(crate) fn build_chapter_content(
         .collect();
     let body_anchor_map = inline::build_body_anchors(g, &links, &mut anchor_names);
 
-    // $145: each chapter's text in fragments under the cap (:6863).
+    // $145: each chapter's text in fragments under the cap (:6863); a chapter of pictures
+    // alone, a cover's, has none (#102).
     let mut content_names = Vec::new();
     let mut content_refs_per_chapter = Vec::new();
     let mut next_content_index = 1;
     for &(start, end) in &chapter_chunk_ranges {
-        let strings: Vec<&str> = chunks[start..end].iter().map(|c| c.text.as_str()).collect();
-        let (groups, refs) = pack_content_fragments(&strings, next_content_index);
-        next_content_index += groups.len();
-        for (name, strings) in groups {
-            let fragment = build_fragment_145(g, strings, &name);
-            g.push(fragment);
-            content_names.push(name);
+        let text_chunks: Vec<usize> = (start..end)
+            .filter(|&i| chunks[i].picture.is_none())
+            .collect();
+        let mut refs_by_chunk: Vec<Option<ContentRef>> = vec![None; end - start];
+        if !text_chunks.is_empty() {
+            let strings: Vec<&str> = text_chunks
+                .iter()
+                .map(|&i| chunks[i].text.as_str())
+                .collect();
+            let (groups, refs) = pack_content_fragments(&strings, next_content_index);
+            next_content_index += groups.len();
+            for (name, strings) in groups {
+                let fragment = build_fragment_145(g, strings, &name);
+                g.push(fragment);
+                content_names.push(name);
+            }
+            for (&i, r) in text_chunks.iter().zip(refs) {
+                refs_by_chunk[i - start] = Some(r);
+            }
         }
-        content_refs_per_chapter.push(refs);
+        content_refs_per_chapter.push(refs_by_chunk);
     }
 
     // $157: a body style per chapter and a heading style per chapter with a heading (:6973).
@@ -900,6 +1027,8 @@ pub(crate) fn build_chapter_content(
         }
         toc_link_style_names.push(link_name);
     }
+    let pictures: Vec<&Picture> = chunks.iter().filter_map(|c| c.picture.as_ref()).collect();
+    let image_styles = ImageStyles::allocate(g, &pictures, images, &mut extra_style_names)?;
 
     // $259: a storyline per chapter (:7359).
     let mut storyline_names = Vec::new();
@@ -909,6 +1038,12 @@ pub(crate) fn build_chapter_content(
         let mut entry_styles = Vec::new();
         let mut entry_runs = Vec::new();
         for chunk_idx in start..end {
+            if let Some(p) = &chunks[chunk_idx].picture {
+                let style = image_styles.style_for(p)?;
+                entry_styles.push(style.unwrap_or_else(|| story_names[ch_idx].clone()));
+                entry_runs.push((None, Vec::new()));
+                continue;
+            }
             let heading = heading_chunks.contains(&chunk_idx);
             let mut link = None;
             let style = match (
@@ -957,6 +1092,7 @@ pub(crate) fn build_chapter_content(
             &sl_name,
             &chunk_positions[start..end],
             &entry_runs,
+            &chunks[start..end],
         );
         g.push(fragment);
         storyline_names.push(sl_name);

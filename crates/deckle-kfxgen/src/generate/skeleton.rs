@@ -11,6 +11,7 @@ use deckle_kfx::symtab::SymbolTable;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 
+use super::images;
 use super::metadata::{BookMetadata, build_fragment_490};
 use super::nav::{NavEntry, book_headings, build_fragment_389};
 use super::positions::{
@@ -95,8 +96,6 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
         .len();
 
     for (key, feature) in [
-        ("cover_image", "the cover"),
-        ("images", "images"),
         ("rtl", "right-to-left page order"),
         ("landmarks", "landmarks"),
         ("page_list", "a page list"),
@@ -151,6 +150,7 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
     // aren't ported.
     let f = build_fragment_585(&mut g, 1);
     g.push(f);
+    let mut images = images::build_resources(&mut g, args)?;
     let f = build_fragment_490(
         &mut g,
         &BookMetadata {
@@ -162,6 +162,7 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
             publisher,
             authors,
             description: description.filter(|d| !d.is_empty()),
+            cover_image: images.cover.then_some(images::COVER_RESOURCE),
         },
     );
     g.push(f);
@@ -171,8 +172,18 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
             "args.chapters: generate_full_book requires a non-empty list",
         ));
     }
-    let chapters = read_chapters(chapters_arg)?;
-    let data = build_chapter_content(&mut g, &chapters)?;
+    let mut chapters = read_chapters(chapters_arg)?;
+    if images.cover {
+        images::add_cover_page(&mut chapters, &images);
+    }
+    let data = build_chapter_content(&mut g, &chapters, &images)?;
+    // Pictures no entry shows are dropped (#102).
+    let shown: Vec<&str> = data
+        .chunks
+        .iter()
+        .filter_map(|c| c.picture.as_ref().map(|p| p.resource.as_str()))
+        .collect();
+    images::drop_unshown(&mut g, &mut images, &shown);
 
     // A section per storyline (:4959).
     let mut section_names = Vec::new();
@@ -186,9 +197,11 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
     let f = build_fragment_538(&mut g, &section_names);
     g.push(f);
 
+    // The cover's page is in no contents (:4988).
     let nav_entries: Vec<NavEntry> = chapters
         .iter()
         .zip(&data.chapter_start_positions)
+        .filter(|(ch, _)| !ch.is_cover)
         .map(|(ch, &position)| NavEntry {
             title: ch.title.clone(),
             position,
@@ -205,9 +218,11 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
     } else {
         (Vec::new(), "nP")
     };
+    let cover_position = chapters[0].is_cover.then(|| data.section_positions[0]);
     let f = build_fragment_389(
         &mut g,
         &nav_entries,
+        cover_position,
         &book_headings(&data),
         &pages,
         page_list_name,
@@ -256,9 +271,9 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
     }
     g.push(build_fragment_550(&pos.locations));
 
-    // $419: each entity once (:5131). Its $253 lists what sections reach through pictures,
-    // and there are none.
+    // $419: each entity once (:5131), and what sections reach through pictures.
     let mut seen = BTreeSet::new();
+    let picture_names = images::entity_names(&images);
     let entity_names: Vec<&String> = data
         .content_names
         .iter()
@@ -268,8 +283,10 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
         .chain(&data.extra_style_names)
         .chain(&data.anchor_names)
         .chain(&section_ad_names)
+        .chain(&picture_names)
         .filter(|name| seen.insert(*name))
         .collect();
+    let dependencies = images::entity_dependencies(&g.fragments);
     let value = st([
         (
             "$252",
@@ -281,7 +298,7 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
                 ),
             ])]),
         ),
-        ("$253", Value::List(Vec::new())),
+        ("$253", Value::List(dependencies)),
     ]);
     g.push(Fragment::root("$419", value));
     g.push(build_fragment_270(&container_id));
@@ -360,8 +377,8 @@ fn build_fragment_585(g: &mut Generator, table_version: i64) -> Fragment {
     Fragment::root("$585", st([("$590", Value::List(features))]))
 }
 
-/// `_declare_content_features` (:2256): reflow-section-size from the largest section. There
-/// are no pictures for yj_hdv or a JPEG restart marker.
+/// `_declare_content_features` (:2256): reflow-section-size from the largest section, then
+/// what the pictures need.
 fn declare_content_features(g: &mut Generator, max_section_pids: i64) {
     let n = max_section_pids;
     let size = if n > 65536 {
@@ -369,10 +386,13 @@ fn declare_content_features(g: &mut Generator, max_section_pids: i64) {
     } else {
         1
     };
-    if size <= 1 {
-        return;
+    let pictures = images::picture_features(&g.fragments);
+    if size > 1 {
+        g.local("reflow-section-size");
     }
-    g.local("reflow-section-size");
+    for name in &pictures {
+        g.local(name);
+    }
     let Some(features) = g
         .fragments
         .get_single_mut(&"$585".into())
@@ -392,10 +412,15 @@ fn declare_content_features(g: &mut Generator, max_section_pids: i64) {
                 .is_some_and(|n| n == "yj_table" || n == "yj_table_viewer")
         })
         .count();
-    features.insert(
-        at,
-        feature("com.amazon.yjconversion", "reflow-section-size", size),
-    );
+    if size > 1 {
+        features.insert(
+            at,
+            feature("com.amazon.yjconversion", "reflow-section-size", size),
+        );
+    }
+    for name in pictures {
+        features.push(feature("com.amazon.yjconversion", name, 1));
+    }
 }
 
 fn reading_order(section_names: &[String]) -> Value {

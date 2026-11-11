@@ -44,7 +44,7 @@ fn links_matches_kfxgen() {
 }
 
 /// The value at `key` of a Python dict.
-fn entry<'a>(dict: &'a mut PyValue, key: &str) -> &'a mut PyValue {
+pub(crate) fn entry<'a>(dict: &'a mut PyValue, key: &str) -> &'a mut PyValue {
     let PyValue::Dict(pairs) = dict else {
         panic!("not a dict")
     };
@@ -55,7 +55,7 @@ fn entry<'a>(dict: &'a mut PyValue, key: &str) -> &'a mut PyValue {
     v
 }
 
-fn item(list: &mut PyValue, i: usize) -> &mut PyValue {
+pub(crate) fn item(list: &mut PyValue, i: usize) -> &mut PyValue {
     let PyValue::List(items) = list else {
         panic!("not a list")
     };

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The navigation, `$389` (`build_fragment_389_toc`, `native_generator.py:3066`): the book's
-//! headings, its contents and its pages. A cover and landmarks aren't ported yet.
+//! headings, its contents, its pages and its cover. The book's own landmarks aren't ported
+//! yet.
 use deckle_kfx::fragment::Fragment;
 use deckle_kfx::ion::Value;
 
@@ -95,20 +96,24 @@ fn nav_unit(entries: &[NavEntry], children: &[Vec<usize>], i: usize) -> Value {
     annotated("$393", Value::Struct(fields))
 }
 
-/// `build_fragment_389_toc` (:3066) with no cover and no landmarks. `pages` are (label,
-/// position, offset).
+/// `build_fragment_389_toc` (:3066) with no landmarks of the book's. `pages` are (label,
+/// position, offset); `cover_position` is the cover page's section, marked `$233` (#160).
 pub(crate) fn build_fragment_389(
     g: &mut Generator,
     entries: &[NavEntry],
+    cover_position: Option<i64>,
     headings: &[(i64, i64)],
     pages: &[(String, i64, i64)],
     page_list_name: &str,
 ) -> Fragment {
-    let (heading_name, toc_name) = ("nH", "nT");
+    let (heading_name, toc_name, landmarks_name) = ("nH", "nT", "nL");
     if !headings.is_empty() {
         g.local(heading_name);
     }
     g.local(toc_name);
+    if cover_position.is_some() {
+        g.local(landmarks_name);
+    }
 
     let mut containers = Vec::new();
     if !headings.is_empty() {
@@ -154,6 +159,21 @@ pub(crate) fn build_fragment_389(
                 ("$235", sym("$237")),
                 ("$239", sym(page_list_name)),
                 ("$247", Value::List(units)),
+            ]),
+        ));
+    }
+    if let Some(pos) = cover_position {
+        let unit = st([
+            ("$238", sym("$233")),
+            ("$241", st([("$244", Value::string("cover-nav-unit"))])),
+            ("$246", place(pos, 0)),
+        ]);
+        containers.push(annotated(
+            "$391",
+            st([
+                ("$235", sym("$236")),
+                ("$239", sym(landmarks_name)),
+                ("$247", Value::List(vec![annotated("$393", unit)])),
             ]),
         ));
     }

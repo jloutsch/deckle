@@ -15,6 +15,8 @@ pub(crate) struct BookMetadata<'a> {
     /// `authors or [author]`.
     pub authors: Vec<&'a str>,
     pub description: Option<&'a str>,
+    /// The cover's `$164`.
+    pub cover_image: Option<&'a str>,
 }
 
 /// The symbols `build_fragment_490` creates (:2878); its values are strings, so a book keeps
@@ -55,7 +57,7 @@ fn category(name: &str, entries: Vec<Value>) -> Value {
     ])
 }
 
-/// `build_fragment_490` with no cover and no embedded fonts.
+/// `build_fragment_490` with no embedded fonts.
 pub(crate) fn build_fragment_490(g: &mut Generator, m: &BookMetadata) -> Fragment {
     for name in SYMBOLS {
         g.local(name);
@@ -99,6 +101,9 @@ pub(crate) fn build_fragment_490(g: &mut Generator, m: &BookMetadata) -> Fragmen
         entry("publisher", text(m.publisher)),
         entry("title", text(m.title)),
     ]);
+    if let Some(cover) = m.cover_image {
+        title_meta.push(entry("cover_image", text(cover)));
+    }
     let value = st([(
         "$491",
         Value::List(vec![
