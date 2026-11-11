@@ -42,3 +42,11 @@ The converter writes a box's `width` and `width_px` as numbers or None and its `
 length for a width (`_size_in_box`, :236). The port reads `width` and `width_px` as numbers and
 `float` as a string, and anything else is a `GenerateError::Model` naming the key, where kfxgen
 can write a book.
+
+## Runs past ±2^61 characters
+
+A run comes from the model as `(start, length, flags)`, and kfxgen's ints have no bound. The
+port holds them in an i64, subtracts text lengths from a run's ends (`_title_spans`,
+`_trim_text`) and takes one end from another (`_direction_layers`). A run whose start or end
+(`start + length`) is past ±2^61 is a `GenerateError::Model` naming the spans, where kfxgen
+writes a book. A run's offsets count characters of the paragraph, so no converted book has one.

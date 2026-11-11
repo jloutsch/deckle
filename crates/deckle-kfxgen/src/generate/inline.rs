@@ -116,6 +116,17 @@ pub(crate) fn read_spans(v: Option<&PyValue>, at: &str) -> Result<Vec<Span>, Gen
         if flags.iter().any(is_math) {
             return Err(Unsupported("math"));
         }
+        // The port takes text lengths from a run's ends and subtracts one end from another,
+        // in an i64 where kfxgen's ints have no bound (DIVERGENCES.md).
+        let bound = 1i64 << 61;
+        if !start
+            .checked_add(*len)
+            .is_some_and(|end| [*start, end].iter().all(|x| (-bound..=bound).contains(x)))
+        {
+            return Err(model_err(format!(
+                "{at}.spans: a run whose start and end are within ±2^61"
+            )));
+        }
         parts.push((*start, *len, flags));
     }
     let mut out = Vec::with_capacity(parts.len());

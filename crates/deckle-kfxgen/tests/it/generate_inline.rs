@@ -107,3 +107,52 @@ fn chapter_heading_level_out_of_range_is_a_model_error() {
         Err(GenerateError::Model(m)) if m.contains("heading_level")
     ));
 }
+
+/// A run past ±2^61 characters, or whose end overflows, is a model error naming the spans:
+/// the port subtracts text lengths from run ends and takes their differences in an i64.
+#[test]
+fn a_run_out_of_range_is_a_model_error() {
+    let edge = 1i64 << 61;
+    let cases = [
+        (i64::MAX - 1, 5, false),
+        (i64::MIN, 1, false),
+        (edge, 1, false),
+        (-edge - 1, 1, false),
+        (edge - 10, 5, true),
+        (-edge, 1, true),
+    ];
+    for name in ["frame_edges", "heading_runs", "box_titles", "table_parts"] {
+        for (start, len, ok) in cases {
+            let mut model =
+                load_model(&deckle_kfx::fixtures::kfxgen(&format!("models/{name}"))).unwrap();
+            let PyValue::List(chapters) = entry(&mut model.args, "chapters") else {
+                panic!("chapters")
+            };
+            for chapter in chapters {
+                let PyValue::List(blocks) = entry(chapter, "blocks") else {
+                    continue;
+                };
+                for block in blocks {
+                    let PyValue::Dict(pairs) = block else {
+                        continue;
+                    };
+                    for (k, v) in pairs.iter_mut() {
+                        if k.as_str() == Some("spans") {
+                            *v = PyValue::List(vec![PyValue::Tuple(vec![
+                                PyValue::Int(start),
+                                PyValue::Int(len),
+                                PyValue::Set(vec![PyValue::Str("bold".to_owned())]),
+                            ])]);
+                        }
+                    }
+                }
+            }
+            match generate(&model) {
+                Err(GenerateError::Model(m)) if !ok => assert!(m.contains("spans"), "{m}"),
+                Err(GenerateError::Model(m)) => panic!("{name} {start} {len}: {m}"),
+                _ if ok => {}
+                Ok(_) | Err(_) => panic!("{name} {start} {len}: no model error"),
+            }
+        }
+    }
+}
