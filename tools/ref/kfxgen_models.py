@@ -1396,7 +1396,10 @@ def _link_colour_runs():
                 _block("Grey link here.", [_on("Grey link here.", "link", ("link", "lc.xhtml#t"), lc(grey, grey_text))]),
                 _block("Black link here.", [_on("Black link here.", "link", ("link", "lc.xhtml#t"), lc(None, 0xFF000000))]),
                 inside("Plain then grey", "lc.xhtml#t", grey),
-                _block("The target.", keys=["lc.xhtml#t"]),
+                # An empty target is no link (`if t`): its colour is the link's, found.
+                _block("Empty link here.", [_on("Empty link here.", "link", ("link", ""), lc(grey, grey_text))]),
+                _block("Empty then bold.", [(0, 11, _link("")), (11, 4, _link("", "bold"))]),
+                _block("The target.", keys=["lc.xhtml#t", "#top"]),
             ],
         ),
         _chapter(

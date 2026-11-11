@@ -257,7 +257,11 @@ pub(crate) fn direction_layers(spans: &[Span]) -> Vec<Layer> {
                 )),
             }
         }
-        for f in plain.iter().filter(|f| matches!(f, Flag::Link(_))) {
+        // An empty target is no link (`if not link_target({f})`, :446).
+        for f in plain
+            .iter()
+            .filter(|f| matches!(f, Flag::Link(t) if !t.is_empty()))
+        {
             match links.last_mut() {
                 // Adjacent runs of one link are one layer.
                 Some(last) if last.flags.contains(f) && last.end == sp.start => last.end = end,

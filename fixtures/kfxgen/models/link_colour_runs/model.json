@@ -23,7 +23,7 @@
        ],
        [
         "text",
-        "Found\n\nGrey link here.\n\nBlack link here.\n\nPlain then grey\n\nThe target."
+        "Found\n\nGrey link here.\n\nBlack link here.\n\nPlain then grey\n\nEmpty link here.\n\nEmpty then bold.\n\nThe target."
        ],
        [
         "blocks",
@@ -304,6 +304,152 @@
           "$dict": [
            [
             "text",
+            "Empty link here."
+           ],
+           [
+            "spans",
+            [
+             {
+              "$tuple": [
+               6,
+               4,
+               {
+                "$frozenset": [
+                 {
+                  "$tuple": [
+                   "link",
+                   ""
+                  ]
+                 },
+                 {
+                  "$tuple": [
+                   "link-colour",
+                   {
+                    "$tuple": [
+                     4288256409,
+                     4285953654
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            false
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": []
+            }
+           ],
+           [
+            "anchor_keys",
+            []
+           ]
+          ]
+         },
+         {
+          "$dict": [
+           [
+            "text",
+            "Empty then bold."
+           ],
+           [
+            "spans",
+            [
+             {
+              "$tuple": [
+               0,
+               11,
+               {
+                "$frozenset": [
+                 {
+                  "$tuple": [
+                   "link",
+                   ""
+                  ]
+                 }
+                ]
+               }
+              ]
+             },
+             {
+              "$tuple": [
+               11,
+               4,
+               {
+                "$frozenset": [
+                 "bold",
+                 {
+                  "$tuple": [
+                   "link",
+                   ""
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            false
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": []
+            }
+           ],
+           [
+            "anchor_keys",
+            []
+           ]
+          ]
+         },
+         {
+          "$dict": [
+           [
+            "text",
             "The target."
            ],
            [
@@ -339,7 +485,8 @@
            [
             "anchor_keys",
             [
-             "lc.xhtml#t"
+             "lc.xhtml#t",
+             "#top"
             ]
            ]
           ]

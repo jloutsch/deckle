@@ -271,3 +271,41 @@ fn block_typography_of_another_shape_is_a_model_error() {
         }
     }
 }
+
+/// `contents_entries` with one chapter's entries nested `depth` deep under it.
+fn nested_contents(depth: usize) -> Result<(), GenerateError> {
+    let mut model = load_model(&deckle_kfx::fixtures::kfxgen("models/contents_entries")).unwrap();
+    let chapter = item(entry(&mut model.args, "chapters"), 1);
+    let PyValue::List(subs) = entry(chapter, "sub_entries") else {
+        panic!("not a list")
+    };
+    let first = subs[0].clone();
+    *subs = (1..depth)
+        .map(|level| {
+            let mut sub = first.clone();
+            *entry(&mut sub, "level") = PyValue::Int(level as i64);
+            sub
+        })
+        .collect();
+    generate(&model).map(|_| ())
+}
+
+/// Contents nested past 32 levels are unsupported, before the port recurses into them: an
+/// EPUB's contents could otherwise overflow the stack (a debug build on a 2 MiB thread did
+/// at 80). kfxgen itself fails at about 163 (`RecursionError`).
+#[test]
+fn contents_nested_past_32_levels_are_unsupported() {
+    nested_contents(32).unwrap();
+    assert!(matches!(
+        nested_contents(33),
+        Err(GenerateError::Unsupported(
+            "contents nested more than 32 levels deep"
+        ))
+    ));
+    assert!(matches!(
+        nested_contents(100_000),
+        Err(GenerateError::Unsupported(
+            "contents nested more than 32 levels deep"
+        ))
+    ));
+}

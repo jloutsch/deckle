@@ -153,17 +153,31 @@ fn heading_levels(headings: &[(i64, i64)]) -> Vec<Value> {
 /// `_nest_nav_entries` (:2119): each entry's children are the entries after it at a deeper
 /// level, up to the next at its own level or shallower. Its parent is the last entry before it
 /// at a shallower level. Returns each entry's children and the top-level entries, by index.
-fn nest_nav_entries(entries: &[NavEntry]) -> (Vec<Vec<usize>>, Vec<usize>) {
+fn nest_nav_entries(entries: &[NavEntry]) -> Result<(Vec<Vec<usize>>, Vec<usize>), GenerateError> {
     let mut children = vec![Vec::new(); entries.len()];
+    let mut depths = vec![1; entries.len()];
     let mut roots = Vec::new();
     for (i, e) in entries.iter().enumerate() {
         match (0..i).rev().find(|&j| entries[j].level < e.level) {
-            Some(parent) => children[parent].push(i),
+            Some(parent) => {
+                children[parent].push(i);
+                depths[i] = depths[parent] + 1;
+                // Writing the entries recurses once a level: stop before an EPUB's
+                // contents can overflow the stack (DIVERGENCES.md).
+                if depths[i] > MAX_NAV_DEPTH {
+                    return Err(GenerateError::Unsupported(
+                        "contents nested more than 32 levels deep",
+                    ));
+                }
+            }
             None => roots.push(i),
         }
     }
-    (children, roots)
+    Ok((children, roots))
 }
+
+/// The deepest contents the port writes.
+const MAX_NAV_DEPTH: usize = 32;
 
 fn nav_unit(entries: &[NavEntry], children: &[Vec<usize>], i: usize) -> Value {
     let entry = &entries[i];
@@ -191,7 +205,7 @@ pub(crate) fn build_fragment_389(
     cover_position: Option<i64>,
     headings: &[(i64, i64)],
     nav: &BookNav,
-) -> Fragment {
+) -> Result<Fragment, GenerateError> {
     let (heading_name, toc_name, landmarks_name) = ("nH", "nT", "nL");
     if !headings.is_empty() {
         g.local(heading_name);
@@ -212,7 +226,7 @@ pub(crate) fn build_fragment_389(
             ]),
         ));
     }
-    let (children, roots) = nest_nav_entries(entries);
+    let (children, roots) = nest_nav_entries(entries)?;
     let units = roots
         .iter()
         .map(|&i| nav_unit(entries, &children, i))
@@ -280,7 +294,7 @@ pub(crate) fn build_fragment_389(
         ));
     }
     let top = st([("$178", sym("$351")), ("$392", Value::List(containers))]);
-    Fragment::root("$389", Value::List(vec![top]))
+    Ok(Fragment::root("$389", Value::List(vec![top])))
 }
 
 #[cfg(test)]

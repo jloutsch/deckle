@@ -142,3 +142,13 @@ spacings it can't unpack. A run carrying two values of one kind is
 `GenerateError::Unsupported`: kfxgen would take the first in set order. A drop cap whose
 initial is so large that its line count passes 2^63 is a model error, where kfxgen writes
 Python's unbounded int.
+
+## Contents nested more than 32 levels deep
+
+kfxgen nests contents entries by level (`_nest_nav_entries`, `native_generator.py:2119`) and
+writes them recursively; called directly under Python's default recursion limit (1,000), it
+writes contents up to 162 levels deep and raises `RecursionError` at 163. The port writes them
+recursively too, and a debug build on a 2 MiB thread overflowed its stack, aborting the
+process, at 80 levels (72 passed). So contents nested more than 32 levels deep are
+`GenerateError::Unsupported`, checked before any recursion: a book kfxgen writes at 33 to 162
+levels is refused. No fixture or corpus book nests more than 3.

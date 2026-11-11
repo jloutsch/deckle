@@ -476,7 +476,8 @@ pub(crate) fn build_body_anchors(
         .flat_map(|c| c.spans)
         .flat_map(|sp| &sp.flags)
         .filter_map(|f| match f {
-            Flag::Link(t) => Some(t.as_str()),
+            // An empty target is none (`if target`, :6790).
+            Flag::Link(t) if !t.is_empty() => Some(t.as_str()),
             _ => None,
         })
         .collect();
@@ -717,12 +718,10 @@ pub(crate) fn entry_runs(
             _ => None,
         });
         // The link this run is in, its own or one it's layered on, has a target in the book
-        // (#728).
-        let link_found = [&flags]
-            .into_iter()
-            .chain(&under)
-            .flatten()
-            .all(|f| !matches!(f, Flag::Link(t) if !body_anchor_map.contains_key(t)));
+        // (#728); an empty target is none (`if t`, :7944).
+        let link_found = [&flags].into_iter().chain(&under).flatten().all(
+            |f| !matches!(f, Flag::Link(t) if !t.is_empty() && !body_anchor_map.contains_key(t)),
+        );
         let mut has_emphasis = flags.iter().any(|f| match f {
             Flag::Link(_)
             | Flag::Baseline

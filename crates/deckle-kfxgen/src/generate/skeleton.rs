@@ -236,7 +236,7 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
         cover_position,
         &book_headings(&data),
         &book_nav,
-    );
+    )?;
     g.push(f);
     let f = build_fragment_258(&mut g, &section_names);
     g.push(f);
