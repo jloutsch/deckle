@@ -3,10 +3,9 @@
 use std::path::{Path, PathBuf};
 
 use deckle_kfx::container::read_kfx;
-use deckle_kfxgen::generate::{GenerateError, generate};
+use deckle_kfxgen::generate::generate;
 use deckle_kfxgen::load::load_model;
 
-use crate::load::model_dirs;
 use crate::oracle::assert_fragments_match;
 
 fn model_dir(name: &str) -> PathBuf {
@@ -24,7 +23,7 @@ fn types_in(kfx: &Path) -> Vec<String> {
 
 /// Fragments first (they name the first difference), then the whole file:
 /// the bytes also catch symbol order and framing the fragment list can't.
-fn assert_matches(dir: &Path, out: &deckle_kfxgen::generate::GenerateOutput) {
+pub(crate) fn assert_matches(dir: &Path, out: &deckle_kfxgen::generate::GenerateOutput) {
     let expected = dir.join("expected.kfx");
     let types = types_in(&expected);
     let types: Vec<&str> = types.iter().map(String::as_str).collect();
@@ -83,18 +82,6 @@ fn unicode_text_matches_kfxgen() {
 #[test]
 fn publisher_structure_matches_kfxgen() {
     matches_kfxgen("publisher_structure");
-}
-
-/// What isn't ported yet fails loudly, never as a wrong book.
-#[test]
-fn every_model_matches_kfxgen_or_is_unsupported() {
-    for dir in model_dirs() {
-        match generate(&load_model(&dir).unwrap()) {
-            Ok(out) => assert_matches(&dir, &out),
-            Err(GenerateError::Unsupported(_)) => {}
-            Err(e) => panic!("{}: {e}", dir.display()),
-        }
-    }
 }
 
 /// A vertical book (#754): percentages against Previewer's 480pt page in frames, pictures

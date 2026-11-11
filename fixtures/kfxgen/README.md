@@ -31,8 +31,9 @@ One folder per fixture: `model.json` and `resources/` (the arguments of kfxgen's
 `generate_full_book`, written by Deckle's `KFXGEN_DUMP_MODEL` hook) and `expected.kfx` (what
 kfxgen's generator makes from them). `KFXGEN_COMMIT` names the kfxgen commit they came from.
 Rebuild all of them with `tools/ref/kfxgen_models.sh`; two runs give the same bytes. The script
-exports commit `KFXGEN_REF` (default `0bc705d`) of the kfxgen repo `KFXGEN` (default
-`../kfxgen-public`, only read) with `git archive`, puts the hook into the export
+needs kfxgen `0bc705d` or later (the replay imports its `page_scale`). It exports commit
+`KFXGEN_REF` (default `0bc705d`) of the kfxgen repo `KFXGEN` (default `../kfxgen-public`, only
+read) with `git archive`, puts the hook into the export
 (`tools/ref/kfxgen_hook/inject.py` adds a call at the top of `generate_full_book`, and stops if
 its anchor line has moved), and builds the Calibre plugin from that export. kfxgen's `convert`
 runs the generator inside `page_width`, 480pt for a vertical-rl book (#754); that is not an
@@ -80,7 +81,7 @@ hrefs, unreadable JPEGs). The books are `ARG_BOOKS` in that script, their other 
 | `page_list_alone` | an EPUB page list (#578) with no landmarks or cover: pages at ids with and without offsets, at a whole file by its first id and by an id of its own, at an id declared twice; pages at another file and at an id in other capitals, which land nowhere |
 | `landmarks_alone` | contents and start landmarks (#579) with no page list or cover: at a file, at an id with an offset, a second start after the first that lands (#609); landmarks that land nowhere, one of a kind kfxgen doesn't know; a page list that lands nowhere, with no approximate pages |
 | `tcy_notes` | 縦中横 in a vertical Japanese book whose texts fill kfxgen's `content_math` fragment (#247): 4,096 and 4,095 bytes, a third of one byte that still joins them at 8,191, a fourth that starts `content_math2` at 8,192 |
-| `vertical_page` | a vertical book (#754): `frame_edges`, `inline_pictures`, `table_parts`, `box_titles` and `nested_contents` together, written vertical-rl, so their frames, pictures among words, floats, cell and box padding, cell sides and contents levels are measured against Previewer's 480pt page; and a horizontal box holding a picture in a horizontal-tb chapter, where the picture isn't a plain one (#247) |
+| `vertical_page` | a vertical book (#754): `frame_edges`, `inline_pictures`, `table_parts`, `box_titles` and `nested_contents` together as horizontal-tb chapters in a vertical-rl book, so their frames, pictures among words, floats, cell and box padding, cell sides and contents levels are measured against Previewer's 480pt page; and a horizontal box holding a picture in a horizontal-tb chapter, where the picture isn't a plain one (#247) |
 | `link_colour_runs` | link colours (#728, #732): a link's own colour with its target found, none of its own, its target not found so written as the text's colour against the page (#383) or inside a filled box or cell and on a box filled 0, in a language of its own, bold, twice; a coloured run inside a link found and not; an empty target, coloured and around a bold run, with an id `#top` whose file is empty |
 | `contents_entries` | contents entries inside a chapter (#363): part-way into a paragraph, on a table and on a box (their first entry's start), declared nowhere, of no key; levels nested and left out; in a chapter left out of the contents; a rebuilt contents page's lines landing on them and on a place declared nowhere |
 | `typography_runs` | typography (#239, #240, #247): small caps, case, spacing and colour on the book's heading, paragraphs (two colours only the bisection's last steps darken right), runs and cells (on the page, filled, filled 0, in a filled box); keywords Previewer doesn't write; a paragraph's text-orientation and emphasis marks; a run's colour inside a link not found; drop caps of each size, past their run, of a later run, of no size, with nothing after, counted from the end, in a language, in a cell |
@@ -127,4 +128,27 @@ contains MathML.
 
 The 9-book Gutenberg corpus is dumped the same way, outside git:
 `DECKLE_KFXGEN_CORPUS_OUT=gutenberg/models tools/ref/kfxgen_models.sh --corpus gutenberg/*.epub`
-(28 s on an M-series Mac, 174 MB).
+(28 s on an M-series Mac, 174 MB). `crates/deckle-kfxgen` makes every corpus book byte for
+byte: `DECKLE_KFXGEN_CORPUS=gutenberg/models cargo test -p deckle-kfxgen --test it corpus -- --ignored`.
+
+## Phase 1 timings
+
+`cargo run --release -p deckle-kfxgen --example from_model -- gutenberg/models/<book> out.kfx`
+on an M-series Mac, median of three runs. It times `generate` alone: the model is already
+loaded, and nothing reads the EPUB or applies CSS. kfxgen's column is a whole `ebook-convert`
+run from `gutenberg/kfxgen/timings.csv` (Calibre start-up, EPUB parsing, CSS and kfxgen's
+generator together), so the two columns don't measure the same work. The whole-pipeline speed
+goal is checked in phase 3.
+
+| Book | EPUB size | `generate` (ms) | kfxgen through Calibre (s) |
+|---|---|---|---|
+| pg11 | 0.2 MB | 23.2 | 2.91 |
+| pg23 | 0.4 MB | 16.4 | 1.46 |
+| pg43 | 0.3 MB | 15.0 | 1.56 |
+| pg55 | 0.3 MB | 26.5 | 3.19 |
+| pg74 | 16.7 MB | 92.3 | 4.81 |
+| pg76 | 16.0 MB | 101.0 | 7.74 |
+| pg84 | 0.5 MB | 30.3 | 2.61 |
+| pg86 | 26.1 MB | 112.4 | 6.54 |
+| pg98 | 7.9 MB | 94.0 | 8.20 |
+| total | | 511.1 | 39.22 |
