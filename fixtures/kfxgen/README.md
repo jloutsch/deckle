@@ -2,8 +2,8 @@
 
 Output of [kfxgen](https://github.com/jloutsch/kfxgen) (GPL-3), the reference for the native
 converter (`docs/superpowers/specs/2026-11-10-native-kfx-design.md`, Oracles). The generator
-code is kfxgen commit `4b81651` (5.24.0 plus #753). `models/` were dumped from that commit
-with Deckle's own hook (`tools/ref/kfxgen_hook/`); nothing in the kfxgen repo is changed.
+code is kfxgen commit `0bc705d` (5.24.0 plus #753 to #760). `models/` were dumped from that
+commit with Deckle's own hook (`tools/ref/kfxgen_hook/`); nothing in the kfxgen repo is changed.
 
 ## golden/
 
@@ -18,7 +18,8 @@ synthetic EPUBs (`tests/fixtures/golden/inputs.py`) without Calibre, through
 | `body_images.kfx` | `7353137416ae4ad0` |
 | `table_cells.kfx` | `2b646ac746a8baf9` |
 
-Regenerate: `git -C <kfxgen> show 4b81651:tests/fixtures/golden/expected/<name>.kfx > golden/<name>.kfx`.
+Regenerate: `git -C <kfxgen> show 0bc705d:tests/fixtures/golden/expected/<name>.kfx > golden/<name>.kfx`
+(the same files as at `4b81651`).
 
 **Found (phase 1, task 1):** `read_kfx` then `write_kfx` with `WriteOptions::from_doc`
 reproduces all four byte for byte. kfxgen's container framing is the same as kfxlib's, so the
@@ -30,10 +31,14 @@ One folder per fixture: `model.json` and `resources/` (the arguments of kfxgen's
 `generate_full_book`, written by Deckle's `KFXGEN_DUMP_MODEL` hook) and `expected.kfx` (what
 kfxgen's generator makes from them). `KFXGEN_COMMIT` names the kfxgen commit they came from.
 Rebuild all of them with `tools/ref/kfxgen_models.sh`; two runs give the same bytes. The script
-exports commit `KFXGEN_REF` (default `4b81651`) of the kfxgen repo `KFXGEN` (default
+exports commit `KFXGEN_REF` (default `0bc705d`) of the kfxgen repo `KFXGEN` (default
 `../kfxgen-public`, only read) with `git archive`, puts the hook into the export
 (`tools/ref/kfxgen_hook/inject.py` adds a call at the top of `generate_full_book`, and stops if
-its anchor line has moved), and builds the Calibre plugin from that export.
+its anchor line has moved), and builds the Calibre plugin from that export. kfxgen's `convert`
+runs the generator inside `page_width`, 480pt for a vertical-rl book (#754); that is not an
+argument, so the dump doesn't hold it, and every replay
+(`tools/ref/kfxgen_hook/generate_from_model.py`'s `generate`) sets it from `writing_mode` the same
+way.
 
 **Shim path** (kfxgen's Calibre-free `EpubAsOeb`, no per-element CSS): the 15 golden inputs
 from kfxgen's `tests/fixtures/golden/inputs.py` under their own names (`minimal`,
