@@ -72,6 +72,7 @@ hrefs, unreadable JPEGs). The books are `ARG_BOOKS` in that script, their other 
 | `tcy_notes` | 縦中横 in a vertical Japanese book whose texts fill kfxgen's `content_math` fragment (#247): 4,096 and 4,095 bytes, a third of one byte that still joins them at 8,191, a fourth that starts `content_math2` at 8,192 |
 | `link_colour_runs` | link colours (#728, #732): a link's own colour with its target found, none of its own, its target not found so written as the text's colour against the page (#383) or inside a filled box or cell and on a box filled 0, in a language of its own, bold, twice; a coloured run inside a link found and not |
 | `contents_entries` | contents entries inside a chapter (#363): part-way into a paragraph, on a table and on a box (their first entry's start), declared nowhere, of no key; levels nested and left out; in a chapter left out of the contents; a rebuilt contents page's lines landing on them and on a place declared nowhere |
+| `typography_runs` | typography (#239, #240, #247): small caps, case, spacing and colour on the book's heading, paragraphs, runs and cells (on the page, filled, filled 0, in a filled box); keywords Previewer doesn't write; a paragraph's text-orientation and emphasis marks; a run's colour inside a link not found; drop caps of each size, past their run, of a later run, of no size, with nothing after, counted from the end, in a language, in a cell |
 
 **Calibre path** (`ebook-convert` with kfxgen, CSS applied): the source is
 `sources/<name>.epub`. For each, the script also checks that replaying the model gives exactly
@@ -99,6 +100,12 @@ the KFX `ebook-convert` wrote.
 | `font_sizes` | kfxgen `test_books/font_sizes/font-sizes-source.epub` | paragraphs, spans and cells sized in CSS (#241) |
 | `link_greys` | kfxgen `test_books/link_greys_741/s741k.epub` | links in light and dark greys, one around a black word, plain links (#728, #741) |
 | `navigation` | kfxgen `test_books/navigation/nav-kfxgen.epub` | an NCX naming places inside chapters (#363): of no title, of no place, a chapter's start again; a contents page's line landing on one |
+| `typography` | kfxgen `test_books/typography/typography-new-source.epub` | small caps, text-transform, letter spacing and colour on paragraphs, headings and runs, set back inside them; a drop cap (#239, #240) |
+| `colour` | kfxgen `test_books/colour/colour-new-source.epub` | text colours on paragraphs and runs, light ones darkened against the page (#239, #383) |
+| `link_colours` | kfxgen `test_books/link_colours_732/s732k.epub` | grey, red and black links, grey words inside and around links (#728, #732) |
+| `dark_boxes` | kfxgen `test_books/dark_box_colours_734/c734k.epub` | text colours in light and dark boxes (#383, #734) |
+| `drop_caps` | kfxgen `test_books/drop_caps/drop-caps-new-source.epub` | drop caps of several sizes and lengths (#240) |
+| `figures` | kfxgen `test_books/figures/figures-new-2-source.epub` | figures and captions, a run in small caps |
 
 The `fonts` fixture embeds Liberation Serif 2.1.5 (SIL Open Font License 1.1), taken from
 calibre's bundled fonts. The faces of `font_faces` are TrueType fonts of one empty glyph that

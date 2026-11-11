@@ -10,7 +10,7 @@ use super::table_styles::{
     CellStyle, PartStyle, TableStyle, align_symbol, build_cell_style_157, build_part_style_157,
     build_table_style_157,
 };
-use super::typography::on_page;
+use super::typography::{Typography, on_page};
 use super::writing::{BidiKeys, bidi_value, rotate_margins};
 use super::{Generator, measure, py, st, sym};
 
@@ -44,11 +44,10 @@ pub(crate) struct Style157 {
     /// A size of 1 written, not left to the container's (#241, #681). None: not given, a
     /// style apart from one given False, as `_allocate_style` keys them.
     pub explicit_size: Option<bool>,
-    /// A run's text-orientation and emphasis marks in vertical text (#247).
-    pub text_orientation: Option<String>,
-    pub text_emphasis: Option<String>,
-    /// ARGB: the text's colour (#239), and a link's own (#728).
-    pub colour: Option<i64>,
+    /// The lines a drop cap drops through and its characters (#240).
+    pub drop_cap: Option<(i64, i64)>,
+    pub typography: Typography,
+    /// ARGB: a link's own colour (#728).
     pub link_colour: Option<i64>,
 }
 
@@ -74,9 +73,8 @@ impl Default for Style157 {
             space_above: None,
             space_below: None,
             explicit_size: None,
-            text_orientation: None,
-            text_emphasis: None,
-            colour: None,
+            drop_cap: None,
+            typography: Typography::default(),
             link_colour: None,
         }
     }
@@ -141,13 +139,17 @@ impl Styles {
         bidi: &[(&'static str, String)],
     ) -> String {
         let mut style = style.into();
-        if let StyleArgs::Text(s) = &mut style
-            && let Some(colour) = s.colour
+        let colour = match &mut style {
+            StyleArgs::Text(s) => Some(&mut s.typography.colour),
+            StyleArgs::Cell(c) if c.background.is_none() => Some(&mut c.typography.colour),
+            _ => None,
+        };
+        if let Some(Some(colour)) = colour
             && !self.fills.iter().any(|f| f.is_some_and(|f| f != 0))
         {
             // Text written on the page is measured against it: a colour already readable
             // there is unchanged (#383).
-            s.colour = Some(on_page(colour));
+            *colour = on_page(*colour);
         }
         if let Some((.., name)) = self.cache.iter().find(|(k, s, b, v, _)| {
             *k == kind && *s == style && b[..] == *bidi && *v == self.vertical
@@ -191,35 +193,6 @@ impl Styles {
             .push((kind, style, bidi.to_vec(), self.vertical, name.clone()));
         name
     }
-}
-
-/// `_ORIENTATION_SYMBOLS` (:937).
-fn orientation_symbol(value: &str) -> Option<&'static str> {
-    match value {
-        "upright" => Some("$779"),
-        "sideways" => Some("$778"),
-        "mixed" => Some("$383"),
-        _ => None,
-    }
-}
-
-/// `_EMPHASIS_SYMBOLS` (:1006): text-emphasis-style as kfxlib maps it.
-fn emphasis_symbol(value: &str) -> Option<&'static str> {
-    Some(match value {
-        "filled" => "$724",
-        "open" => "$725",
-        "filled dot" => "$726",
-        "open dot" => "$727",
-        "filled circle" => "$728",
-        "open circle" => "$729",
-        "filled double-circle" => "$730",
-        "open double-circle" => "$731",
-        "filled triangle" => "$732",
-        "open triangle" => "$733",
-        "filled sesame" => "$734",
-        "open sesame" => "$735",
-        _ => return None,
-    })
 }
 
 /// `measure(Decimal(f"{x:.6g}"), unit)`.
@@ -290,30 +263,13 @@ fn build_fragment_157(g: &mut Generator, name: &str, style: &Style157) -> Value 
             measure(py::decimal_of_float(style.font_size), "$505"),
         );
     }
-    // `_write_typography` (:1023).
-    if let Some(colour) = style.colour {
-        v.insert("$19", Value::Int(colour));
+    if let Some((lines, chars)) = style.drop_cap {
+        // The lines its initial drops through and the initial's characters, as Kindle
+        // Previewer writes them (#240).
+        v.insert("$125", Value::Int(lines));
+        v.insert("$126", Value::Int(chars));
     }
-    if let Some(o) = style
-        .text_orientation
-        .as_deref()
-        .and_then(orientation_symbol)
-    {
-        v.insert("$706", sym(o));
-    }
-    if let Some(e) = style.text_emphasis.as_deref() {
-        if let Some(mark) = emphasis_symbol(e) {
-            v.insert("$717", sym(mark));
-        } else if e.starts_with('"') {
-            // A mark of the book's own, as the string (QA's P748).
-            let inner: String = e
-                .chars()
-                .skip(1)
-                .take(py::len(e).saturating_sub(2))
-                .collect();
-            v.insert("$717", Value::string(&inner));
-        }
-    }
+    style.typography.write(&mut v);
     if let Some(link) = style.link_colour {
         // A link's own colour, as Previewer writes it: the colour of the link and of a
         // visited link (#728).

@@ -9,6 +9,7 @@ use super::chunks::{Chunk, InCell, Marker, Node};
 use super::inline::run_font_size;
 use super::styles::{Style157, StyleArgs, Styles};
 use super::table_styles::{self, CellStyle};
+use super::typography::Typography;
 use super::writing::{Bidi, bidi_diff};
 use super::{GenerateError, Generator, model_err, py};
 use crate::pyvalue::PyValue;
@@ -34,6 +35,10 @@ pub(crate) struct BlockStyle {
     pub font_size: Option<f64>,
     /// `bidi`: its direction and language (#246).
     pub bidi: Option<Bidi>,
+    /// `_typography` (:7144): its keys that are not None.
+    pub typography: Typography,
+    /// The characters of the initial a paragraph opens on (#240).
+    pub drop_cap: Option<i64>,
 }
 
 pub(crate) fn number(v: &PyValue) -> Option<f64> {
@@ -67,6 +72,8 @@ pub(crate) fn read_block_style(
         italic: false,
         font_size: None,
         bidi: None,
+        typography: Typography::default(),
+        drop_cap: None,
     };
     for (k, v) in pairs {
         let key = k
@@ -76,14 +83,11 @@ pub(crate) fn read_block_style(
         if matches!(v, PyValue::None) {
             continue;
         }
+        // `_typography` (:7144) takes any of these that is not None.
+        if bs.typography.read_key(key, v, &at)? {
+            continue;
+        }
         match key {
-            // `_typography` (:7144) takes any of these that is not None.
-            "small_caps" | "text_transform" | "letter_spacing" | "colour" | "text_orientation"
-            | "text_emphasis" => {
-                return Err(Unsupported(
-                    "small caps, case, spacing and colour in paragraphs",
-                ));
-            }
             "bidi" => {
                 bs.bidi = Bidi::read(Some(v), &format!("{at}.bidi"))?;
                 continue;
@@ -113,7 +117,7 @@ pub(crate) fn read_block_style(
             "font_size" => bs.font_size = Some(number(v).ok_or_else(|| err("a number"))?),
             "bold" => bs.bold = true,
             "italic" => bs.italic = true,
-            "drop_cap" => return Err(Unsupported("drop caps")),
+            "drop_cap" => bs.drop_cap = Some(v.as_int().ok_or_else(|| err("an int"))?),
             _ => return Err(Unsupported("a block style")),
         }
     }
@@ -122,7 +126,7 @@ pub(crate) fn read_block_style(
 
 /// `(magnitude, unit)`, the magnitude a decimal kfxgen writes and deckle-kfx holds
 /// (`py::checked_decimal`; `build_fragment_157` :3640).
-fn read_length(v: &PyValue) -> Option<Length> {
+pub(crate) fn read_length(v: &PyValue) -> Option<Length> {
     let [m, u] = v.as_list()? else {
         return None;
     };
@@ -255,6 +259,7 @@ pub(crate) fn text_entry_style(
     chapter_fs: f64,
     open_sizes: &[Option<f64>],
     around: Option<&Bidi>,
+    drop_cap: Option<(i64, i64)>,
 ) -> String {
     let bs = chunk.style.as_ref();
     let mut attrs = Style157::body(sizes.block_font_size(chapter_fs, chunk));
@@ -269,7 +274,9 @@ pub(crate) fn text_entry_style(
         attrs.text_indent = bs.indent.clone();
         attrs.margin_left = bs.margin_left.clone();
         attrs.margin_right = bs.margin_right.clone();
+        attrs.typography = bs.typography.clone();
     }
+    attrs.drop_cap = drop_cap;
     attrs.space_above = chunk.space_above;
     attrs.space_below = chunk.space_below.filter(|&b| b != 0.0);
     let (mut blk_bold, blk_italic) = bs.map_or((false, false), |b| (b.bold, b.italic));
@@ -330,6 +337,8 @@ pub(crate) fn heading_style(
         // None set: none written, not kfxgen's justified body default.
         attrs.no_align = book.align.is_none();
         attrs.italic = book.italic;
+        // Its small caps, transform, spacing and colour (#239).
+        attrs.typography = book.typography.clone();
     }
     let size_px = attrs.font_size * sizes.main_px_or_16();
     if let Some(below) = chunk.heading.space_below_px.filter(|&b| b != 0.0) {

@@ -94,6 +94,12 @@ page_list|landmarks_pages/l579-main.epub
 links|link_runs_726/s726k.epub
 link_greys|link_greys_741/s741k.epub
 navigation|navigation/nav-kfxgen.epub
+typography|typography/typography-new-source.epub
+colour|colour/colour-new-source.epub
+link_colours|link_colours_732/s732k.epub
+dark_boxes|dark_box_colours_734/c734k.epub
+drop_caps|drop_caps/drop-caps-new-source.epub
+figures|figures/figures-new-2-source.epub
 floats|floats/floats-fix-source.epub
 floats_697|floats_697/F697 kfxgen source.epub
 font_sizes|font_sizes/font-sizes-source.epub

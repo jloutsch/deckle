@@ -11,6 +11,7 @@ use super::fonts::FontTable;
 use super::styles::{StyleArgs, Styles, g6};
 use super::table_chunks::CellInfo;
 use super::tables::{Border, ColumnWidths, Pad, Padding};
+use super::typography::Typography;
 use super::{Generator, measure, py, st, sym};
 
 /// The arguments of `build_table_style_157` the ported paths set.
@@ -26,7 +27,7 @@ pub(crate) struct PartStyle {
     pub border: Option<Border>,
 }
 
-/// The arguments `_cell_style` (:7326) gives `build_cell_style_157`: no typography.
+/// The arguments `_cell_style` (:7326) gives `build_cell_style_157`.
 #[derive(Clone, PartialEq)]
 pub(crate) struct CellStyle {
     pub align: Option<String>,
@@ -42,6 +43,7 @@ pub(crate) struct CellStyle {
     pub padding: Option<Padding>,
     pub table_width: Option<f64>,
     pub background: Option<i64>,
+    pub typography: Typography,
 }
 
 impl CellStyle {
@@ -74,6 +76,7 @@ impl CellStyle {
             padding: cell.padding.clone(),
             table_width: cell.padding.as_ref().and(cell.table_width),
             background: cell.background,
+            typography: bs.map(|b| b.typography.clone()).unwrap_or_default(),
         }
     }
 }
@@ -346,6 +349,7 @@ pub(crate) fn build_cell_style_157(g: &mut Generator, name: &str, s: &CellStyle)
     if s.italic {
         v.insert("$12", sym("$382"));
     }
+    s.typography.write(&mut v);
     if s.colspan > 1 {
         v.insert("$148", Value::Int(s.colspan));
     }

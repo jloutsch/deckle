@@ -128,3 +128,17 @@ or None and a `level` int (`converter.py:7705`, #363), and a contents line's `ta
 string or None (:8665). The port reads exactly those; anything else is a `GenerateError::Model`
 naming the entry, where kfxgen opens the chapter for a key of another type, writes a title of
 another type as that Ion type, and raises on a missing key or title.
+
+## Typography of another shape
+
+The converter writes a block style's `small_caps`, `text_transform`, `text_orientation` and
+`text_emphasis` as strings, its `letter_spacing` as a `(magnitude, unit)` pair of strings,
+its `colour` as an ARGB int (`css_typography`, `inline_style.py:866`) and its `drop_cap` as an
+int (`converter.py:6385`), and a run's `("small-caps" | "transform" | "spacing" | "colour", value)`
+flags the same way. The port reads exactly those; anything else is a `GenerateError::Model`
+naming the key or the runs, where kfxgen writes nothing for a keyword of another type but
+keeps the style apart, writes a colour of another type as that Ion type, and raises on most
+spacings it can't unpack. A run carrying two values of one kind is
+`GenerateError::Unsupported`: kfxgen would take the first in set order. A drop cap whose
+initial is so large that its line count passes 2^63 is a model error, where kfxgen writes
+Python's unbounded int.

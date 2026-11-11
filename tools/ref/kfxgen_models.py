@@ -1484,6 +1484,84 @@ def _contents_entries():
     ]
 
 
+def _typography_runs():
+    """Small caps, case, spacing and colour on paragraphs, cells, the book's heading and runs
+    (#239); colours against the page, a cell's own fill and a box's (#383); drop caps (#240);
+    a paragraph's text-orientation and emphasis marks (#247)."""
+    yellow, grey = 0xFFFFFF00, 0xFF767676
+
+    def drop(text, n, *spans):
+        return _para(text, list(spans), drop_cap=n)
+
+    return [
+        _chapter(
+            "Caps Heading",
+            [
+                _para("Caps Heading", heading=True, level=1, px=24.0, small_caps="small-caps", colour=yellow),
+                _para("Small caps, upper case, spaced, yellow.", small_caps="small-caps", text_transform="uppercase", letter_spacing=("0.1", "$308"), colour=yellow),
+                _para("Normal caps and no case.", small_caps="normal", text_transform="none"),
+                _para("Unknown caps and case.", small_caps="petite-caps", text_transform="full-width"),
+                _para("Grey kept.", colour=grey),
+                _para("Upright and marked.", text_orientation="upright", text_emphasis="filled sesame"),
+                _para("Own marks.", text_orientation="sideways", text_emphasis='"*"'),
+                _para(
+                    "Runs: caps, lower, wide, yellow, gone.",
+                    [
+                        _on("Runs: caps, lower, wide, yellow, gone.", "caps", ("small-caps", "small-caps")),
+                        _on("Runs: caps, lower, wide, yellow, gone.", "lower", ("transform", "lowercase")),
+                        _on("Runs: caps, lower, wide, yellow, gone.", "wide", ("spacing", ("0.45", "$318"))),
+                        _on("Runs: caps, lower, wide, yellow, gone.", "yellow", ("colour", yellow)),
+                        _on(
+                            "Runs: caps, lower, wide, yellow, gone.",
+                            "gone",
+                            ("colour", grey),
+                            ("link", "gone.xhtml#x"),
+                            ("link-colour", (yellow, yellow)),
+                        ),
+                    ],
+                ),
+                _table(
+                    [
+                        _row(
+                            [
+                                _cell("Yellow cell", block_style=_style(colour=yellow)),
+                                _cell("Filled cell", block_style=_style(colour=yellow), background=0xFF333333),
+                                _cell("Caps cell", block_style=_style(small_caps="small-caps", letter_spacing=("1", "$308"))),
+                                _cell("Clear cell", block_style=_style(colour=yellow), background=0),
+                                _cell("Drop cell", [(0, 1, frozenset({_size(40.0)}))], block_style=_style(drop_cap=1)),
+                            ]
+                        )
+                    ]
+                ),
+                _box(
+                    [_table([_row([_cell("Boxed cell", block_style=_style(colour=yellow))])])],
+                    background=0xFFDDDDDD,
+                ),
+            ],
+        ),
+        _chapter(
+            "Drops",
+            [
+                _para("Drops", heading=True, level=1),
+                drop("Big initial here.", 1, (0, 1, frozenset({_size(40.0)}))),
+                drop("Bold big initial.", 1, (0, 1, frozenset({_size(40.0), "bold"}))),
+                drop("Wide initial run.", 1, (0, 4, frozenset({_size(40.0)}))),
+                drop("Two letters big.", 2, (0, 2, frozenset({_size(28.0)}))),
+                drop("Last run wins.", 1, (0, 1, frozenset({_size(40.0)})), (0, 1, frozenset({"italic"}))),
+                drop("Small initial.", 1, (0, 1, frozenset({_size(20.0)}))),
+                drop("Nearly initial.", 1, (0, 1, frozenset({_size(23.0)}))),
+                drop("Tall initial.", 1, (0, 1, frozenset({_size(60.0)}))),
+                drop("Two letters, one big.", 2, (0, 1, frozenset({_size(40.0)}))),
+                drop("No size initial.", 1),
+                drop("X   ", 1, (0, 1, frozenset({_size(40.0)}))),
+                drop("From the end.", -12, (0, 1, frozenset({_size(40.0)}))),
+                drop("French initial.", 1, (0, 1, frozenset({_size(40.0), ("lang", "fr")}))),
+                drop("Huge initial.", 1, (0, 1, frozenset({_size(200.0)}))),
+            ],
+        ),
+    ]
+
+
 _APP0 =b"\xff\xe0\x00\x04\x00\x00"
 #: The covers of `cover_paths` and `cover_page`, each also a picture in its book's text.
 _COVER = _jpeg(600, 800, _APP0)
@@ -2330,6 +2408,9 @@ ARG_BOOKS = {
     # start), declared nowhere, of no key; levels nested and left out; in a chapter left out
     # of the contents; a rebuilt contents page's lines landing on them.
     "contents_entries": _contents_entries(),
+    # Paragraph and run typography (#239, #240, #247) past what the Calibre-path
+    # `typography`, `colour`, `drop_caps` and `dark_boxes` reach.
+    "typography_runs": _typography_runs(),
 }
 
 #: The image books' other arguments.

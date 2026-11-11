@@ -7,11 +7,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use deckle_kfx::fragment::Fragment;
 use deckle_kfx::ion::{Struct, Value};
 
-use super::block_styles::{Sizes, number};
+use super::block_styles::{Length, Sizes, number};
 use super::fonts::FontTable;
 use super::notes::Popups;
 use super::styles::{Style157, StyleArgs, Styles};
-use super::typography::read_link_colour;
+use super::typography::{Typography, read_link_colour, read_typography_flag};
 use super::writing::{
     Bidi, direction_layers, read_bidi_flag, read_ruby_flag, read_tcy_flag, without_ruby_or_tcy,
 };
@@ -61,6 +61,12 @@ pub(crate) enum Flag {
     Tcy(i64, String),
     /// `LINK_COLOUR_FLAG` (#728): a link's own colour, or None, and its colour as text.
     LinkColour(Option<i64>, i64),
+    /// `TYPOGRAPHY_FLAGS` (#239): a run's own small caps and text-transform keywords, letter
+    /// spacing and ARGB colour.
+    SmallCaps(String),
+    Transform(String),
+    Spacing(Length),
+    Colour(i64),
 }
 
 /// A size in CSS px, ordered by `total_cmp` so a run's flags can be a set; read with no sign
@@ -162,8 +168,8 @@ fn flag_of(f: &PyValue, at: &str) -> Result<Flag, GenerateError> {
                     "{at}.spans: a typography value, a string"
                 )));
             }
-            (Some("small-caps" | "transform" | "spacing" | "colour"), _) => {
-                return Err(Unsupported("small caps, case, spacing and colour in runs"));
+            (Some(kind @ ("small-caps" | "transform" | "spacing" | "colour")), v) => {
+                read_typography_flag(kind, v, &format!("{at}.spans"))?
             }
             _ => return Err(Unsupported("a span flag")),
         },
@@ -234,10 +240,12 @@ pub(crate) fn read_spans(v: Option<&PyValue>, at: &str) -> Result<Vec<Span>, Gen
         }
         if count(|f| matches!(f, Flag::Orientation(_))) > 1
             || count(|f| matches!(f, Flag::EmphasisMarks(_))) > 1
+            || count(|f| matches!(f, Flag::SmallCaps(_))) > 1
+            || count(|f| matches!(f, Flag::Transform(_))) > 1
+            || count(|f| matches!(f, Flag::Spacing(_))) > 1
+            || count(|f| matches!(f, Flag::Colour(_))) > 1
         {
-            return Err(Unsupported(
-                "a run of two orientations or two emphasis marks",
-            ));
+            return Err(Unsupported("a run of two values of one kind of typography"));
         }
         if count(|f| matches!(f, Flag::LinkColour(..))) > 1 {
             return Err(Unsupported("a run of two link colours"));
@@ -589,14 +597,15 @@ fn emphasis_style(
     }
     // Superscript wins if a run is marked both (#52, #123). kfxgen's
     // KFXGEN_SUPERSCRIPT_FONT_SIZE override isn't read (DIVERGENCES.md).
+    style.typography = Typography::of_flags(flags);
     for f in flags {
         match f {
-            Flag::Orientation(v) => style.text_orientation = Some(v.clone()),
-            Flag::EmphasisMarks(v) => style.text_emphasis = Some(v.clone()),
+            Flag::LinkColour(link, _) if link_found => style.link_colour = *link,
             // A link whose target isn't found is written as text: its colour as the
             // text's (QA on #732, P732b).
-            Flag::LinkColour(link, _) if link_found => style.link_colour = *link,
-            Flag::LinkColour(_, text) if style.colour.is_none() => style.colour = Some(*text),
+            Flag::LinkColour(_, text) if style.typography.colour.is_none() => {
+                style.typography.colour = Some(*text);
+            }
             _ => {}
         }
     }
@@ -651,6 +660,8 @@ pub(crate) struct RunBase<'a> {
     pub blk_fs: f64,
     /// Runs' own sizes are written: not in kfxgen's own heading (#241).
     pub sized: bool,
+    /// The characters of its drop cap's initial (#240).
+    pub drop_cap: Option<i64>,
 }
 
 /// The runs of a chunk's entry (:7851–8037): each layered span's style, and its link's
@@ -689,9 +700,17 @@ pub(crate) fn entry_runs(
         // A language alone is a flag of the run's (#710's P01); its keys are written as they
         // are, not against the paragraph's (:7912).
         let bidi = layer.bidi_keys();
-        let (start, len, flags) = (layer.start, layer.len, layer.flags);
+        let (start, len, mut flags) = (layer.start, layer.len, layer.flags);
         if flags.is_empty() && bidi.is_empty() {
             continue;
+        }
+        if base.drop_cap.is_some_and(|n| start + len <= n) {
+            // The Kindle sizes a drop cap to its lines: Previewer gives the initial no size
+            // of its own (#240).
+            flags.retain(|f| !matches!(f, Flag::Size(_)));
+            if flags.is_empty() && bidi.is_empty() {
+                continue;
+            }
         }
         let anchor = flags.iter().find_map(|f| match f {
             Flag::Link(t) => body_anchor_map.get(t).cloned(),

@@ -39,6 +39,58 @@ fn contents_entries_matches_kfxgen() {
     matches_kfxgen("contents_entries");
 }
 
+/// kfxgen's `test_books/typography/typography-new-source.epub`: small caps, text-transform,
+/// letter spacing and colour on paragraphs, headings and runs, set back inside them, and a
+/// drop cap (#239, #240).
+#[test]
+fn typography_matches_kfxgen() {
+    matches_kfxgen("typography");
+}
+
+/// kfxgen's `test_books/colour/colour-new-source.epub`: text colours on paragraphs and runs,
+/// light ones darkened against the page (#239, #383).
+#[test]
+fn colour_matches_kfxgen() {
+    matches_kfxgen("colour");
+}
+
+/// kfxgen's `test_books/link_colours_732/s732k.epub`: grey, red and black links, grey words
+/// inside and around links (#728, #732).
+#[test]
+fn link_colours_matches_kfxgen() {
+    matches_kfxgen("link_colours");
+}
+
+/// kfxgen's `test_books/dark_box_colours_734/c734k.epub`: text colours inside light and dark
+/// boxes, kept as the book gives them (#383, #734).
+#[test]
+fn dark_boxes_matches_kfxgen() {
+    matches_kfxgen("dark_boxes");
+}
+
+/// kfxgen's `test_books/drop_caps/drop-caps-new-source.epub`: initials of several sizes and
+/// lengths, coloured (#240).
+#[test]
+fn drop_caps_matches_kfxgen() {
+    matches_kfxgen("drop_caps");
+}
+
+/// kfxgen's `test_books/figures/figures-new-2-source.epub`: figures, captions and a run in
+/// small caps.
+#[test]
+fn figures_matches_kfxgen() {
+    matches_kfxgen("figures");
+}
+
+/// Typography past what a book reaches: on the book's heading, cells (on the page, filled,
+/// in a filled box), keywords Previewer doesn't write, a paragraph's orientation and
+/// emphasis marks, a run's colour inside a link not found; drop caps of each size, past their
+/// run, of a later run, of no size, with nothing after, counted from the end, in a language.
+#[test]
+fn typography_runs_matches_kfxgen() {
+    matches_kfxgen("typography_runs");
+}
+
 fn s(v: &str) -> PyValue {
     PyValue::Str(v.into())
 }
@@ -130,5 +182,92 @@ fn a_contents_entry_of_another_shape_is_a_model_error() {
     match generate(&model) {
         Err(GenerateError::Model(m)) => assert!(m.contains("toc_links[1].target_key"), "{m}"),
         other => panic!("{other:?}"),
+    }
+}
+
+/// Typography flags kfxgen can't read are model errors naming the runs; two of one kind on a
+/// run are unsupported: kfxgen would take the first in set order.
+#[test]
+fn typography_flags_of_another_shape_are_model_errors() {
+    for flag in [
+        pair("small-caps", PyValue::Int(1)),
+        pair("transform", PyValue::None),
+        pair("spacing", s("1em")),
+        pair("spacing", PyValue::Tuple(vec![s("x"), s("$308")])),
+        pair("colour", s("red")),
+    ] {
+        match with_flags(vec![flag.clone()]) {
+            Err(GenerateError::Model(m)) => assert!(m.contains(".spans"), "{flag:?}: {m}"),
+            other => panic!("{flag:?}: {other:?}"),
+        }
+    }
+    for kind in ["small-caps", "transform"] {
+        assert!(matches!(
+            with_flags(vec![pair(kind, s("a")), pair(kind, s("b"))]),
+            Err(GenerateError::Unsupported(
+                "a run of two values of one kind of typography"
+            ))
+        ));
+    }
+    let spacing = |m: &str| pair("spacing", PyValue::Tuple(vec![s(m), s("$308")]));
+    for flags in [
+        vec![spacing("1"), spacing("2")],
+        vec![
+            pair("colour", PyValue::Int(1)),
+            pair("colour", PyValue::Int(2)),
+        ],
+    ] {
+        assert!(matches!(
+            with_flags(flags),
+            Err(GenerateError::Unsupported(
+                "a run of two values of one kind of typography"
+            ))
+        ));
+    }
+}
+
+/// A drop cap whose line count passes 2^63 is a model error, where kfxgen writes Python's
+/// unbounded int.
+#[test]
+fn a_drop_cap_past_2_63_lines_is_a_model_error() {
+    let mut model = load_model(&deckle_kfx::fixtures::kfxgen("models/typography_runs")).unwrap();
+    let chapter = item(entry(&mut model.args, "chapters"), 1);
+    let block = item(entry(chapter, "blocks"), 1);
+    let PyValue::List(spans) = entry(block, "spans") else {
+        panic!("not a list")
+    };
+    let PyValue::Tuple(span) = &mut spans[0] else {
+        panic!("not a tuple")
+    };
+    span[2] = PyValue::Set(vec![pair("size", PyValue::Float(1e300))]);
+    match generate(&model) {
+        Err(GenerateError::Model(m)) => assert!(m.contains("drop cap"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A paragraph's typography or drop cap kfxgen can't read is a model error naming the key.
+#[test]
+fn block_typography_of_another_shape_is_a_model_error() {
+    for (key, value) in [
+        ("small_caps", PyValue::Int(1)),
+        ("text_emphasis", PyValue::Int(1)),
+        ("letter_spacing", s("1em")),
+        ("colour", s("red")),
+        ("drop_cap", s("1")),
+    ] {
+        let mut model =
+            load_model(&deckle_kfx::fixtures::kfxgen("models/typography_runs")).unwrap();
+        let chapter = item(entry(&mut model.args, "chapters"), 0);
+        let block = item(entry(chapter, "blocks"), 1);
+        let PyValue::Dict(style) = entry(block, "block_style") else {
+            panic!("not a dict")
+        };
+        style.retain(|(k, _)| k.as_str() != Some(key));
+        style.push((s(key), value));
+        match generate(&model) {
+            Err(GenerateError::Model(m)) => assert!(m.contains(key), "{key}: {m}"),
+            other => panic!("{key}: {other:?}"),
+        }
     }
 }

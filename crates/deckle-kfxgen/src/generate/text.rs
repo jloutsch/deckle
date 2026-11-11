@@ -28,6 +28,7 @@ use super::title::{
     eat_split_title, heading_near_start, label_blocks, opens_with_title, title_in_table,
     title_runs_in,
 };
+use super::typography;
 use super::writing;
 use super::{GenerateError, Generator, py};
 
@@ -543,6 +544,7 @@ pub(crate) fn build_chapter_content(
             };
             let heading = heading_chunks.contains(&chunk_idx);
             let mut link = None;
+            let mut drop_cap = None;
             let style = match (
                 &heading_style_names[ch_idx],
                 chunk_anchor_map.get(&chunk_idx),
@@ -577,7 +579,21 @@ pub(crate) fn build_chapter_content(
                         story_names[ch_idx].clone()
                     }
                 }
-                _ => text_entry_style(g, &mut styles, &sizes, chunk, fs, &open.sizes, around),
+                _ => {
+                    if !matches!(chunk.in_cell, Some(InCell::Text(_))) {
+                        drop_cap = typography::drop_cap(&sizes, chunk)?;
+                    }
+                    text_entry_style(
+                        g,
+                        &mut styles,
+                        &sizes,
+                        chunk,
+                        fs,
+                        &open.sizes,
+                        around,
+                        drop_cap,
+                    )
+                }
             };
             entry_styles.push(style);
             // kfxgen's chapter heading is bold, and so are the runs in it (#366), unless it
@@ -598,6 +614,7 @@ pub(crate) fn build_chapter_content(
                     None => sizes.block_font_size(fs, chunk),
                 },
                 sized: !heading || heading_book.is_some(),
+                drop_cap: drop_cap.map(|(_, chars)| chars),
             };
             let mut runs = inline::entry_runs(
                 g,
