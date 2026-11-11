@@ -444,7 +444,93 @@ def synth(out):
         "img.fl { float: left; width: 30%; } img.fr { float: right; width: 25%; }",
         extra=[("p.png", "image/png", _png_image(600, 400))],
     )
-    for name in ("lists", "fonts", "rtl", "directions", "ruby", "vertical_contents", "frames"):
+    # Horizontal blocks in vertical text (#247), shaped as kfxgen 0bc705d's
+    # tests/integration/test_calibre_vertical_writing.py (CH1, CH2, PICTURES less the picture
+    # in a cell, plus a filled box and a picture sized by a height in px) and test_calibre_words_around_pictures.py (BODY): boxes, a table and pictures
+    # in them (#755), words around a picture (#757), and percentages on Previewer's page
+    # (#754). In a vertical book, and with an ltr spine, where only the files are vertical.
+    vert = "writing-mode: vertical-rl; -webkit-writing-mode: vertical-rl;"
+    hz_css = (
+        f"html {{ {vert} }}"
+        " .tcy { text-combine-upright: all; -webkit-text-combine: horizontal }"
+        " .hz { writing-mode: horizontal-tb; -webkit-writing-mode: horizontal-tb }"
+        " .bxp { border: 1px solid black; padding: 10px } .c { text-align: center }"
+    )
+    hz_chapters = [
+        (
+            "c1",
+            "第一章",
+            '<p>V02 数字は<span class="tcy">12</span>月<span class="tcy">31</span>日。</p>'
+            '<p class="hz">V09 この段落だけ横書きにする。</p>'
+            '<div class="hz"><p>V11 箱の一つ目。</p><p>V12 箱の二つ目。</p></div>'
+            '<p>V10 次へ<a href="c2.xhtml#t">行く</a>。</p>',
+        ),
+        (
+            "c2",
+            "第二章",
+            '<p id="t">T1 ここが行き先です。</p>'
+            '<p style="margin-left: 10%">P01 左に十パーセント。</p>'
+            '<div class="bxp"><p>P02 枠の内側に十ピクセル。</p></div>'
+            '<div class="hz bxp"><p>H03 A bordered horizontal box.</p></div>'
+            '<div class="hz" style="padding: 1em"><p>H04 A padded horizontal box.</p></div>'
+            '<div class="hz" style="background-color: #eeeeee"><p>H06 A filled one.</p></div>'
+            '<table class="hz"><tr><td>H05 甲</td><td>乙</td></tr></table>'
+            "<p>V13 縦に戻る。</p>",
+        ),
+        (
+            "c3",
+            "第三章",
+            "<p>V01 縦の段落。</p>"
+            '<div class="hz"><img src="w.png" alt="P1"/></div>'
+            '<div class="hz" style="text-align: center"><img src="w.png" alt="P2"/></div>'
+            '<div class="hz"><img src="w.png" alt="P3" style="width: 50%"/></div>'
+            '<div class="hz"><a href="c2.xhtml#t"><img src="w.png" alt="P4"/></a></div>'
+            '<p><img src="w.png" alt="P5"/></p>'
+            '<div class="hz"><img src="w.png" alt="P7" style="float: left"/>'
+            "<p>H07 The words beside a floated picture.</p></div>"
+            '<div class="hz" style="text-align: right"><img src="w.png" alt="P8"/></div>'
+            '<div class="hz" style="text-align: left"><img src="w.png" alt="P9"/></div>'
+            '<div class="hz" style="text-align: justify"><img src="w.png" alt="P10"/></div>'
+            '<div class="hz"><img src="w.png" alt="P13" style="height: 100px"/></div>'
+            '<div class="hz" style="text-align: center"><img src="w.png" alt="P11"/>'
+            "<p>H11 A paragraph after a centred picture.</p></div>"
+            '<div class="hz" style="text-align: center"><a href="c2.xhtml#t">'
+            '<img src="w.png" alt="P12"/></a><p>H12 A paragraph after it.</p></div>'
+            "<p>V02 縦の段落。</p>",
+        ),
+        (
+            "c4",
+            "第四章",
+            "<p>W00 A paragraph.</p>"
+            '<div class="c hz">Before <img src="v.png" alt="P1"/> after<p>W01 Last.</p></div>'
+            '<div class="c hz"><img src="v.png" alt="P2"/><p>W02 Last.</p></div>'
+            '<div class="c hz">前<img src="v.png" alt="P3"/>後<p>W03 Last.</p></div>'
+            "<p>W04 A paragraph.</p>",
+        ),
+    ]
+    hz_images = [
+        ("w.png", "image/png", _png_image(400, 100)),
+        ("v.png", "image/png", _png_image(200, 40)),
+    ]
+    _epub(
+        out / "horizontal_blocks.epub", "縦書き", "ja", hz_chapters, hz_css, rtl=True,
+        extra=hz_images,
+    )
+    _epub(
+        out / "horizontal_blocks_ltr.epub", "縦書き左", "ja", hz_chapters, hz_css,
+        extra=hz_images,
+    )
+    for name in (
+        "lists",
+        "fonts",
+        "rtl",
+        "directions",
+        "ruby",
+        "vertical_contents",
+        "frames",
+        "horizontal_blocks",
+        "horizontal_blocks_ltr",
+    ):
         print(out / f"{name}.epub")
 
 
@@ -2466,12 +2552,21 @@ ARG_BOOKS = {
 
 # A vertical book (#754): percentages against Previewer's 480pt page, a 640px column, in
 # frames, pictures among words, floats, cell and box padding, cell sides and contents levels.
+# Its chapters are horizontal-tb (`_para`'s), so a horizontal block's picture in one isn't a
+# plain one (#247).
 ARG_BOOKS["vertical_page"] = [
     *ARG_BOOKS["frame_edges"],
     *ARG_BOOKS["inline_pictures"],
     *ARG_BOOKS["table_parts"],
     *ARG_BOOKS["box_titles"],
     *ARG_BOOKS["nested_contents"],
+    _chapter(
+        "Horizontal file",
+        [
+            _para("A horizontal chapter."),
+            _box([_para(_pic("OEBPS/p.png", "p"))], border=None, padding=None, horizontal=True),
+        ],
+    ),
 ]
 
 #: The image books' other arguments.

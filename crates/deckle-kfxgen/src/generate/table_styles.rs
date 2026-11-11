@@ -20,6 +20,7 @@ use super::{Generator, measure, py, st, sym};
 pub(crate) struct TableStyle {
     pub border: Option<Border>,
     pub width: Option<f64>,
+    pub horizontal: bool,
 }
 
 /// The arguments of `build_part_style_157`.
@@ -98,6 +99,7 @@ pub(crate) fn marker_styles(
             let table = TableStyle {
                 border: t.border.clone(),
                 width: t.width,
+                horizontal: t.horizontal,
             };
             let name = styles.allocate_in(g, "_tbl", StyleArgs::Table(table), bidi);
             (Some(name), None)
@@ -302,6 +304,11 @@ pub(crate) fn build_table_style_157(g: &mut Generator, name: &str, s: &TableStyl
         unreachable!()
     };
     apply_border(&mut v, s.border.as_ref(), true);
+    if s.horizontal {
+        // A horizontal-tb table in vertical text, as Kindle Previewer 4.0.3 writes it (QA's
+        // P749 Q02, #247, 0bc705d :3840).
+        v.insert("$560", sym("$557"));
+    }
     if let Some(width) = s.width {
         // A min-width, and at 100% the width too (#264).
         let pct = g6(width, "$314");

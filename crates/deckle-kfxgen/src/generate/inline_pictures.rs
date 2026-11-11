@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use regex::Captures;
 
 use super::chapters::Block;
-use super::chunks::{ASCII_SPACE, Chunk, Marker, Node, space_to_write};
+use super::chunks::{ASCII_SPACE, ChapterNow, Chunk, LinkOpen, Marker, Node, space_to_write};
 use super::images::{self, IMG_TOKEN, Images, Picture};
 use super::inline::{Anchors, Flag, Span};
 use super::inline_picture_entries::InlinePicture;
@@ -376,6 +376,7 @@ pub(crate) fn emit_entries(
     block: &Block,
     first_in_chapter: bool,
     float_wrapped: bool,
+    now: ChapterNow,
     images: &Images,
     chunks: &mut Vec<Chunk>,
 ) -> Vec<String> {
@@ -423,16 +424,44 @@ pub(crate) fn emit_entries(
                     .partition(|k| offsets.get(k).is_none_or(|&o| o == 0));
                 keys = rest;
                 let link = images::picture_link(&spans, at).cloned();
-                if let Some(target) = &link {
+                // A picture in a horizontal block of vertical text: only its size, as Kindle
+                // Previewer 4.0.3 writes it (#247, 0bc705d :5870). In a vertical book it is
+                // inline in a plain container, as is a linked one in any book; in an ltr-spine
+                // book, a block picture aligned by `$580` as the block is.
+                picture.plain = picture.float.is_none() && now.in_horizontal_block(chunks);
+                // A picture walked as a block of its own beside the block's paragraphs has no
+                // block_style: the text-align it inherits (S755).
+                let align = block
+                    .style
+                    .as_ref()
+                    .and_then(|s| s.align.clone())
+                    .or_else(|| block.picture_align.clone());
+                let boxed = picture.plain && (link.is_some() || now.vertical_book);
+                if picture.plain
+                    && !boxed
+                    && matches!(align.as_deref(), Some("left" | "center" | "right"))
+                {
+                    picture.box_align = align.clone();
+                }
+                let contained = link.is_some() || boxed;
+                if contained {
                     // A container whose link covers the picture (#355). The Voyage drops a
                     // floated picture's link, so it stays unfloated (#243).
+                    let open = LinkOpen {
+                        target: link.clone(),
+                        plain: boxed,
+                        align: if boxed { align } else { None },
+                    };
                     chunks.push(Chunk {
-                        spans: vec![Span {
-                            start: 0,
-                            len: 1,
-                            flags: [Flag::Link(target.clone())].into(),
-                        }],
-                        ..Chunk::marker(Marker::Open(Node::Link(target.clone())))
+                        spans: link
+                            .iter()
+                            .map(|target| Span {
+                                start: 0,
+                                len: 1,
+                                flags: [Flag::Link(target.clone())].into(),
+                            })
+                            .collect(),
+                        ..Chunk::marker(Marker::Open(Node::Link(open)))
                     });
                     picture.inline = true;
                     picture.float = None;
@@ -445,7 +474,7 @@ pub(crate) fn emit_entries(
                     picture: Some(picture),
                     ..Chunk::text(String::new())
                 });
-                if link.is_some() {
+                if contained {
                     chunks.push(Chunk::marker(Marker::Close));
                 }
             }

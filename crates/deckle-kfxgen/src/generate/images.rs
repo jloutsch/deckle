@@ -18,6 +18,7 @@ use super::chapters::{Block, Chapter};
 use super::chunks::Chunk;
 use super::inline::{Flag, Span};
 use super::page_scale::column_px;
+use super::table_styles::align_symbol;
 use super::{GenerateError, Generator, measure, model_err, py, st, sym};
 use crate::pyvalue::PyValue;
 
@@ -388,6 +389,10 @@ pub(crate) struct Picture {
     pub float: Option<String>,
     /// In a link's container: inline, the one position its link covers (#355).
     pub inline: bool,
+    /// In a horizontal block of vertical text: its size only (#247), and a block picture's
+    /// alignment there (0bc705d :5898).
+    pub plain: bool,
+    pub box_align: Option<String>,
 }
 
 /// Whether `text` holds pictures and nothing else but spaces: `IMG_TOKEN_RE.sub("", text)`
@@ -410,6 +415,8 @@ pub(crate) fn picture_of(m: &regex::Captures, images: &Images) -> Option<Picture
         size: field(3).map(str::to_owned),
         float: field(4).map(str::to_owned),
         inline: false,
+        plain: false,
+        box_align: None,
     })
 }
 
@@ -544,14 +551,20 @@ fn parse_size_hint(hint: &str) -> Result<Option<(char, f64)>, GenerateError> {
 /// A picture style's size: `_image_size_key` (:7029).
 type SizeKey = (char, f64);
 
+/// `_plain_key` (0bc705d :7138): a plain picture's size, whether the markup set it, and a
+/// block picture's alignment (#247).
+type PlainKey = (SizeKey, bool, Option<String>);
+
 /// The `$157` styles of the book's pictures (:7008): one per width, then per height, then
-/// per floated size and side, each in sorted order (#96, #243).
+/// per floated size and side, then per plain picture's key (#247), each in sorted order (#96,
+/// #243).
 #[derive(Default)]
 pub(crate) struct ImageStyles {
     resource_dims: BTreeMap<String, Dims>,
     widths: Vec<(f64, String)>,
     heights: Vec<(f64, String)>,
     floats: Vec<(SizeKey, String, String)>,
+    plains: Vec<(PlainKey, String)>,
 }
 
 impl ImageStyles {
@@ -571,7 +584,12 @@ impl ImageStyles {
             }
         }
         let (mut widths, mut heights, mut floats) = (Vec::new(), Vec::new(), Vec::new());
+        let mut plains = Vec::new();
         for p in pictures {
+            if p.plain {
+                plains.push(styles.plain_key(p)?);
+                continue;
+            }
             let key = styles.size_key(p)?;
             match (&p.float, key.0) {
                 (Some(side), _) => floats.push((key, side.clone())),
@@ -579,6 +597,13 @@ impl ImageStyles {
                 (None, _) => heights.push(key.1),
             }
         }
+        // By (axis, size, sized, alignment or ""), as kfxgen sorts them (0bc705d :7174).
+        plains.sort_by(|a, b| {
+            (a.0.0, a.0.1, a.1, a.2.as_deref().unwrap_or(""))
+                .partial_cmp(&(b.0.0, b.0.1, b.1, b.2.as_deref().unwrap_or("")))
+                .unwrap()
+        });
+        plains.dedup();
         for v in [&mut widths, &mut heights] {
             v.sort_by(f64::total_cmp);
             v.dedup();
@@ -610,7 +635,21 @@ impl ImageStyles {
             extra_style_names.push(name.clone());
             styles.floats.push((key, side, name));
         }
+        // After the others, so a book's other pictures keep their names (0bc705d :7222).
+        for (idx, key) in plains.into_iter().enumerate() {
+            let name = format!("s_img_p{idx}");
+            let f = build_plain_image_style_157(g, &name, &key);
+            g.push(f);
+            extra_style_names.push(name.clone());
+            styles.plains.push((key, name));
+        }
         Ok(styles)
+    }
+
+    /// `_plain_key` (0bc705d :7138).
+    fn plain_key(&self, p: &Picture) -> Result<PlainKey, GenerateError> {
+        let sized = parse_size_hint(p.size.as_deref().unwrap_or(""))?.is_some();
+        Ok((self.size_key(p)?, sized, p.box_align.clone()))
     }
 
     /// `_image_size_key` (:7029): the markup's size, else the picture's own width against
@@ -628,6 +667,14 @@ impl ImageStyles {
 
     /// `_image_style_for` (:7108).
     pub(crate) fn style_for(&self, p: &Picture) -> Result<Option<String>, GenerateError> {
+        if p.plain {
+            let key = self.plain_key(p)?;
+            return Ok(self
+                .plains
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, n)| n.clone()));
+        }
         let key = self.size_key(p)?;
         let name = match &p.float {
             Some(side) => self
@@ -677,6 +724,33 @@ fn build_fragment_157_image(
         // Floated: not centred, the text after it wraps beside it (#243).
         v.remove("$580");
         v.insert("$140", sym(if side == "left" { "$59" } else { "$61" }));
+    }
+    Fragment::new("$157", Some(name), Value::Struct(v))
+}
+
+/// `build_fragment_157_image` with `plain` (0bc705d :4158): in a horizontal block of vertical
+/// text, a picture's size only, `$546` when the markup sizes it, and a block picture's
+/// alignment (P247k K01, K08; QA's Q755L).
+fn build_plain_image_style_157(
+    g: &mut Generator,
+    name: &str,
+    ((axis, pct), sized, box_align): &PlainKey,
+) -> Fragment {
+    g.local(name);
+    let Value::Struct(mut v) = st([
+        (
+            if *axis == 'h' { "$57" } else { "$56" },
+            measure(py::decimal_of_float(*pct), "$314"),
+        ),
+        ("$173", sym(name)),
+    ]) else {
+        unreachable!()
+    };
+    if *sized {
+        v.insert("$546", sym("$377"));
+    }
+    if let Some(align) = box_align.as_deref().and_then(align_symbol) {
+        v.insert("$580", sym(align));
     }
     Fragment::new("$157", Some(name), Value::Struct(v))
 }

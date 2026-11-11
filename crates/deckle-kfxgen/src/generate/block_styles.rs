@@ -7,7 +7,7 @@
 use super::boxes::BoxStyle;
 use super::chunks::{Chunk, InCell, Marker, Node};
 use super::inline::run_font_size;
-use super::styles::{Style157, StyleArgs, Styles};
+use super::styles::{Rotation, Style157, StyleArgs, Styles};
 use super::table_styles::{self, CellStyle};
 use super::typography::Typography;
 use super::writing::{Bidi, bidi_diff};
@@ -393,9 +393,20 @@ pub(crate) fn keep_space(
 pub(crate) struct Containers {
     pub sizes: Vec<Option<f64>>,
     bidis: Vec<Option<Bidi>>,
+    /// The chapter is vertical-rl text, and whether each open container is a horizontal
+    /// block in it (0bc705d :7514).
+    vertical: bool,
+    horizontals: Vec<bool>,
 }
 
 impl Containers {
+    pub(crate) fn new(vertical: bool) -> Self {
+        Containers {
+            vertical,
+            ..Containers::default()
+        }
+    }
+
     /// The direction and language of the container around, None outside one.
     pub(crate) fn around(&self) -> Option<&Bidi> {
         self.bidis.last()?.as_ref()
@@ -418,9 +429,15 @@ impl Containers {
                 self.sizes.pop();
                 self.bidis.pop();
                 styles.fills.pop();
+                self.horizontals.pop();
+                styles.rotation = Rotation::of(self.vertical, &self.horizontals);
                 return Ok((None, None));
             }
         };
+        // In a horizontal block, and on it, margins stay where the book puts them (0bc705d
+        // :7546).
+        self.horizontals.push(node.opens_horizontal());
+        styles.rotation = Rotation::of(self.vertical, &self.horizontals);
         // A box's or cell's fill (#383, :7422).
         styles.fills.push(match node {
             Node::Box(b) => b.spec.background,
@@ -441,6 +458,16 @@ impl Containers {
             matches!(node, Node::Cell(_)).then(|| sizes.block_font_size(chapter_fs, chunk));
         self.sizes.push(cell_size);
         Ok(match node {
+            // In a horizontal block of vertical text: no style, or only the block's alignment
+            // (#247, 0bc705d :7640).
+            Node::Link(open) if open.plain => {
+                let name = open
+                    .align
+                    .as_deref()
+                    .and_then(table_styles::align_symbol)
+                    .map(|align| styles.allocate(g, "_pbox", StyleArgs::PictureBox(align)));
+                (None, name)
+            }
             // A linked picture's container centres it, as `$580` does a picture alone (:7505).
             Node::Link(_) => {
                 let centred = Style157 {

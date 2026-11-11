@@ -58,8 +58,59 @@ pub(crate) enum Node {
     Cell(CellInfo),
     /// A box (#238), or a frame (#382, #565).
     Box(Box<BoxOpen>),
-    /// A linked picture's container, and its link's target (#355).
-    Link(String),
+    /// A picture's container: a linked one's (#355), or a plain one in a horizontal block of
+    /// vertical text (#247).
+    Link(LinkOpen),
+}
+
+impl Node {
+    /// `_opens_horizontal` (0bc705d :974): a horizontal-tb box or table, as in vertical text
+    /// (P247h, #247).
+    pub(crate) fn opens_horizontal(&self) -> bool {
+        match self {
+            Node::Box(b) => b.spec.horizontal,
+            Node::Table(t) => t.horizontal,
+            _ => false,
+        }
+    }
+}
+
+/// A picture's container (0bc705d :5900): its link's target, if any; whether it is a plain
+/// one in a horizontal block of vertical text, and its block's alignment there (#247).
+pub(crate) struct LinkOpen {
+    pub target: Option<String>,
+    pub plain: bool,
+    pub align: Option<String>,
+}
+
+/// The chapter being written (0bc705d :5489): where its chunks start, whether it is
+/// vertical-rl text, and whether the book is.
+#[derive(Clone, Copy)]
+pub(crate) struct ChapterNow {
+    pub start: usize,
+    pub vertical: bool,
+    pub vertical_book: bool,
+}
+
+impl ChapterNow {
+    /// `_in_horizontal_block` (0bc705d :5491): whether a chunk appended now is inside a
+    /// horizontal block of a vertical-rl chapter.
+    pub(crate) fn in_horizontal_block(&self, chunks: &[Chunk]) -> bool {
+        if !self.vertical {
+            return false;
+        }
+        let mut open = Vec::new();
+        for c in &chunks[self.start..] {
+            match &c.marker {
+                Some(Marker::Open(node)) => open.push(node.opens_horizontal()),
+                Some(Marker::Close) => {
+                    open.pop();
+                }
+                None => {}
+            }
+        }
+        open.contains(&true)
+    }
 }
 
 /// An entry among a paragraph's words.
@@ -208,10 +259,11 @@ pub(crate) fn space_to_write(block: &Block, space_above: f64) -> Option<f64> {
 pub(crate) fn emit_paragraph(
     block: &Block,
     first_in_chapter: bool,
+    now: ChapterNow,
     images: &Images,
     chunks: &mut Vec<Chunk>,
 ) -> Result<Vec<String>, GenerateError> {
-    emit(block, first_in_chapter, false, images, chunks)
+    emit(block, first_in_chapter, false, now, images, chunks)
 }
 
 /// `_emit_paragraph` of a block kfxgen marks `float_wrapped`: a frame's, whose floats are
@@ -219,16 +271,18 @@ pub(crate) fn emit_paragraph(
 pub(crate) fn emit_float_wrapped(
     block: &Block,
     first_in_chapter: bool,
+    now: ChapterNow,
     images: &Images,
     chunks: &mut Vec<Chunk>,
 ) -> Result<Vec<String>, GenerateError> {
-    emit(block, first_in_chapter, true, images, chunks)
+    emit(block, first_in_chapter, true, now, images, chunks)
 }
 
 fn emit(
     block: &Block,
     first_in_chapter: bool,
     float_wrapped: bool,
+    now: ChapterNow,
     images: &Images,
     chunks: &mut Vec<Chunk>,
 ) -> Result<Vec<String>, GenerateError> {
@@ -239,6 +293,7 @@ fn emit(
                 piece,
                 first_in_chapter,
                 float_wrapped,
+                now,
                 images,
                 chunks,
             )?);
@@ -246,12 +301,13 @@ fn emit(
         return Ok(unplaced);
     }
     if !float_wrapped && frames::floats_among_words(block) {
-        return frames::emit_floated_paragraph(block, first_in_chapter, images, chunks);
+        return frames::emit_floated_paragraph(block, first_in_chapter, now, images, chunks);
     }
     Ok(inline_pictures::emit_entries(
         block,
         first_in_chapter,
         float_wrapped,
+        now,
         images,
         chunks,
     ))

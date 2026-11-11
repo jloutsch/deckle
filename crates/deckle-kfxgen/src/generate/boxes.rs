@@ -9,7 +9,7 @@ use deckle_kfx::ion::Value;
 
 use super::block_styles::{keep_space, number};
 use super::chapters::{Block, read_block};
-use super::chunks::{Chunk, Marker, Node, emit_paragraph};
+use super::chunks::{ChapterNow, Chunk, Marker, Node, emit_paragraph};
 use super::frames;
 use super::images::{IMG_TOKEN, Images};
 use super::inline;
@@ -19,7 +19,7 @@ use super::table_styles::{apply_border, border_style_symbol, padding_values, sid
 use super::tables::{self, Border, Padding, read_border, read_padding, read_sides};
 use super::title::opens_with_title;
 use super::writing::Bidi;
-use super::{GenerateError, Generator, model_err, py, st, sym};
+use super::{GenerateError, Generator, measure, model_err, py, st, sym};
 use crate::pyvalue::{PyValue, truthy};
 
 use GenerateError::Unsupported;
@@ -165,6 +165,8 @@ pub(crate) struct BoxSpec {
     pub centred: bool,
     /// The frame round a paragraph's floated pictures (#565): kfxgen's own, never the model's.
     pub float_wrapper: bool,
+    /// A horizontal-tb block in vertical text (#247).
+    pub horizontal: bool,
 }
 
 /// A box block (#238): its look and the blocks in it.
@@ -183,14 +185,9 @@ pub(crate) fn read_box(b: &PyValue, at: &str) -> Result<BoxBlock, GenerateError>
         Some(d @ PyValue::Dict(_)) => d,
         _ => return Err(model_err(format!("{at_box}: a dict"))),
     };
-    // A horizontal block in vertical text (#247), not ported; a floated paragraph's frame
-    // is kfxgen's own (:5673), which the converter never writes.
-    for key in ["horizontal", "float_wrapper"] {
-        if truthy(d.get(key)) {
-            return Err(Unsupported(
-                "a horizontal box, or a box marked as a float's frame",
-            ));
-        }
+    // A floated paragraph's frame is kfxgen's own (:5673), which the converter never writes.
+    if truthy(d.get("float_wrapper")) {
+        return Err(Unsupported("a box marked as a float's frame"));
     }
     let spec = BoxSpec {
         border: read_border(d.get("border"), &format!("{at_box}.border"))?,
@@ -207,6 +204,7 @@ pub(crate) fn read_box(b: &PyValue, at: &str) -> Result<BoxBlock, GenerateError>
         })?,
         centred: truthy(d.get("centred")),
         float_wrapper: false,
+        horizontal: truthy(d.get("horizontal")),
     };
     let blocks = b
         .get("blocks")
@@ -277,6 +275,7 @@ pub(crate) fn rule_chunk(rule: &RuleStyle) -> Chunk {
 pub(crate) fn emit_box_chunks(
     block: &Block,
     b: &BoxBlock,
+    now: ChapterNow,
     images: &Images,
     chunks: &mut Vec<Chunk>,
 ) -> Result<Vec<String>, GenerateError> {
@@ -301,12 +300,12 @@ pub(crate) fn emit_box_chunks(
             emit_table_chunks(kid, t, chunks);
             Vec::new()
         } else if let Some(inner) = &kid.boxed {
-            emit_box_chunks(kid, inner, images, chunks)?
+            emit_box_chunks(kid, inner, now, images, chunks)?
         } else if kid.rule.is_some() {
             // `_emit_paragraph` reads the text a rule block has none of.
             return Err(Unsupported("a rule in a box"));
         } else {
-            let unplaced = emit_paragraph(kid, false, images, chunks)?;
+            let unplaced = emit_paragraph(kid, false, now, images, chunks)?;
             frames::size_pictures_in_box(&b.spec, &mut chunks[first..])?;
             unplaced
         };
@@ -346,6 +345,7 @@ pub(crate) struct BoxStyle {
     pub width: Option<f64>,
     pub float_side: Option<String>,
     pub centred: bool,
+    pub horizontal: bool,
 }
 
 impl BoxStyle {
@@ -374,6 +374,7 @@ impl BoxStyle {
             width: open.spec.width,
             float_side: open.spec.float.clone(),
             centred: open.spec.centred,
+            horizontal: open.spec.horizontal,
         }
     }
 }
@@ -416,6 +417,14 @@ pub(crate) fn build_box_style_157(g: &mut Generator, name: &str, s: &BoxStyle) -
     }
     if s.centred {
         v.insert("$580", sym("$320"));
+    }
+    if s.horizontal {
+        // A horizontal block in vertical text, as Kindle Previewer 4.0.3 writes it (P247h,
+        // #247, 0bc705d :3913): horizontal-tb, the page's width, and its two fit flags.
+        v.insert("$560", sym("$557"));
+        v.insert("$56", measure(py::decimal("100"), "$314"));
+        v.insert("$478", Value::Bool(true));
+        v.insert("$784", Value::Bool(true));
     }
     Value::Struct(v)
 }

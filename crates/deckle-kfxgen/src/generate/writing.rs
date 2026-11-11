@@ -610,11 +610,10 @@ const VERTICAL_KEYS: [(&str, &str); 8] = [
     ("$55", "$54"),
 ];
 
-/// `_rotate_margins` (:989): a `$157`'s margins and paddings moved for vertical-rl text, as
-/// Kindle Previewer 4.0.3 writes them, kfxgen's own 0.5% left margin dropped.
-pub(crate) fn rotate_margins(v: &mut Struct) {
-    // `_drop_default_left` (:982): Python compares the measure as an OrderedDict, its
-    // magnitude by value.
+/// `_drop_default_left` (0bc705d :992): kfxgen's own 0.5% left margin taken off a `$157`:
+/// Previewer writes none in a vertical book, on a horizontal block in it either (P247h, #247).
+pub(crate) fn drop_default_left(v: &mut Struct) {
+    // Python compares the measure as an OrderedDict, its magnitude by value.
     let default_left = v.get("$48").and_then(Value::as_struct).is_some_and(|m| {
         matches!(&m.0[..], [(k, Value::Decimal(d)), (u, unit)]
         if k.0 == "$307" && u.0 == "$306" && *unit == sym("$314")
@@ -631,6 +630,12 @@ pub(crate) fn rotate_margins(v: &mut Struct) {
     if default_left {
         v.remove("$48");
     }
+}
+
+/// `_rotate_margins` (:989): a `$157`'s margins and paddings moved for vertical-rl text, as
+/// Kindle Previewer 4.0.3 writes them, kfxgen's own 0.5% left margin dropped.
+pub(crate) fn rotate_margins(v: &mut Struct) {
+    drop_default_left(v);
     let moved: Vec<(&str, Value)> = VERTICAL_KEYS
         .iter()
         .filter_map(|(old, new)| Some((*new, v.remove(old)?)))

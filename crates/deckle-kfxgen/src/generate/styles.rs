@@ -11,7 +11,7 @@ use super::table_styles::{
     build_table_style_157,
 };
 use super::typography::{Typography, on_page};
-use super::writing::{BidiKeys, bidi_value, rotate_margins};
+use super::writing::{BidiKeys, bidi_value, drop_default_left, rotate_margins};
 use super::{Generator, measure, py, st, sym};
 
 /// `_LINE_EM` (:1055): one line of space, in ems.
@@ -100,6 +100,8 @@ pub(crate) enum StyleArgs {
     Rule(RuleStyle),
     /// A run's direction keys alone (#710).
     Direction,
+    /// A picture's plain container's alignment symbol (#247).
+    PictureBox(&'static str),
 }
 
 impl From<Style157> for StyleArgs {
@@ -108,14 +110,36 @@ impl From<Style157> for StyleArgs {
     }
 }
 
+/// `rotation` (0bc705d :7019): how the margins of the styles written now move (#247).
+#[derive(Clone, Copy, Default, PartialEq)]
+pub(crate) enum Rotation {
+    #[default]
+    None,
+    /// In a vertical-rl chapter: moved for vertical text.
+    Vertical,
+    /// In a horizontal block inside one: where the book puts them (P247h).
+    Horizontal,
+}
+
+impl Rotation {
+    /// `_rotation_for` (0bc705d :983), `horizontal` whether each open container is a
+    /// horizontal block.
+    pub(crate) fn of(vertical: bool, horizontal: &[bool]) -> Self {
+        match (vertical, horizontal.iter().any(|&h| h)) {
+            (false, _) => Rotation::None,
+            (true, false) => Rotation::Vertical,
+            (true, true) => Rotation::Horizontal,
+        }
+    }
+}
+
 /// `_allocate_style` (:6941): one `$157` per kind, arguments, direction keys and rotation,
 /// named `s<n><kind>`.
 #[derive(Default)]
 pub(crate) struct Styles {
-    pub cache: Vec<(&'static str, StyleArgs, BidiKeys, bool, String)>,
+    pub cache: Vec<(&'static str, StyleArgs, BidiKeys, Rotation, String)>,
     counts: Vec<(&'static str, usize)>,
-    /// `rotation`: styles are written for a vertical-rl chapter, their margins moved (#247).
-    pub vertical: bool,
+    pub rotation: Rotation,
     /// `open_fills`: the fill of each box and cell open around the styles written now (#383).
     pub fills: Vec<Option<i64>>,
 }
@@ -152,7 +176,7 @@ impl Styles {
             *colour = on_page(*colour);
         }
         if let Some((.., name)) = self.cache.iter().find(|(k, s, b, v, _)| {
-            *k == kind && *s == style && b[..] == *bidi && *v == self.vertical
+            *k == kind && *s == style && b[..] == *bidi && *v == self.rotation
         }) {
             return name.clone();
         }
@@ -179,10 +203,18 @@ impl Styles {
                 g.local(&name);
                 st([("$173", sym(&name))])
             }
+            // `build_picture_box_style_157` (0bc705d :4108): only its alignment, as Kindle
+            // Previewer 4.0.3 writes `text-align` there (P247k K07).
+            StyleArgs::PictureBox(align) => {
+                g.local(&name);
+                st([("$173", sym(&name)), ("$34", sym(align))])
+            }
         };
         if let Value::Struct(v) = &mut value {
-            if self.vertical {
-                rotate_margins(v);
+            match self.rotation {
+                Rotation::Vertical => rotate_margins(v),
+                Rotation::Horizontal => drop_default_left(v),
+                Rotation::None => {}
             }
             for (key, text) in bidi {
                 v.insert(*key, bidi_value(key, text));
@@ -190,7 +222,7 @@ impl Styles {
         }
         g.push(Fragment::new("$157", Some(&name), value));
         self.cache
-            .push((kind, style, bidi.to_vec(), self.vertical, name.clone()));
+            .push((kind, style, bidi.to_vec(), self.rotation, name.clone()));
         name
     }
 }

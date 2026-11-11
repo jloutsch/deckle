@@ -13,7 +13,7 @@ use super::block_styles::{
 };
 use super::boxes::{self, drop_edge_rules, emit_box_chunks, rule_chunk, unboxed};
 use super::chapters::{Block, Chapter};
-use super::chunks::{Chunk, InCell, Marker, Node, emit_paragraph, print_book_heading};
+use super::chunks::{ChapterNow, Chunk, InCell, Marker, Node, emit_paragraph, print_book_heading};
 use super::fragments::{
     ContentRef, build_fragment_145, build_fragment_259, pack_content_fragments, style_refs,
 };
@@ -23,7 +23,7 @@ use super::inline_picture_entries::{self, InlineStyles};
 use super::nav;
 use super::notes::{self, Popups};
 use super::page_scale::em_percent;
-use super::styles::{Style157, StyleArgs, Styles};
+use super::styles::{Rotation, Style157, StyleArgs, Styles};
 use super::table_chunks;
 use super::title::{
     eat_split_title, heading_near_start, label_blocks, opens_with_title, title_in_table,
@@ -77,6 +77,11 @@ pub(crate) fn build_chapter_content(
 
     for chapter in chapters {
         let start_idx = chunks.len();
+        let now = ChapterNow {
+            start: start_idx,
+            vertical: chapter.vertical(vertical_book),
+            vertical_book,
+        };
         // Ids of blocks this chapter drops, put on its first chunk below (#62, #436).
         let mut carried = chapter.anchor_keys.clone();
         // Offsets in kfxgen's heading for ids of the block it prints (#491).
@@ -255,9 +260,9 @@ pub(crate) fn build_chapter_content(
                         chunks.push(rule_chunk(rule));
                         block.anchors.keys.clone()
                     } else if let Some(bx) = &block.boxed {
-                        emit_box_chunks(block, bx, images, &mut chunks)?
+                        emit_box_chunks(block, bx, now, images, &mut chunks)?
                     } else {
-                        emit_paragraph(block, b_idx == 0, images, &mut chunks)?
+                        emit_paragraph(block, b_idx == 0, now, images, &mut chunks)?
                     };
                     // `_emitted_content` (:5940): a table of rows with no cells, a box of
                     // paragraphs that emitted nothing, is only its markers.
@@ -492,17 +497,16 @@ pub(crate) fn build_chapter_content(
     for (ch_idx, &(start, end)) in chapter_chunk_ranges.iter().enumerate() {
         let sl_name = format!("l{ch_idx}");
         let mut readings = Vec::new();
-        // A vertical-rl chapter's styles have their margins moved (#247, :7383).
-        styles.vertical = match chapters[ch_idx].writing_mode.as_deref() {
-            Some(mode) => mode == "vertical-rl",
-            None => vertical_book,
-        };
+        // A vertical-rl chapter's styles have their margins moved (#247, :7383), except in a
+        // horizontal block (0bc705d :7518).
+        let vertical = chapters[ch_idx].vertical(vertical_book);
+        styles.rotation = Rotation::of(vertical, &[]);
         let fs = chapters[ch_idx].font_size;
         let mut entry_styles = Vec::new();
         // A container's own `$157`: a row's or group's border (:7556), a box's (:7520).
         let mut entry_parts = Vec::new();
         let mut entry_runs = Vec::new();
-        let mut open = Containers::default();
+        let mut open = Containers::new(vertical);
         for chunk_idx in start..end {
             let chunk = &chunks[chunk_idx];
             let around = open.around().cloned();
@@ -516,8 +520,10 @@ pub(crate) fn build_chapter_content(
                 entry_parts.push(part);
                 // A linked picture's container: its link's anchor (:7495).
                 let link = match marker {
-                    Marker::Open(Node::Link(target)) => body_anchor_map
-                        .get(target)
+                    Marker::Open(Node::Link(open)) => open
+                        .target
+                        .as_ref()
+                        .and_then(|t| body_anchor_map.get(t))
                         .map(|a| (a.clone(), String::new(), 1)),
                     _ => None,
                 };

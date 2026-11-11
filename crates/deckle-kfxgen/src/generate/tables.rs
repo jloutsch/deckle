@@ -43,6 +43,8 @@ pub(crate) struct Table {
     pub width: Option<f64>,
     /// `bidi`: `{}` sets none inside it, where None takes the container's (#246).
     pub bidi: Option<Bidi>,
+    /// A horizontal-tb table in vertical text (#247).
+    pub horizontal: bool,
 }
 
 #[derive(Clone)]
@@ -174,9 +176,6 @@ pub(crate) fn read_table_block(b: &PyValue, at: &str) -> Result<Block, GenerateE
         .ok_or_else(|| model_err(format!("{at}.table: a dict")))?;
     let at_t = format!("{at}.table");
     let bidi = Bidi::read(t.get("bidi"), &format!("{at_t}.bidi"))?;
-    if truthy(t.get("horizontal")) {
-        return Err(Unsupported("a horizontal table in vertical text"));
-    }
     let rows = t
         .get("rows")
         .and_then(PyValue::as_list)
@@ -212,6 +211,7 @@ pub(crate) fn read_table_block(b: &PyValue, at: &str) -> Result<Block, GenerateE
             model_err(format!("{at_t}.width: a number"))
         })?,
         bidi,
+        horizontal: truthy(t.get("horizontal")),
     };
     // kfxgen's `quantize` raises on a side it can't write in 28 digits (:2071).
     for (j, row) in table.rows.iter().enumerate() {

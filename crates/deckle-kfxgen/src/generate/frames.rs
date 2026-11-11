@@ -10,7 +10,9 @@ use regex::Captures;
 
 use super::boxes::{BoxOpen, BoxSpec};
 use super::chapters::Block;
-use super::chunks::{ASCII_SPACE, Chunk, Marker, Node, emit_float_wrapped, space_to_write};
+use super::chunks::{
+    ASCII_SPACE, ChapterNow, Chunk, Marker, Node, emit_float_wrapped, space_to_write,
+};
 use super::images::{IMG_TOKEN, Images, SIZE_HINT, picture_link};
 use super::inline::{Anchors, Span};
 use super::page_scale::column_px;
@@ -24,10 +26,12 @@ fn truthy(n: Option<f64>) -> Option<f64> {
     n.filter(|&n| n != 0.0)
 }
 
-/// `_is_frame` (:726): a floated paragraph's frame, or a wrapper's width round a picture with
-/// no border, fill or float (#382). A horizontal box (#247) isn't ported.
+/// `_is_frame` (:726): a floated paragraph's frame, a horizontal block in vertical text with
+/// no border or fill (#247), or a wrapper's width round a picture with no border, fill or
+/// float (#382).
 pub(crate) fn is_frame(b: &BoxSpec) -> bool {
     b.float_wrapper
+        || b.horizontal && !(b.border.is_some() || b.background.is_some())
         || truthy(b.width).is_some()
             && !(b.border.is_some()
                 || b.background.is_some()
@@ -106,6 +110,7 @@ pub(crate) fn floats_among_words(block: &Block) -> bool {
 pub(crate) fn emit_floated_paragraph(
     block: &Block,
     first_in_chapter: bool,
+    now: ChapterNow,
     images: &Images,
     chunks: &mut Vec<Chunk>,
 ) -> Result<Vec<String>, GenerateError> {
@@ -164,10 +169,10 @@ pub(crate) fn emit_floated_paragraph(
         let lead = py::len(&text[..lead]);
         let mut head = slice_block(&inner, 0, lead);
         head.heading_level = None;
-        unplaced.extend(emit_float_wrapped(&head, false, images, chunks)?);
+        unplaced.extend(emit_float_wrapped(&head, false, now, images, chunks)?);
         slice_block(&inner, lead, py::len(text))
     };
-    unplaced.extend(emit_float_wrapped(&rest, false, images, chunks)?);
+    unplaced.extend(emit_float_wrapped(&rest, false, now, images, chunks)?);
     // kfxgen drops a frame holding no entry (:5690); the words after the floats always make
     // one here.
     chunks.push(Chunk::marker(Marker::Close));

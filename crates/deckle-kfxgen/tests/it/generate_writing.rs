@@ -62,6 +62,21 @@ fn tcy_notes_matches_kfxgen() {
     matches_kfxgen("tcy_notes");
 }
 
+/// Horizontal blocks in a vertical book (#247): boxes, bordered and padded, a table, and
+/// pictures in them (#755), plain, aligned, sized, linked, floated and beside a paragraph;
+/// words around a picture (#757); percentages on Previewer's 480pt page (#754).
+#[test]
+fn horizontal_blocks_matches_kfxgen() {
+    matches_kfxgen("horizontal_blocks");
+}
+
+/// The same files on an ltr spine: the book isn't vertical, its files are, so a picture in
+/// a horizontal block is a block one, aligned as its block (#755), on a 384pt page.
+#[test]
+fn horizontal_blocks_ltr_matches_kfxgen() {
+    matches_kfxgen("horizontal_blocks_ltr");
+}
+
 fn directions() -> Model {
     load_model(&deckle_kfx::fixtures::kfxgen("models/directions")).unwrap()
 }

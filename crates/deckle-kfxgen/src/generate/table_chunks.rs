@@ -32,6 +32,8 @@ pub(crate) struct TableOpen {
     pub column_widths: Option<ColumnWidths>,
     pub width: Option<f64>,
     pub bidi: Option<Bidi>,
+    /// `_opens_horizontal` (0bc705d :974): a horizontal-tb table in vertical text (#247).
+    pub horizontal: bool,
 }
 
 /// `_table_has_zoom` (:2101): every table of 2 or more columns (#272).
@@ -79,6 +81,7 @@ pub(crate) fn emit_table_chunks(block: &Block, t: &Table, chunks: &mut Vec<Chunk
         column_widths: t.column_widths.clone(),
         width: t.width,
         bidi: t.bidi.clone(),
+        horizontal: t.horizontal,
     }))));
     let mut group = None;
     let mut last_row = None;

@@ -56,6 +56,15 @@ pub(crate) struct Chapter {
 }
 
 impl Chapter {
+    /// Whether it is vertical-rl text: `(_chapter_writing_mode(chapter) or
+    /// self._book_writing_mode) == "vertical-rl"` (0bc705d :6327, :7514).
+    pub(crate) fn vertical(&self, vertical_book: bool) -> bool {
+        match self.writing_mode.as_deref() {
+            Some(mode) => mode == "vertical-rl",
+            None => vertical_book,
+        }
+    }
+
     /// The cover's page (:4897).
     pub(crate) fn cover() -> Self {
         Chapter {
@@ -101,6 +110,9 @@ pub(crate) struct Block {
     /// What a part cut before an empty line keeps after its words (#602, #626): never the
     /// model's.
     pub trailing: String,
+    /// The text-align a picture walked as a block of its own inherits, having no
+    /// `block_style` (#757, 0bc705d :5890).
+    pub picture_align: Option<String>,
 }
 
 impl Block {
@@ -121,6 +133,7 @@ impl Block {
             margin_below: 0.0,
             tight: false,
             trailing: String::new(),
+            picture_align: None,
         }
     }
 
@@ -310,6 +323,11 @@ pub(crate) fn read_block(b: &PyValue, at: &str) -> Result<Block, GenerateError> 
         spans: read_spans(b.get("spans"), at)?,
         style: read_block_style(b.get("block_style"), at)?,
         tight: truthy(b.get("tight")),
+        picture_align: match b.get("picture_align") {
+            None | Some(PyValue::None) => None,
+            Some(PyValue::Str(a)) => Some(a.clone()),
+            Some(_) => return Err(model_err(format!("{at}.picture_align: a string"))),
+        },
         ..Block::plain(text)
     })
 }
