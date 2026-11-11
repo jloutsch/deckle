@@ -59,6 +59,8 @@ hrefs, unreadable JPEGs). The books are `ARG_BOOKS` in that script, their other 
 | `cover_paths` | a cover opening the first chapter, left out there, its ids moved on; the cover's picture used later in the text; a contents page's targets after the cover's page |
 | `cover_page` | a PNG cover over 1920 px whose first page holds only its picture, which stays |
 | `cover_alone` | a first page whose cover picture has only blank blocks after it: the picture stays, its ids with it |
+| `table_parts` | table, row, row-group and cell borders (equal sides, per side, coloured, black); widths, `<col>` and cell column widths, padding in ems and %; vertical alignment, fills, cells setting their width; head, body and foot groups; header cells, one not bold, one of paragraphs; runs in cells; empty cells, one holding an id; ids of the table, of rows with no cells, of the block alone; tables of no rows written; ids of a picture the book doesn't hold around tables |
+| `table_title` | a chapter's title in its table's first row, spelled over rows in source order, over a paragraph and a row (the rest kept) or the only row (the table gone); a heading in a cell; a title-only chapter with a table's ids on its parts; a table opening with the title off its first source row; a picture, then a table of the title's words |
 
 **Calibre path** (`ebook-convert` with kfxgen, CSS applied): the source is
 `sources/<name>.epub`. For each, the script also checks that replaying the model gives exactly

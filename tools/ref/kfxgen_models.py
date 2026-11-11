@@ -293,6 +293,83 @@ def _png(width, height):
     return b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + size + b"\x08\x02\x00\x00\x00"
 
 
+def _cell(text, spans=(), keys=(), **extra):
+    """A table cell as the converter writes one, with no CSS."""
+    cell = {
+        "text": text,
+        "spans": list(spans),
+        "anchor_ids": [],
+        "anchor_offsets": dict.fromkeys(keys, 0),
+        "block_style": None,
+        "header": False,
+        "not_bold": False,
+        "heading": False,
+        "colspan": 1,
+        "rowspan": 1,
+        "valign": None,
+        "background": None,
+        "border": None,
+        "padding": None,
+        "width_set": False,
+        "anchor_keys": list(keys),
+    }
+    cell.update(extra)
+    return cell
+
+
+def _row(cells, group="body", order=0, keys=(), **extra):
+    """A table row: its group, its place in the source and its ids."""
+    row = {
+        "group": group,
+        "border": None,
+        "bidi": None,
+        "group_bidi": None,
+        "group_border": None,
+        "anchor_ids": [],
+        "cells": cells,
+        "source_order": order,
+        "anchor_keys": list(keys),
+        "anchor_offsets": {},
+    }
+    row.update(extra)
+    return row
+
+
+def _table(rows, keys=(), stray=(), block_keys=None, **extra):
+    """A table block, its text and ids gathered from its rows as the converter does; `stray`
+    ids are the block's alone. `block_keys` replaces the block's ids."""
+    table = {
+        "anchor_ids": [],
+        "rows": rows,
+        "border": None,
+        "column_widths": None,
+        "width": None,
+        "bidi": {},
+        "anchor_keys": list(keys),
+        "anchor_offsets": {},
+    }
+    table.update(extra)
+    every = list(keys)
+    for r in rows:
+        every += r["anchor_keys"]
+        for c in r["cells"]:
+            every += c["anchor_keys"]
+            for p in c.get("paragraphs") or ():
+                every += p["anchor_keys"]
+    every = list(dict.fromkeys(every + list(stray))) if block_keys is None else block_keys
+    lines = (" ".join(c["text"] for c in r["cells"] if c["text"]) for r in rows)
+    return {
+        "type": "table",
+        "text": "\n".join(line for line in lines if line),
+        "spans": [],
+        "block_style": None,
+        "anchor_ids": [],
+        "anchor_offsets": dict.fromkeys(every, 0),
+        "table": table,
+        "anchor_keys": every,
+    }
+
+
 _APP0 = b"\xff\xe0\x00\x04\x00\x00"
 #: The covers of `cover_paths` and `cover_page`, each also a picture in its book's text.
 _COVER = _jpeg(600, 800, _APP0)
@@ -577,6 +654,259 @@ ARG_BOOKS = {
         _chapter(
             "One",
             [_block("One"), _block("Back to the cover.", [(12, 5, _link("c0.xhtml#cover"))])],
+        ),
+    ],
+    # Table parts: borders, widths, padding, alignment and fills; head, body and foot groups;
+    # header cells, a header cell of paragraphs, runs in cells; empty cells, one holding an
+    # id; ids of the table, of rows with no cells, of the block alone; a table of no rows
+    # written; ids of a picture the book doesn't hold before and after a table.
+    "table_parts": [
+        _chapter(
+            "Parts",
+            [
+                _block("Some parts."),
+                _block(_pic("missing.png", "gone"), keys=["p.xhtml#pic"]),
+                _table(
+                    [
+                        _row(
+                            [
+                                _cell("Name", header=True),
+                                _cell("Kind", header=True, not_bold=True),
+                                _cell("Note", [(0, 4, frozenset({"italic"}))], header=True),
+                            ],
+                            group="head",
+                            group_border={
+                                "top": ("solid", 1.0, None),
+                                "bottom": ("double", 2.5, 0xFF000080),
+                            },
+                        ),
+                        _row([], keys=["p.xhtml#skip"], order=1),
+                        _row(
+                            [
+                                _cell(
+                                    "Bold and link",
+                                    [(0, 4, frozenset({"bold"})), (9, 4, _link("p.xhtml#ta"))],
+                                    valign="top",
+                                    background=0xFFEEEEEE,
+                                    width_set=True,
+                                    padding={"top": 0.5, "right": 0.5, "bottom": 0.0, "left": ("%", 5.0)},
+                                    border={
+                                        "top": ("solid", 1.0, 0xFFFF0000),
+                                        "bottom": ("dotted", 0.5, None),
+                                        "left": ("none", 1.0, None),
+                                        "right": ("solid", 0, None),
+                                    },
+                                ),
+                                _cell("", [(0, 1, frozenset({"bold"}))], keys=["p.xhtml#blank"]),
+                                _cell("\xa0"),
+                            ],
+                            order=2,
+                            border={s: ("solid", 0.75, None) for s in ("top", "right", "bottom", "left")},
+                        ),
+                        _row(
+                            [
+                                _cell("Sum", valign="bottom"),
+                                _cell("x", valign="baseline"),
+                                _cell("Plain"),
+                                _cell(
+                                    "Total all",
+                                    header=True,
+                                    paragraphs=[
+                                        _block("Total"),
+                                        _block("all", [(0, 3, frozenset({"italic"}))]),
+                                    ],
+                                ),
+                            ],
+                            group="foot",
+                            order=3,
+                        ),
+                        _row([], group="foot", keys=["p.xhtml#end"], order=4),
+                    ],
+                    keys=["p.xhtml#ta"],
+                    stray=["p.xhtml#stray"],
+                    width=100.0,
+                    border={s: ("solid", 1.0, None) for s in ("top", "right", "bottom", "left")},
+                    column_widths=("col", [25.0, None, 50.0, None]),
+                ),
+                # A plain cell as in the table above: one style at either width.
+                _table([_row([_cell("Plain"), _cell("Again")])], width=40.0),
+                _block(_pic("missing.png", "gone"), keys=["p.xhtml#last"]),
+            ],
+        ),
+        _chapter(
+            "Columns",
+            [
+                _block(_pic("missing.png", "gone")),
+                _table(
+                    [
+                        _row(
+                            [
+                                _cell(
+                                    "Padded",
+                                    padding={
+                                        "top": 0.5,
+                                        "right": 0.5,
+                                        "bottom": 0.0,
+                                        "left": ("%", 5.0),
+                                    },
+                                ),
+                                _cell("Wide", colspan=2),
+                                _cell(
+                                    "Per cent",
+                                    padding={
+                                        "top": ("%", 10.0),
+                                        "right": 0.0375,
+                                        "bottom": 0.0375,
+                                        "left": 0.0375,
+                                    },
+                                ),
+                            ]
+                        )
+                    ],
+                    width=50.0,
+                    border={
+                        s: ("dashed", 0.75, 0xFF336699) for s in ("top", "right", "bottom", "left")
+                    },
+                    column_widths=("cell", [30.0, 30.0, None, 40.0, None]),
+                ),
+            ],
+            font_size=0.75,
+        ),
+        # Only a table of no rows written: the chapter's entry is a no-break space. Its border
+        # differs by side, two of them in widths written with an exponent.
+        _chapter(
+            "",
+            [
+                _table(
+                    [_row([], keys=["bare.xhtml#row"])],
+                    keys=["bare.xhtml#t"],
+                    stray=["bare.xhtml#stray"],
+                    border={
+                        "bottom": ("solid", 1.0, None),
+                        "left": ("solid", 0.00005, None),
+                        "right": ("solid", 2500000.0, None),
+                    },
+                )
+            ],
+            text="Bare",
+            anchor_keys=["bare.xhtml"],
+        ),
+        # A picture's ids pass over a table of no rows written to the paragraph after it.
+        _chapter(
+            "Skipped",
+            [
+                _block(_pic("missing.png", "gone"), keys=["s.xhtml#pic"]),
+                _table([_row([])]),
+                _block("After."),
+            ],
+        ),
+        _chapter(
+            "Links",
+            [
+                _block(
+                    "To t, skip, end, stray, blank, pic, last; bare t, row, stray, file; s.",
+                    [
+                        (3, 1, _link("p.xhtml#ta")),
+                        (6, 4, _link("p.xhtml#skip")),
+                        (12, 3, _link("p.xhtml#end")),
+                        (17, 5, _link("p.xhtml#stray")),
+                        (24, 5, _link("p.xhtml#blank")),
+                        (31, 3, _link("p.xhtml#pic")),
+                        (36, 4, _link("p.xhtml#last")),
+                        (47, 1, _link("bare.xhtml#t")),
+                        (50, 3, _link("bare.xhtml#row")),
+                        (55, 5, _link("bare.xhtml#stray")),
+                        (62, 4, _link("bare.xhtml")),
+                        (68, 1, _link("s.xhtml#pic")),
+                    ],
+                )
+            ],
+        ),
+    ],
+    # A chapter's title in its table: in the first row, spelled over rows in source order;
+    # over a paragraph and a row, the rest of the table kept; over a paragraph and the only
+    # row, the table gone; a heading in a cell; a title-only chapter with an empty table.
+    "table_title": [
+        _chapter(
+            "Census Table",
+            [_table([_row([_cell("Census Table of 1801")]), _row([_cell("8,893")], order=1)])],
+            anchor_keys=["t1.xhtml"],
+        ),
+        _chapter(
+            "Over Rows",
+            [
+                _table(
+                    [
+                        _row([_cell("Over")], group="head"),
+                        _row([_cell("Data")], order=2),
+                        _row([_cell("Rows")], group="foot", order=1),
+                    ]
+                )
+            ],
+        ),
+        _chapter(
+            "Split Title",
+            [
+                _block("Split", keys=["t3.xhtml"]),
+                _table(
+                    [
+                        _row([_cell("Title", keys=["t3.xhtml#c0"])], keys=["t3.xhtml#r0"]),
+                        _row([_cell("Rest of it")], order=1),
+                        _row([_cell("More")], order=2),
+                    ]
+                ),
+            ],
+        ),
+        _chapter(
+            "Gone Table",
+            [
+                _block("Gone", keys=["t4.xhtml"]),
+                _table([_row([_cell("Table", keys=["t4.xhtml#c"])])]),
+                _block("After the gone table."),
+            ],
+        ),
+        _chapter(
+            "Cell Head",
+            [_block("Before the cell heading."), _table([_row([_cell("Heading here", heading=True)])])],
+        ),
+        # The table's ids only on its parts.
+        _chapter(
+            "Only",
+            [
+                _block("Only"),
+                _table(
+                    [_row([_cell("", keys=["t6.xhtml#c"])], keys=["t6.xhtml#r"])],
+                    keys=["t6.xhtml#t"],
+                    block_keys=[],
+                ),
+            ],
+        ),
+        # A table whose text opens with the title, its first row in the source not.
+        _chapter(
+            "Runs In",
+            [_table([_row([_cell("Runs In here")], group="head", order=1), _row([_cell("Other")])])],
+        ),
+        # A picture, then a table holding the title's words.
+        _chapter(
+            "Pictured",
+            [_block(_pic("missing.png", "gone")), _table([_row([_cell("Pictured")])])],
+        ),
+        _chapter(
+            "Links",
+            [
+                _block(
+                    "To one, r0, c0, gone, cell, row, t.",
+                    [
+                        (3, 3, _link("t1.xhtml")),
+                        (8, 2, _link("t3.xhtml#r0")),
+                        (12, 2, _link("t3.xhtml#c0")),
+                        (16, 4, _link("t4.xhtml#c")),
+                        (22, 4, _link("t6.xhtml#c")),
+                        (28, 3, _link("t6.xhtml#r")),
+                        (33, 1, _link("t6.xhtml#t")),
+                    ],
+                )
+            ],
         ),
     ],
 }
