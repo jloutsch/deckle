@@ -22,7 +22,12 @@ fn edited(name: &str, edit: impl FnOnce(&mut serde_json::Value)) -> tempfile::Te
     let dir = tempfile::tempdir().unwrap();
     let res = dir.path().join("resources");
     std::fs::create_dir(&res).unwrap();
-    for f in std::fs::read_dir(src.join("resources")).unwrap() {
+    // git keeps no empty folder: a model with no resources has none in a fresh checkout.
+    let files = match std::fs::read_dir(src.join("resources")) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        r => r.unwrap().collect(),
+    };
+    for f in files {
         let f = f.unwrap();
         std::fs::copy(f.path(), res.join(f.file_name())).unwrap();
     }
