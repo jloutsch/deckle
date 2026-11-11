@@ -1550,6 +1550,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "deckle-kfxgen"
+version = "0.13.0"
+dependencies = [
+ "deckle-kfx",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "deckle-library"
 version = "0.13.0"
 dependencies = [

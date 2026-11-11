@@ -1,0 +1,15 @@
+[package]
+name = "deckle-kfxgen"
+description = "EPUB → KFX without Kindle Previewer: a Rust port of kfxgen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+deckle-kfx.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
