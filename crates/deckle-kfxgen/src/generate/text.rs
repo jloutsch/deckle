@@ -378,7 +378,7 @@ pub(crate) fn build_chapter_content(
         })
         .collect();
 
-    let key_positions = nav::key_positions(chapters, &chunks, &chunk_positions);
+    let key_positions = nav::key_positions(chapters, &chunks, &chunk_positions)?;
 
     // $266: a contents line's target (:6763), then each link target the book declares.
     let mut anchor_names = Vec::new();

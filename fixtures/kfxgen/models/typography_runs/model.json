@@ -23,7 +23,7 @@
        ],
        [
         "text",
-        "Caps Heading\n\nSmall caps, upper case, spaced, yellow.\n\nNormal caps and no case.\n\nUnknown caps and case.\n\nGrey kept.\n\nUpright and marked.\n\nOwn marks.\n\nRuns: caps, lower, wide, yellow, gone.\n\nYellow cell Filled cell Caps cell Clear cell Drop cell\n\nBoxed cell"
+        "Caps Heading\n\nSmall caps, upper case, spaced, yellow.\n\nNormal caps and no case.\n\nUnknown caps and case.\n\nGrey kept.\n\nMauve darkened.\n\nCoral darkened.\n\nUpright and marked.\n\nOwn marks.\n\nRuns: caps, lower, wide, yellow, gone.\n\nYellow cell Filled cell Caps cell Clear cell Drop cell\n\nBoxed cell"
        ],
        [
         "blocks",
@@ -496,6 +496,196 @@
               [
                "colour",
                4285953654
+              ]
+             ]
+            }
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            false
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": []
+            }
+           ],
+           [
+            "anchor_keys",
+            []
+           ],
+           [
+            "writing_mode",
+            "horizontal-tb"
+           ],
+           [
+            "margin_above",
+            1.0
+           ]
+          ]
+         },
+         {
+          "$dict": [
+           [
+            "text",
+            "Mauve darkened."
+           ],
+           [
+            "spans",
+            []
+           ],
+           [
+            "block_style",
+            {
+             "$dict": [
+              [
+               "align",
+               null
+              ],
+              [
+               "indent",
+               null
+              ],
+              [
+               "margin_left",
+               null
+              ],
+              [
+               "margin_right",
+               null
+              ],
+              [
+               "font_family",
+               [
+                "serif"
+               ]
+              ],
+              [
+               "line_height",
+               1.2
+              ],
+              [
+               "bold",
+               false
+              ],
+              [
+               "italic",
+               false
+              ],
+              [
+               "font_size",
+               16.0
+              ],
+              [
+               "colour",
+               4288777645
+              ]
+             ]
+            }
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            false
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": []
+            }
+           ],
+           [
+            "anchor_keys",
+            []
+           ],
+           [
+            "writing_mode",
+            "horizontal-tb"
+           ],
+           [
+            "margin_above",
+            1.0
+           ]
+          ]
+         },
+         {
+          "$dict": [
+           [
+            "text",
+            "Coral darkened."
+           ],
+           [
+            "spans",
+            []
+           ],
+           [
+            "block_style",
+            {
+             "$dict": [
+              [
+               "align",
+               null
+              ],
+              [
+               "indent",
+               null
+              ],
+              [
+               "margin_left",
+               null
+              ],
+              [
+               "margin_right",
+               null
+              ],
+              [
+               "font_family",
+               [
+                "serif"
+               ]
+              ],
+              [
+               "line_height",
+               1.2
+              ],
+              [
+               "bold",
+               false
+              ],
+              [
+               "italic",
+               false
+              ],
+              [
+               "font_size",
+               16.0
+              ],
+              [
+               "colour",
+               4293095008
               ]
              ]
             }

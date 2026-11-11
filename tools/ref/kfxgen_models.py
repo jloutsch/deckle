@@ -1502,6 +1502,9 @@ def _typography_runs():
                 _para("Normal caps and no case.", small_caps="normal", text_transform="none"),
                 _para("Unknown caps and case.", small_caps="petite-caps", text_transform="full-width"),
                 _para("Grey kept.", colour=grey),
+                # Darkened by the bisection's last steps: its low end, after 30 (#383).
+                _para("Mauve darkened.", colour=0xFFA18DAD),
+                _para("Coral darkened.", colour=0xFFE36E60),
                 _para("Upright and marked.", text_orientation="upright", text_emphasis="filled sesame"),
                 _para("Own marks.", text_orientation="sideways", text_emphasis='"*"'),
                 _para(

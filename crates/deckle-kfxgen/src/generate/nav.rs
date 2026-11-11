@@ -73,7 +73,7 @@ pub(crate) fn key_positions(
     chapters: &[Chapter],
     chunks: &[Chunk],
     chunk_positions: &[Option<i64>],
-) -> BTreeMap<String, (i64, i64)> {
+) -> Result<BTreeMap<String, (i64, i64)>, GenerateError> {
     let (key_to_chunk, _) = id_maps(chunks.iter().map(|c| &c.anchors));
     let mut out = BTreeMap::new();
     for sub in chapters.iter().flat_map(|ch| &ch.sub_entries) {
@@ -87,13 +87,19 @@ pub(crate) fn key_positions(
         let leaf = (idx..chunks.len())
             .find(|&i| chunks[i].is_leaf())
             .unwrap_or(idx);
-        let position = chunk_positions[leaf].expect("ids are on entries that take a position");
+        // A container's `close` takes no position: kfxgen would write None. No chunk the port
+        // makes puts ids on one.
+        let Some(position) = chunk_positions[leaf] else {
+            return Err(GenerateError::Unsupported(
+                "a contents entry on a container's end",
+            ));
+        };
         out.insert(
             key.to_owned(),
             (position, if leaf == idx { offset } else { 0 }),
         );
     }
-    out
+    Ok(out)
 }
 
 /// `_book_headings` (:1850): (position, level) of the book's `<h1>`–`<h6>` in reading order.
@@ -275,4 +281,31 @@ pub(crate) fn build_fragment_389(
     }
     let top = st([("$178", sym("$351")), ("$392", Value::List(containers))]);
     Fragment::root("$389", Value::List(vec![top]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::generate::chunks::Marker;
+
+    /// Ids on a `close` with no leaf after it would land on no position: unsupported, not a
+    /// panic.
+    #[test]
+    fn a_contents_entry_on_a_container_end_is_unsupported() {
+        let mut chapter = Chapter::cover();
+        chapter.sub_entries = vec![SubEntry {
+            title: "End".to_owned(),
+            key: Some("c.xhtml#end".to_owned()),
+            level: 0,
+        }];
+        let mut close = Chunk::marker(Marker::Close);
+        close.anchors.attach(&["c.xhtml#end".to_owned()]);
+        let chunks = [Chunk::text("Words.".to_owned()), close];
+        assert!(matches!(
+            key_positions(&[chapter], &chunks, &[Some(1), None]),
+            Err(GenerateError::Unsupported(
+                "a contents entry on a container's end"
+            ))
+        ));
+    }
 }
