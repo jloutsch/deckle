@@ -166,8 +166,10 @@ natively with that element as its text/alt text and a run warning naming it.
 ## Keeping up with kfxgen
 
 kfxgen is still changing (5.24.0 shipped on 2026-11-11, with #753 after it). The port targets `4b81651`. A sync
-is its own task: list `git log 4b81651..<new>` in kfxgen for files under `plugin/kfxgen/`,
-port each change, regenerate fixtures with the new commit, update `UPSTREAM.md`. The model JSON
+is its own task: run `KFXGEN_REF=<new> tools/ref/kfxgen_models.sh` (it exports that commit and
+injects Deckle's dump hook; kfxgen itself is only read), list `git log 4b81651..<new>` in kfxgen
+for files under `plugin/kfxgen/`, port each change, set the new commit in the script and the
+fixtures README, update `UPSTREAM.md`. The model JSON
 carries a `schema` number; a kfxgen change to the model bumps it.
 
 ## Risks

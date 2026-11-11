@@ -2,8 +2,8 @@
 
 Output of [kfxgen](https://github.com/jloutsch/kfxgen) (GPL-3), the reference for the native
 converter (`docs/superpowers/specs/2026-11-10-native-kfx-design.md`, Oracles). The generator
-code is kfxgen commit `4b81651` (5.24.0 plus #753). `models/` were dumped with `8f55440` on
-kfxgen's `feat/model-dump`, which is `4b81651` plus the dump hook only.
+code is kfxgen commit `4b81651` (5.24.0 plus #753). `models/` were dumped from that commit
+with Deckle's own hook (`tools/ref/kfxgen_hook/`); nothing in the kfxgen repo is changed.
 
 ## golden/
 
@@ -27,9 +27,13 @@ native generator can write through `deckle_kfx::container::write_kfx` with no ch
 ## models/
 
 One folder per fixture: `model.json` and `resources/` (the arguments of kfxgen's
-`generate_full_book`, written by its `KFXGEN_DUMP_MODEL` hook) and `expected.kfx` (what kfxgen's
-generator makes from them). `KFXGEN_COMMIT` names the kfxgen commit that dumped them.
-Rebuild all of them with `tools/ref/kfxgen_models.sh`; two runs give the same bytes.
+`generate_full_book`, written by Deckle's `KFXGEN_DUMP_MODEL` hook) and `expected.kfx` (what
+kfxgen's generator makes from them). `KFXGEN_COMMIT` names the kfxgen commit they came from.
+Rebuild all of them with `tools/ref/kfxgen_models.sh`; two runs give the same bytes. The script
+exports commit `KFXGEN_REF` (default `4b81651`) of the kfxgen repo `KFXGEN` (default
+`../kfxgen-public`, only read) with `git archive`, puts the hook into the export
+(`tools/ref/kfxgen_hook/inject.py` adds a call at the top of `generate_full_book`, and stops if
+its anchor line has moved), and builds the Calibre plugin from that export.
 
 **Shim path** (kfxgen's Calibre-free `EpubAsOeb`, no per-element CSS): the 15 golden inputs
 from kfxgen's `tests/fixtures/golden/inputs.py` under their own names (`minimal`,

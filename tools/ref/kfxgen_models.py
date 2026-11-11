@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The Python half of tools/ref/kfxgen_models.sh. Run with kfxgen's Python.
+"""The Python half of tools/ref/kfxgen_models.sh. Run with kfxgen's Python; <kfxgen> is the export with the hook.
 
     kfxgen_models.py shim <kfxgen> <out>    kfxgen's golden inputs, plus unicode_text and
                                             empty_chapter, through its Calibre-free shim
@@ -22,13 +22,6 @@ from pathlib import Path
 CALIBRE_FONTS = Path("/Applications/calibre.app/Contents/Resources/resources/fonts/liberation")
 
 
-def _pin_commit(model_dump):
-    # model_dump asks git for the commit; an exported kfxgen has no .git, so the shell script
-    # passes the commit it was exported from (KFXGEN_COMMIT).
-    if os.environ.get("KFXGEN_COMMIT"):
-        model_dump._commit = lambda: os.environ["KFXGEN_COMMIT"]
-
-
 def shim(kfxgen, out):
     sys.path[:0] = [str(kfxgen / "plugin"), str(kfxgen)]
     from kfxgen import converter, model_dump
@@ -37,8 +30,6 @@ def shim(kfxgen, out):
     from tests.fixtures.epub_builder import EpubBuilder
     from tests.fixtures.golden.inputs import GOLDEN_INPUTS
     from tests.fixtures.oeb_shim import EpubAsOeb
-
-    _pin_commit(model_dump)
 
     def unicode_text(d):
         body = (
@@ -2519,7 +2510,6 @@ def args(kfxgen, out):
     from kfxgen import model_dump
     from kfxgen.native_generator import NativeKFXGenerator
 
-    _pin_commit(model_dump)
     for name, chapters in ARG_BOOKS.items():
         model = out / name
         extras = ARG_BOOK_EXTRAS.get(name, {})
