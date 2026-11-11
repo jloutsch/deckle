@@ -136,4 +136,46 @@ impl PyValue {
             _ => None,
         }
     }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            PyValue::Str(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_int(&self) -> Option<i64> {
+        match self {
+            PyValue::Int(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    /// A list's or a tuple's items.
+    pub fn as_list(&self) -> Option<&[PyValue]> {
+        match self {
+            PyValue::List(items) | PyValue::Tuple(items) => Some(items),
+            _ => None,
+        }
+    }
+
+    /// Python's `bool(value)`.
+    pub fn is_truthy(&self) -> bool {
+        match self {
+            PyValue::None => false,
+            PyValue::Bool(b) => *b,
+            PyValue::Int(i) => *i != 0,
+            PyValue::Float(f) => *f != 0.0,
+            PyValue::Str(s) => !s.is_empty(),
+            PyValue::List(v) | PyValue::Tuple(v) | PyValue::Set(v) => !v.is_empty(),
+            PyValue::Dict(pairs) => !pairs.is_empty(),
+            PyValue::Bytes(b) => !b.is_empty(),
+            PyValue::Obj { .. } => true,
+        }
+    }
+}
+
+/// Python's `bool(d.get(key))`: an absent key is false.
+pub fn truthy(v: Option<&PyValue>) -> bool {
+    v.is_some_and(PyValue::is_truthy)
 }

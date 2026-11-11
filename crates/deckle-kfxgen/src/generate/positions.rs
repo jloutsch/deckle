@@ -1,0 +1,181 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! Where the text's positions fall: `_build_position_data` (`native_generator.py:3290`) and the
+//! `$264`, `$265` and `$550` fragments built from it.
+use std::collections::{BTreeMap, BTreeSet};
+
+use deckle_kfx::fragment::Fragment;
+use deckle_kfx::ion::Value;
+
+use super::text::ChapterData;
+use super::{Generator, place, py, st, sym};
+
+/// `POSITIONS_PER_LOCATION` (:1591), `POSITIONS_PER_PAGE` and `MAX_PAGE_BREAK_ADJUST` (:1638).
+const POSITIONS_PER_LOCATION: i64 = 110;
+const POSITIONS_PER_PAGE: i64 = 1850;
+const MAX_PAGE_BREAK_ADJUST: i64 = 50;
+
+pub(crate) struct PositionData {
+    /// `$265`'s (character offset, position id), in text order, then the end.
+    pub entries_265: Vec<(i64, i64)>,
+    /// `$264`: each section's position ids.
+    pub section_positions_264: Vec<(String, Vec<i64>)>,
+    /// `$550`'s (position id, offset).
+    pub locations: Vec<(i64, i64)>,
+    /// Approximate pages' (position id, offset).
+    pub pages: Vec<(i64, i64)>,
+    /// kfxlib's position count of the largest section.
+    pub max_section_pids: i64,
+}
+
+/// `_build_position_data` (:3290) for entries of text only.
+pub(crate) fn build_position_data(section_names: &[String], data: &ChapterData) -> PositionData {
+    let mut entries = Vec::new();
+    let mut char_offset = 0;
+    // Each section's (position id, length), its own element first.
+    let mut sections: Vec<Vec<(i64, i64)>> = Vec::new();
+    let mut page_texts = BTreeMap::new();
+    for (ch_idx, &(start, end)) in data.chapter_chunk_ranges.iter().enumerate() {
+        let section = data.section_positions[ch_idx];
+        entries.push((char_offset, section));
+        char_offset += 1;
+        let mut located = vec![(section, 1)];
+        for idx in start..end {
+            let (pid, text) = (data.chunk_positions[idx], &data.chunks[idx].text);
+            let length = py::len(text) as i64;
+            page_texts.insert(pid, text.as_str());
+            entries.push((char_offset, pid));
+            char_offset += length;
+            located.push((pid, length));
+        }
+        sections.push(located);
+    }
+    entries.sort_by_key(|e| e.0);
+    let mut seen = BTreeSet::new();
+    entries.retain(|e| seen.insert(e.0));
+    entries.push((char_offset, 0));
+
+    let section_positions_264 = section_names
+        .iter()
+        .zip(&data.chapter_chunk_ranges)
+        .enumerate()
+        .map(|(ch_idx, (name, &(start, end)))| {
+            let mut pids = vec![data.section_positions[ch_idx]];
+            pids.extend_from_slice(&data.chunk_positions[start..end]);
+            (name.clone(), pids)
+        })
+        .collect();
+
+    PositionData {
+        entries_265: entries,
+        section_positions_264,
+        locations: place_locations(&sections),
+        pages: place_pages(&sections, &page_texts),
+        max_section_pids: sections
+            .iter()
+            .map(|s| s.iter().map(|&(_, n)| n.max(0)).sum())
+            .max()
+            .unwrap_or(0),
+    }
+}
+
+/// `place_locations` (:1609): kfxlib's `generate_approximate_locations`.
+fn place_locations(sections: &[Vec<(i64, i64)>]) -> Vec<(i64, i64)> {
+    let mut locations = Vec::new();
+    for entries in sections {
+        let (mut pid, mut next_location) = (0, 0);
+        for &(eid, length) in entries {
+            if length <= 0 {
+                if next_location == pid {
+                    locations.push((eid, 0));
+                    next_location += POSITIONS_PER_LOCATION;
+                }
+                continue;
+            }
+            while next_location < pid + length {
+                locations.push((eid, next_location - pid));
+                next_location += POSITIONS_PER_LOCATION;
+            }
+            pid += length;
+        }
+    }
+    locations
+}
+
+/// `place_pages` (:1642): kfxlib's `determine_approximate_pages`, a page moved back to the
+/// start of its word.
+fn place_pages(sections: &[Vec<(i64, i64)>], texts: &BTreeMap<i64, &str>) -> Vec<(i64, i64)> {
+    let mut pages = Vec::new();
+    for entries in sections {
+        let mut pid = 0;
+        let mut next_page = None;
+        // Not the section's own element.
+        for &(eid, length) in entries.iter().skip(1) {
+            let next_page = next_page.get_or_insert(pid);
+            let text: Vec<char> = texts
+                .get(&eid)
+                .copied()
+                .unwrap_or_default()
+                .chars()
+                .take(length.max(0) as usize)
+                .collect();
+            let mut lowest = 0;
+            loop {
+                let mut offset = (*next_page - pid).max(0);
+                if offset >= length {
+                    break;
+                }
+                if !text.is_empty() && !py::is_space(text[offset as usize]) {
+                    let first = offset;
+                    while offset > 0 && !py::is_space(text[offset as usize - 1]) {
+                        if offset <= lowest {
+                            offset = first;
+                            break;
+                        }
+                        offset -= 1;
+                    }
+                }
+                pages.push((eid, offset));
+                *next_page += POSITIONS_PER_PAGE;
+                lowest = offset + (POSITIONS_PER_PAGE - MAX_PAGE_BREAK_ADJUST).max(1);
+            }
+            pid += length.max(0);
+        }
+    }
+    pages
+}
+
+/// `build_fragment_264` (:3239).
+pub(crate) fn build_fragment_264(g: &mut Generator, sections: &[(String, Vec<i64>)]) -> Fragment {
+    let entries = sections
+        .iter()
+        .map(|(name, pids)| {
+            g.local(name);
+            st([
+                (
+                    "$181",
+                    Value::List(pids.iter().map(|&p| Value::Int(p)).collect()),
+                ),
+                ("$174", sym(name)),
+            ])
+        })
+        .collect();
+    Fragment::root("$264", Value::List(entries))
+}
+
+/// `build_fragment_265` (:3261).
+pub(crate) fn build_fragment_265(entries: &[(i64, i64)]) -> Fragment {
+    let entries = entries
+        .iter()
+        .map(|&(offset, pid)| st([("$184", Value::Int(offset)), ("$185", Value::Int(pid))]))
+        .collect();
+    Fragment::root("$265", Value::List(entries))
+}
+
+/// `$550` (:5119): the locations.
+pub(crate) fn build_fragment_550(locations: &[(i64, i64)]) -> Fragment {
+    let places = locations.iter().map(|&(p, off)| place(p, off)).collect();
+    Fragment::root(
+        "$550",
+        Value::List(vec![st([("$182", Value::List(places))])]),
+    )
+}
