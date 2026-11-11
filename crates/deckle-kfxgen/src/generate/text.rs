@@ -7,20 +7,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::chapters::{Block, Chapter, cut_at_empty_line};
-use super::chunks::{Chunk, InCell, Marker, Node, emit_paragraph, print_book_heading};
+use super::chunks::{Chunk, Marker, emit_paragraph, print_book_heading};
 use super::fragments::{
     ContentRef, build_fragment_145, build_fragment_259, pack_content_fragments, style_refs,
 };
 use super::images::{self, ImageStyles, Images, Picture};
 use super::inline::{self, Anchors, ChunkLinks};
-use super::styles::{Style157, StyleArgs, Styles};
-use super::table_styles::{CellStyle, PartStyle, TableStyle};
+use super::styles::{Style157, Styles};
 use super::title::{
     eat_split_title, heading_near_start, label_blocks, opens_with_title, title_in_table,
     title_runs_in,
 };
 use super::{GenerateError, Generator, py};
-use super::{table_chunks, tables};
+use super::{table_chunks, table_styles, tables};
 
 use GenerateError::Unsupported;
 
@@ -399,30 +398,8 @@ pub(crate) fn build_chapter_content(
         for chunk_idx in start..end {
             let chunk = &chunks[chunk_idx];
             if let Some(marker) = &chunk.marker {
-                // A container's style (:7441); a `close` takes the chapter's, unused.
-                let (style, part) = match marker {
-                    Marker::Open(Node::Table(t)) => {
-                        let table = TableStyle {
-                            border: t.border.clone(),
-                            width: t.width,
-                        };
-                        (
-                            Some(styles.allocate(g, "_tbl", StyleArgs::Table(table))),
-                            None,
-                        )
-                    }
-                    Marker::Open(Node::Cell(cell)) => (
-                        Some(styles.allocate(g, "_td", StyleArgs::Cell(CellStyle::of(cell, fs)))),
-                        None,
-                    ),
-                    Marker::Open(Node::Group(_, Some(border)) | Node::Row(Some(border))) => {
-                        let part = PartStyle {
-                            border: Some(border.clone()),
-                        };
-                        (None, Some(styles.allocate(g, "_tp", StyleArgs::Part(part))))
-                    }
-                    _ => (None, None),
-                };
+                // A `close`, or a row or group drawing no border, takes the chapter's, unused.
+                let (style, part) = table_styles::marker_styles(g, &mut styles, marker, fs);
                 entry_styles.push(style.unwrap_or_else(|| story_names[ch_idx].clone()));
                 entry_parts.push(part);
                 entry_runs.push((None, Vec::new()));
@@ -461,20 +438,9 @@ pub(crate) fn build_chapter_content(
                         story_names[ch_idx].clone()
                     }
                 }
-                // `_block_font_size` with no CSS size: the chapter's. A cell's text takes
-                // its cell's style (:7786); a block in a header cell is bold (#261).
-                _ => match &chunk.in_cell {
-                    Some(InCell::Text(cell)) => {
-                        styles.allocate(g, "_td", StyleArgs::Cell(CellStyle::of(cell, fs)))
-                    }
-                    _ => {
-                        let body = Style157 {
-                            bold: chunk.cell_bold(),
-                            ..Style157::body(fs)
-                        };
-                        styles.allocate(g, "", body)
-                    }
-                },
+                // `_block_font_size` with no CSS size: the chapter's.
+                _ => table_styles::cell_text_style(g, &mut styles, chunk, fs)
+                    .unwrap_or_else(|| styles.allocate(g, "", Style157::body(fs))),
             };
             entry_styles.push(style);
             // kfxgen's chapter heading is bold, and so are the runs in it (#366), as a header

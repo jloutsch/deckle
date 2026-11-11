@@ -5,6 +5,8 @@
 //! :4007), and the table's `$152` columns.
 use deckle_kfx::ion::{Decimal, Struct, Value};
 
+use super::chunks::{Chunk, InCell, Marker, Node};
+use super::styles::{Style157, StyleArgs, Styles};
 use super::table_chunks::CellInfo;
 use super::tables::{Border, ColumnWidths, Pad, Padding};
 use super::{Generator, measure, py, st, sym};
@@ -60,6 +62,61 @@ impl CellStyle {
             background: cell.background,
         }
     }
+}
+
+/// A container's `$157` (:7441), and a row's or group's own for its border (:7556): (the
+/// entry's style, its part style).
+pub(crate) fn marker_styles(
+    g: &mut Generator,
+    styles: &mut Styles,
+    marker: &Marker,
+    font_size: f64,
+) -> (Option<String>, Option<String>) {
+    match marker {
+        Marker::Open(Node::Table(t)) => {
+            let table = TableStyle {
+                border: t.border.clone(),
+                width: t.width,
+            };
+            (
+                Some(styles.allocate(g, "_tbl", StyleArgs::Table(table))),
+                None,
+            )
+        }
+        Marker::Open(Node::Cell(cell)) => {
+            let cell = CellStyle::of(cell, font_size);
+            (Some(styles.allocate(g, "_td", StyleArgs::Cell(cell))), None)
+        }
+        Marker::Open(Node::Group(_, Some(border)) | Node::Row(Some(border))) => {
+            let part = PartStyle {
+                border: Some(border.clone()),
+            };
+            (None, Some(styles.allocate(g, "_tp", StyleArgs::Part(part))))
+        }
+        _ => (None, None),
+    }
+}
+
+/// A text entry's `$157` in a cell, None outside one: a cell's text takes its cell's (:7786);
+/// a block in a cell is a paragraph, bold in a header cell (#261).
+pub(crate) fn cell_text_style(
+    g: &mut Generator,
+    styles: &mut Styles,
+    chunk: &Chunk,
+    font_size: f64,
+) -> Option<String> {
+    Some(match chunk.in_cell.as_ref()? {
+        InCell::Text(cell) => {
+            styles.allocate(g, "_td", StyleArgs::Cell(CellStyle::of(cell, font_size)))
+        }
+        InCell::Paragraph { .. } => {
+            let body = Style157 {
+                bold: chunk.cell_bold(),
+                ..Style157::body(font_size)
+            };
+            styles.allocate(g, "", body)
+        }
+    })
 }
 
 /// `inline_style.ALIGN_MAP` (:934).
