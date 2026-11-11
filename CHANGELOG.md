@@ -10,7 +10,7 @@
 - **A paper's first page reads in order.** Author names stay on one line past their ORCID
   icons, a sidebar of dates beside the authors and abstract is read on its own instead of
   between their lines, and an abstract or author list set in larger type is a paragraph, not a
-  heading.
+  heading. A figure caption set smaller than the text no longer runs on into it.
 - **More displayed equations become pictures.** An equation whose symbols are in a math font
   Deckle didn't know (Advent's, MathTime's) and whose letters are in the text font was
   scrambled into its pieces ("heat = X T Txpct 2 ð Þ cum day"); it's now cut from the page whole.

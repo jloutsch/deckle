@@ -61,13 +61,18 @@ Coordinates are points, origin top left. In order:
    drop cap doesn't take in the lines beside it). Text under 75% of the page's usual size (a
    superscript, a subscript) is placed last and joins the row it sits in, without stretching
    it, so a citation's "53–55" stays in its sentence. Each row is then cut into runs at gaps
-   wider than 1.5 em (a gutter or a table cell), and at gaps over 0.8 em that cross the page's
-   gutter: a position in the middle 40% where at least four rows, and a third of the rows that
-   reach it, have a gap that wide (a journal's gutter can be 1.3 em). A word space is a gap
-   over 0.18 em, or a space the PDF itself has (PDFium's generated spaces have no box, so they
-   ride on the next glyph as `space_before`). A gap holding a small drawing or image no bigger
-   than the text (an ORCID or e-mail icon after an author's name) is a word space, whatever its
-   width. Rotated glyphs are dropped.
+   wider than 1.5 em (a gutter or a table cell), and at the page's gutter when it's tight (a
+   journal's can be 1.3 em): a position in the middle 40% where at least four rows, and a third
+   of the rows that reach it, have a gap there between 0.8 and 3 em. Wider gaps (a list's
+   labels and values, a short last line) don't count; a gutter that wide is step 6's to find. A
+   row is cut there at a gap over 0.8 em and over 85% of the gutter's narrow end (its tenth
+   narrowest gap, in points), so a quad between two names in a line across it isn't cut. A word
+   space is a gap over 0.18 em, or a space the PDF itself has (PDFium's generated spaces have no
+   box, so they ride on the next glyph as `space_before`). A gap filled by small drawings or
+   images no bigger than the text, each within 0.8 em of the next and of the text either side
+   (an ORCID or e-mail icon after an author's name), is a word space, whatever its width; an
+   icon at the end of a column line, with the gutter still to cross, isn't. Rotated glyphs are
+   dropped.
 2. **Running heads and folios.** In the top and bottom 10% of a page, a line is removed when
    it's a page number ("12", "- 12 -", "Page 12", "12 of 40", "xiv") or when the same line, with
    its digits blanked, appears in that margin on at least 40% of pages (and at least two).
@@ -82,9 +87,11 @@ Coordinates are points, origin top left. In order:
    Math, MathTime, Advent's math symbols and the like), merged with their neighbours. Each box
    then takes in the short runs (30 characters or fewer) on its own lines in its column, the
    parts of a displayed equation set in a text font ("T" and its subscript "day", "heat ="), and
-   boxes that come to touch merge. A box needs three mathematical characters (a math font's, or
-   an equals sign); inline math in a sentence stays text, and a lone footnote star or dagger
-   stays text with what it took in.
+   boxes that come to touch merge. The column is step 1's gutter, or else the one step 6 would
+   find from the lines. A box needs three characters of mathematics, each line counted once:
+   every character of its math runs, and the equals signs of the text-font runs it took in.
+   Inline math in a sentence stays text, and a lone footnote star or dagger stays text with what
+   it took in.
 6. **Reading order.** A page has two columns when step 1 found a gutter, or when an empty
    vertical channel in its middle 40% has text on both sides and at most 10% of lines cross it;
    the gutter is the middle of the widest such channel. Anything spanning the gutter (a title, a
@@ -92,17 +99,21 @@ Coordinates are points, origin top left. In order:
    page reads top to bottom. The runs cut from one row keep their order left to right. Narrow
    text set entirely beside a run of spanning items (a paper's sidebar of dates next to its
    authors and abstract) is read as a column of its own: before the run when it's on the left,
-   after it when on the right.
+   after it when on the right. The run goes on only while what waits beside it is beside the
+   next spanning item too: a label under a centred title, above a full-width abstract, isn't a
+   sidebar.
 7. **Paragraphs.** Body size is the size most characters are set in. A paragraph ends at a
    gap over 1.4 times the usual line step, a list item (a bullet, "1.", "(a)"), an indented first
    line, a sentence that ends on a line stopping before three quarters of its column, a change of
-   size, or a bold line followed by a plain one. Across a column or a page it runs on unless
+   size (of heading level, between large sizes, into or out of small type, or by 15% of the body
+   size or more), or a bold line followed by a plain one. Across a column or a page it runs on unless
    the sentence ended. A small line of three characters or fewer with no letters (a stray
    superscript) is dropped.
-8. **Headings.** The three largest sizes at least 15% over the body size are h1–h3; a heading
-   set over two lines that overlap side to side is one heading. Large type running past 150
-   characters (an abstract, a list of authors) is a paragraph, not a heading. A short, bold paragraph that
-   doesn't end a sentence is an h3.
+8. **Headings.** The three largest sizes at least 15% over the body size are h1–h3, counting
+   only sizes with a run of lines short enough for a heading; a heading set over two lines that
+   overlap side to side is one heading. Large type running past 150 characters (an abstract, a
+   list of authors) is a paragraph, not a heading, and its size takes no level from the section
+   heads. A short, bold paragraph that doesn't end a sentence is an h3.
 9. **Hyphens.** A line ending in a hyphen joins the next. The hyphen goes when the PDF marks it
    soft (U+00AD), or when the word continues in lower case and neither of these holds: the
    document uses the hyphenated form mid-line, the first half is a common compound head ("well",
