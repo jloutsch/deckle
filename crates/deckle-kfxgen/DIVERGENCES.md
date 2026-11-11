@@ -59,3 +59,14 @@ The converter writes a run's size flag as `("size", px)`, px an int or float (`c
 `GenerateError::Model` naming the runs. kfxgen raises on most of the rest (a string size, when
 it sorts it among the paragraphs' sizes), but writes a book for some: a bool size, which Python
 counts as 0 or 1, and families that aren't strings, which match no face.
+
+## A font face of another type
+
+`faces_from_rules` (`font_table.py`) makes each face's `css_family` a string, `weight` an int,
+`italic` a bool and `data` bytes, and the converter passes the `FontTable` on unchanged. The
+port reads exactly those; anything else, or an empty `emitted_family` or `location`, is a
+`GenerateError::Model` naming `args.font_table`. kfxgen raises on a string weight
+(`build_fragment_262`, `native_generator.py:2853`), string data (`IonBLOB`) and an empty name
+(kfxlib refuses a symbol of zero length). It writes a book for an `italic` of 1, which Python
+compares equal to True, and for a `css_family` that isn't a string, which no family list
+names, so `FontTable.match` never picks it.
