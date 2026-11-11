@@ -79,8 +79,12 @@ Coordinates are points, origin top left. In order:
    least half of them 30 characters or shorter, aligned with the row above. A table is a
    picture.
 5. **Equations.** Runs set mostly in math fonts (Computer Modern math, Symbol, STIX, Cambria
-   Math and the like), merged with their neighbours, with at least three characters. Inline math
-   in a sentence stays text; a lone footnote star stays text.
+   Math, MathTime, Advent's math symbols and the like), merged with their neighbours. Each box
+   then takes in the short runs (30 characters or fewer) on its own lines in its column, the
+   parts of a displayed equation set in a text font ("T" and its subscript "day", "heat ="), and
+   boxes that come to touch merge. A box needs three mathematical characters (a math font's, or
+   an equals sign); inline math in a sentence stays text, and a lone footnote star or dagger
+   stays text with what it took in.
 6. **Reading order.** A page has two columns when step 1 found a gutter, or when an empty
    vertical channel in its middle 40% has text on both sides and at most 10% of lines cross it;
    the gutter is the middle of the widest such channel. Anything spanning the gutter (a title, a

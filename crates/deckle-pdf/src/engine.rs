@@ -97,7 +97,7 @@ fn math_font(name: &str) -> bool {
     let n = name.to_lowercase();
     [
         "cmmi", "cmsy", "cmex", "msam", "msbm", "math", "symbol", "stix", "euclid", "mt extra",
-        "rsfs", "esint",
+        "rsfs", "esint", "mthsy", "mathpi", "mtsy", "mtmi", "mtex",
     ]
     .iter()
     .any(|m| n.contains(m))

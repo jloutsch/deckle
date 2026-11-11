@@ -295,7 +295,7 @@ pub fn blocks(pages: &[Page]) -> (Vec<Block>, Stats) {
         let mut page_lines = std::mem::take(&mut lines[i]);
         let mut figures = figures_of(page, &mut page_lines, &mut stats);
         figures.extend(tables_of(&mut page_lines, &mut stats));
-        figures.extend(equations_of(&mut page_lines, &mut stats));
+        figures.extend(equations_of(&mut page_lines, channels[i], &mut stats));
         let (items, cols) = reading_order(page, page_lines, figures, channels[i]);
         stats.columns = stats.columns.max(cols);
         flow.push((i, items));
@@ -725,17 +725,25 @@ fn tables_of(lines: &mut Vec<Line>, stats: &mut Stats) -> Vec<(Figure, Rect)> {
 }
 
 /// Runs set mostly in math fonts, merged with their neighbours: a displayed equation.
-fn equations_of(lines: &mut Vec<Line>, stats: &mut Stats) -> Vec<(Figure, Rect)> {
+/// `channel` is the page's column gutter, if [`lines_of`] found one.
+fn equations_of(
+    lines: &mut Vec<Line>,
+    channel: Option<f32>,
+    stats: &mut Stats,
+) -> Vec<(Figure, Rect)> {
     let is_math = |l: &Line| {
         l.math >= 0.3
             || (l.math > 0.0
                 && l.text.chars().filter(|c| c.is_alphabetic()).count() * 2
                     < l.text.chars().count())
     };
-    // Each box with its lines and how many characters they hold.
+    // Each box with its lines and how many of their characters are mathematics: set in a math
+    // font, or an equals sign.
+    let equals = |l: &Line| l.text.chars().filter(|&c| c == '=').count();
     let mut boxes: Vec<(Rect, Vec<usize>, usize)> = Vec::new();
     for (i, l) in lines.iter().enumerate().filter(|(_, l)| is_math(l)) {
-        let n = l.text.chars().filter(|c| !c.is_whitespace()).count();
+        let ink = l.text.chars().filter(|c| !c.is_whitespace()).count();
+        let n = (l.math * ink as f32).round() as usize + equals(l);
         match boxes.iter_mut().find(|b| b.0.near(&l.rect, l.size)) {
             Some(b) => {
                 b.0 = b.0.union(&l.rect);
@@ -745,7 +753,57 @@ fn equations_of(lines: &mut Vec<Line>, stats: &mut Stats) -> Vec<(Figure, Rect)>
             None => boxes.push((l.rect, vec![i], n)),
         }
     }
-    // A lone symbol (a footnote star, a dagger) stays text.
+    // The equation's pieces in a text font ("T" with its subscript "day", "heat =") sit on its
+    // own lines, beside its symbols: short runs mostly inside the box's height, in its column.
+    // A displayed equation has nothing else beside it in its column.
+    let same_column = |b: &Rect, r: &Rect| match channel {
+        Some(c) if b.x1 <= c + 1.0 => r.x1 <= c,
+        Some(c) if b.x0 >= c - 1.0 => r.x0 >= c,
+        _ => true,
+    };
+    loop {
+        let mut grew = false;
+        for b in boxes.iter_mut() {
+            for (i, l) in lines.iter().enumerate() {
+                let r = l.rect;
+                let overlap = r.y1.min(b.0.y1) - r.y0.max(b.0.y0);
+                if b.1.contains(&i)
+                    || is_math(l)
+                    || l.text.chars().count() > 30
+                    || overlap < r.height() * 0.5
+                    || !same_column(&b.0, &r)
+                {
+                    continue;
+                }
+                b.0 = b.0.union(&r);
+                b.1.push(i);
+                b.2 += equals(l);
+                grew = true;
+            }
+        }
+        // Boxes that now touch are one equation.
+        let mut merged: Vec<(Rect, Vec<usize>, usize)> = Vec::new();
+        for b in boxes.drain(..) {
+            match merged.iter_mut().find(|m| m.0.near(&b.0, 0.0)) {
+                Some(m) => {
+                    m.0 = m.0.union(&b.0);
+                    for i in b.1 {
+                        if !m.1.contains(&i) {
+                            m.1.push(i);
+                        }
+                    }
+                    m.2 += b.2;
+                    grew = true;
+                }
+                None => merged.push(b),
+            }
+        }
+        boxes = merged;
+        if !grew {
+            break;
+        }
+    }
+    // A lone symbol (a footnote star, a dagger) stays text, with what it gathered.
     boxes.retain(|b| b.2 >= 3);
     let taken: HashSet<usize> = boxes.iter().flat_map(|b| b.1.iter().copied()).collect();
     let mut i = 0;
@@ -1519,6 +1577,68 @@ mod tests {
         let (b, _) = blocks(&[page(g)]);
         assert!(matches!(&b[0], Block::Heading { text, .. } if text == "A Title"));
         assert!(matches!(&b[1], Block::Para { text, .. } if text.starts_with("An abstract")));
+    }
+
+    /// `s` at `(x, y)` in a math font, `h` tall: a sum sign or a big bracket.
+    fn math_at(glyphs: &mut Vec<Glyph>, x: f32, y: f32, s: &str, h: f32) {
+        for (i, c) in s.chars().enumerate() {
+            glyphs.push(Glyph {
+                c,
+                x0: x + i as f32 * 5.0,
+                y0: y,
+                x1: x + i as f32 * 5.0 + 4.0,
+                y1: y + h,
+                size: 10.0,
+                bold: false,
+                italic: false,
+                math: true,
+                soft_hyphen: false,
+                space_before: false,
+            });
+        }
+    }
+
+    #[test]
+    fn an_equation_in_a_text_font_around_math_symbols_is_one_picture() {
+        let mut g = Vec::new();
+        text_at(&mut g, 72.0, 100.0, "The cumulative heat of an event is:");
+        // heat = Σ ( T - Txpct )   (2), with the sum and brackets in a math font, taller than
+        // a line, so each sits on a row of its own.
+        text_at(&mut g, 100.0, 130.0, "heat =");
+        math_at(&mut g, 135.0, 125.0, "∑(", 17.0);
+        text_at(&mut g, 147.0, 130.0, "T");
+        math_at(&mut g, 155.0, 130.0, "−", 10.0);
+        text_at(&mut g, 162.0, 130.0, "Txpct");
+        math_at(&mut g, 190.0, 125.0, ")", 17.0);
+        math_at(&mut g, 270.0, 125.0, "(", 17.0);
+        text_at(&mut g, 276.0, 130.0, "2");
+        math_at(&mut g, 282.0, 125.0, ")", 17.0);
+        text_at(&mut g, 72.0, 160.0, "summed over the days of the heatwave.");
+        let (b, stats) = blocks(&[page(g)]);
+        assert_eq!(stats.equations, 1);
+        assert_eq!(
+            texts(&b),
+            [
+                "The cumulative heat of an event is:",
+                "[Equation]",
+                "summed over the days of the heatwave."
+            ]
+        );
+    }
+
+    #[test]
+    fn a_lone_math_symbol_does_not_take_the_text_beside_it() {
+        let mut g = Vec::new();
+        text_at(&mut g, 72.0, 100.0, "Ada Lovelace");
+        math_at(&mut g, 160.0, 98.0, "†", 14.0);
+        text_at(&mut g, 200.0, 100.0, "Charles Babbage");
+        let (b, stats) = blocks(&[page(g)]);
+        assert_eq!(stats.equations, 0);
+        let all = texts(&b).join(" ");
+        assert!(
+            all.contains("Ada Lovelace") && all.contains("Charles Babbage"),
+            "{all}"
+        );
     }
 
     #[test]

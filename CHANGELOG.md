@@ -11,6 +11,9 @@
   icons, a sidebar of dates beside the authors and abstract is read on its own instead of
   between their lines, and an abstract or author list set in larger type is a paragraph, not a
   heading.
+- **More displayed equations become pictures.** An equation whose symbols are in a math font
+  Deckle didn't know (Advent's, MathTime's) and whose letters are in the text font was
+  scrambled into its pieces ("heat = X T Txpct 2 ð Þ cum day"); it's now cut from the page whole.
 - **A shorter README.** A section for each of the app's five tabs (the Cookbook and Puzzles had
   none of their own), shorter tables, and the long parts moved to pages of their own:
   [docs/books.md](docs/books.md), [docs/readers.md](docs/readers.md),
