@@ -9,3 +9,11 @@ pub fn path(name: &str) -> PathBuf {
         .join("../../fixtures/mini")
         .join(name)
 }
+
+/// Absolute path of a file in the `fixtures/kfxgen` directory: kfxgen's output, the reference
+/// for the native converter (native KFX design, Oracles).
+pub fn kfxgen(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/kfxgen")
+        .join(name)
+}

@@ -9,6 +9,7 @@ mod cover_rule;
 mod deliver;
 mod devices;
 mod inspect;
+mod kfxgen_cover;
 mod koreader;
 mod koreader_backup;
 mod koreader_plugins;

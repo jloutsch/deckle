@@ -9,6 +9,7 @@ mod fixup_positions;
 mod fixup_structural;
 mod ion_decode;
 mod ion_roundtrip;
+mod kfxgen_input;
 mod kpf_read;
 mod kpf_to_kfx_oracle;
 mod metadata;
