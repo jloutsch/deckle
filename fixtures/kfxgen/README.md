@@ -42,6 +42,16 @@ from kfxgen's `tests/fixtures/golden/inputs.py` under their own names (`minimal`
 | `unicode_text` | `é` composed and decomposed, `漢字`, `😀`, `𝔘`, then an italic span after them |
 | `empty_chapter` | chapter 2 of 3 with no body text |
 
+**Argument path** (`kfxgen_models.py args`): books written as `generate_full_book`'s chapters,
+for run flags the shim can't make (it applies no CSS) on blocks with no CSS (a Calibre-path
+block always has some). The books are `ARG_BOOKS` in that script.
+
+| Fixture | What it holds |
+|---|---|
+| `inline_runs` | a heading's italic and not-bold words; `url:`, unfound, other-capitals and whole-file link targets; a link over a bold word beside more of it; super, sub, text-top, text-bottom, baseline, underline, line-through; ids inside, at and past a paragraph's end |
+| `nested_contents` | a rebuilt contents page at 0.75 with lines at depths 1 and 2 and targets past either end; a heading-only chapter whose ids land in kfxgen's heading; a title over two blocks; a 0.75 chapter with runs and links |
+| `heading_runs` | the book's heading with words after its title: its bold and italic runs and ids in kfxgen's heading, links to them |
+
 **Calibre path** (`ebook-convert` with kfxgen, CSS applied): the source is
 `sources/<name>.epub`. For each, the script also checks that replaying the model gives exactly
 the KFX `ebook-convert` wrote.

@@ -1,0 +1,263 @@
+{
+ "schema": 1,
+ "kfxgen_version": "5.24.0",
+ "kfxgen_commit": "8f55440",
+ "args": {
+  "$dict": [
+   [
+    "title",
+    "heading_runs"
+   ],
+   [
+    "author",
+    "Fixture Author"
+   ],
+   [
+    "chapters",
+    [
+     {
+      "$dict": [
+       [
+        "title",
+        "Opening"
+       ],
+       [
+        "text",
+        "Opening — …\n\nThen a link back."
+       ],
+       [
+        "blocks",
+        [
+         {
+          "$dict": [
+           [
+            "text",
+            "Opening — …"
+           ],
+           [
+            "spans",
+            [
+             {
+              "$tuple": [
+               0,
+               7,
+               {
+                "$frozenset": [
+                 "bold"
+                ]
+               }
+              ]
+             },
+             {
+              "$tuple": [
+               8,
+               3,
+               {
+                "$frozenset": [
+                 "italic"
+                ]
+               }
+              ]
+             }
+            ]
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            false
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": [
+              [
+               "c1.xhtml#a",
+               10
+              ],
+              [
+               "c1.xhtml#z",
+               2
+              ]
+             ]
+            }
+           ],
+           [
+            "anchor_keys",
+            [
+             "c1.xhtml#a",
+             "c1.xhtml#z"
+            ]
+           ]
+          ]
+         },
+         {
+          "$dict": [
+           [
+            "text",
+            "Then a link back."
+           ],
+           [
+            "spans",
+            [
+             {
+              "$tuple": [
+               7,
+               4,
+               {
+                "$frozenset": [
+                 {
+                  "$tuple": [
+                   "link",
+                   "c1.xhtml#a"
+                  ]
+                 }
+                ]
+               }
+              ]
+             },
+             {
+              "$tuple": [
+               12,
+               4,
+               {
+                "$frozenset": [
+                 {
+                  "$tuple": [
+                   "link",
+                   "c1.xhtml#z"
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            false
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": []
+            }
+           ],
+           [
+            "anchor_keys",
+            []
+           ]
+          ]
+         }
+        ]
+       ],
+       [
+        "toc_level",
+        0
+       ]
+      ]
+     }
+    ]
+   ],
+   [
+    "asin",
+    null
+   ],
+   [
+    "cover_image",
+    null
+   ],
+   [
+    "language",
+    "en"
+   ],
+   [
+    "rtl",
+    false
+   ],
+   [
+    "writing_mode",
+    "horizontal-tb"
+   ],
+   [
+    "publisher",
+    "kfxgen"
+   ],
+   [
+    "issue_date",
+    null
+   ],
+   [
+    "authors",
+    null
+   ],
+   [
+    "description",
+    null
+   ],
+   [
+    "images",
+    null
+   ],
+   [
+    "font_table",
+    null
+   ],
+   [
+    "resolved_image_refs",
+    false
+   ],
+   [
+    "display_dims",
+    null
+   ],
+   [
+    "footnote_keys",
+    null
+   ],
+   [
+    "landmarks",
+    null
+   ],
+   [
+    "page_list",
+    null
+   ],
+   [
+    "approximate_pages",
+    true
+   ]
+  ]
+ }
+}

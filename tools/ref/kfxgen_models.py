@@ -4,6 +4,8 @@
     kfxgen_models.py shim <kfxgen> <out>    kfxgen's golden inputs, plus unicode_text and
                                             empty_chapter, through its Calibre-free shim
     kfxgen_models.py synth <dir>            write the synthetic EPUBs (lists, fonts, rtl)
+    kfxgen_models.py args <kfxgen> <out>    books given as the generator's arguments, for
+                                            run flags neither path above can make alone
 
 Each model folder gets model.json, resources/ and expected.kfx: what kfxgen makes from that
 model (native KFX design, Oracles: generator).
@@ -207,11 +209,214 @@ def synth(out):
         print(out / f"{name}.epub")
 
 
+def _block(text, spans=(), keys=(), offsets=None, heading=False, level=None):
+    """A paragraph block as the converter writes one, with no CSS."""
+    block = {
+        "text": text,
+        "spans": list(spans),
+        "block_style": None,
+        "preformatted": False,
+        "anchor_ids": [],
+        "heading": heading,
+        "row": False,
+        "anchor_offsets": dict(offsets or {}),
+        "anchor_keys": list(keys),
+    }
+    if level:
+        block["heading_level"] = level
+    return block
+
+
+def _chapter(title, blocks, **extra):
+    text = "\n\n".join(b["text"] for b in blocks)
+    return {"title": title, "text": text, "blocks": blocks, "toc_level": 0, **extra}
+
+
+def _link(target, *flags):
+    return frozenset({("link", target), *flags})
+
+
+#: Run flags the shim can't make (it applies no CSS), on blocks with no CSS, which a
+#: Calibre-path book always has: each book given as `generate_full_book`'s chapters.
+ARG_BOOKS = {
+    # A book heading's italic and not-bold words; a link leaving the book, one to nothing,
+    # one in other capitals, one to a whole file; a link over a bold word next to more of
+    # the same link; every shift and line; ids inside, at and past a paragraph's end.
+    "inline_runs": [
+        _chapter(
+            "Runs",
+            [
+                _block(
+                    "Runs  with words",
+                    [(0, 4, frozenset({"italic"})), (6, 4, frozenset({"not-bold"}))],
+                    heading=True,
+                    level=1,
+                ),
+                _block(
+                    "See the web and gone and CASE and file here.",
+                    [
+                        (8, 3, _link("url:https://example.com/a")),
+                        (16, 4, _link("missing.xhtml#x")),
+                        (25, 4, _link("C2.XHTML#T")),
+                        (34, 4, _link("c3.xhtml")),
+                        (39, 2, _link("c2.xhtml#t", "bold")),
+                        (41, 3, _link("c2.xhtml#t")),
+                    ],
+                    keys=["c1.xhtml"],
+                    offsets={"c1.xhtml": 0},
+                ),
+                _block(
+                    "Up down top bottom under strike.",
+                    [
+                        (0, 2, frozenset({"super", "bold"})),
+                        (3, 4, frozenset({"sub", "italic"})),
+                        (8, 3, frozenset({"text-top"})),
+                        (12, 6, frozenset({"text-bottom", "underline"})),
+                        (19, 5, frozenset({"underline"})),
+                        (25, 6, frozenset({"line-through", "baseline"})),
+                    ],
+                ),
+            ],
+        ),
+        _chapter(
+            "Two",
+            [
+                _block("Two"),
+                _block(
+                    "Target sentence with a marker at the end of it.",
+                    keys=["c2.xhtml#t", "c2.xhtml#far"],
+                    offsets={"c2.xhtml#t": 47, "c2.xhtml#far": 900},
+                ),
+            ],
+        ),
+        _chapter(
+            "Three",
+            [
+                _block("Three", keys=["c3.xhtml"], heading=True, level=2),
+                _block(
+                    "  Indented start, bold here.",
+                    [(23, 4, frozenset({"bold"}))],
+                    keys=["c3.xhtml#m"],
+                    offsets={"c3.xhtml#m": 3},
+                ),
+            ],
+        ),
+    ],
+    # A contents page at 0.75 with nested lines and targets past either end; a chapter whose
+    # first words are its title; a heading-only chapter whose ids land in kfxgen's heading;
+    # a title spelled over two blocks; a smaller chapter with runs and links back.
+    "nested_contents": [
+        {
+            "title": "Contents",
+            "text": "Contents",
+            "toc_level": 0,
+            "toc_links": [
+                {"text": "Opening words", "target_chapter_idx": 1, "level": 0},
+                {"text": "Only", "target_chapter_idx": 2, "level": 1},
+                {"text": "Split", "target_chapter_idx": 3, "level": 2},
+                {"text": "Last", "target_chapter_idx": -1, "level": 0},
+                {"text": "Far", "target_chapter_idx": 99, "level": 0},
+            ],
+            "font_size": 0.75,
+            "anchor_keys": ["toc.xhtml"],
+        },
+        _chapter(
+            "Opening",
+            [
+                _block(
+                    "Opening words go on, then a link back.",
+                    [(9, 5, frozenset({"italic"})), (34, 4, _link("c4.xhtml#only"))],
+                    keys=["c1.xhtml#a"],
+                    offsets={"c1.xhtml#a": 20},
+                )
+            ],
+        ),
+        _chapter(
+            "Only Heading",
+            [
+                _block(
+                    "  Only Heading",
+                    [(2, 4, frozenset({"bold"}))],
+                    keys=["c2.xhtml#h", "c2.xhtml"],
+                    offsets={"c2.xhtml#h": 9},
+                    heading=True,
+                    level=1,
+                )
+            ],
+        ),
+        _chapter(
+            "3 Split Title",
+            [
+                _block("3", keys=["c3.xhtml#n"]),
+                _block("Split Title", keys=["c3.xhtml#t"]),
+                _block("Body after the split title.", [(0, 4, _link("c1.xhtml#a"))]),
+            ],
+        ),
+        _chapter(
+            "Smaller",
+            [
+                _block("Smaller"),
+                _block(
+                    "Text at a smaller size with italic.", [(29, 6, frozenset({"italic"}))]
+                ),
+                _block(
+                    "Links: here.",
+                    [(7, 4, _link("c3.xhtml#n")), (0, 5, _link("c2.xhtml#h"))],
+                    keys=["c4.xhtml#only"],
+                    offsets={"c4.xhtml#only": 3},
+                ),
+            ],
+            font_size=0.75,
+        ),
+    ],
+    # The book's heading is its title with words after it: its runs and ids print in
+    # kfxgen's heading, and links land there.
+    "heading_runs": [
+        _chapter(
+            "Opening",
+            [
+                _block(
+                    "Opening \u2014 \u2026",
+                    [(0, 7, frozenset({"bold"})), (8, 3, frozenset({"italic"}))],
+                    keys=["c1.xhtml#a", "c1.xhtml#z"],
+                    offsets={"c1.xhtml#a": 10, "c1.xhtml#z": 2},
+                ),
+                _block(
+                    "Then a link back.",
+                    [(7, 4, _link("c1.xhtml#a")), (12, 4, _link("c1.xhtml#z"))],
+                ),
+            ],
+        )
+    ],
+}
+
+
+def args(kfxgen, out):
+    sys.path[:0] = [str(kfxgen / "plugin"), str(kfxgen)]
+    from kfxgen import model_dump
+    from kfxgen.native_generator import NativeKFXGenerator
+
+    for name, chapters in ARG_BOOKS.items():
+        model = out / name
+        os.environ["KFXGEN_DUMP_MODEL"] = str(model)
+        kfx = NativeKFXGenerator().generate_full_book(
+            title=name, author="Fixture Author", chapters=chapters, approximate_pages=True
+        )
+        del os.environ["KFXGEN_DUMP_MODEL"]
+        replay = NativeKFXGenerator().generate_full_book(**model_dump.load(model))
+        if replay != kfx:
+            sys.exit(f"{name}: the replayed model makes different bytes")
+        (model / "expected.kfx").write_bytes(replay)
+        print(f"args {name}: {len(replay)} bytes")
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "shim" and len(sys.argv) == 4:
         shim(Path(sys.argv[2]).resolve(), Path(sys.argv[3]).resolve())
     elif cmd == "synth" and len(sys.argv) == 3:
         synth(Path(sys.argv[2]).resolve())
+    elif cmd == "args" and len(sys.argv) == 4:
+        args(Path(sys.argv[2]).resolve(), Path(sys.argv[3]).resolve())
     else:
         sys.exit(__doc__)

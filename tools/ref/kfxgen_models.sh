@@ -72,6 +72,7 @@ fi
 rm -rf "$OUT"
 mkdir -p "$OUT" "$SOURCES"
 "$PY" "$ROOT/tools/ref/kfxgen_models.py" shim "$KFXGEN" "$OUT"
+"$PY" "$ROOT/tools/ref/kfxgen_models.py" args "$KFXGEN" "$OUT"
 
 # Calibre-path fixtures, one per feature (fixtures/kfxgen/README.md). Sources from kfxgen's
 # test_books/ are copied in when that folder has them; otherwise the committed copy is used.

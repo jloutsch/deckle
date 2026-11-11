@@ -21,6 +21,22 @@ fn marker_offsets_matches_kfxgen() {
     matches_kfxgen("marker_offsets");
 }
 
+/// Run flags, link targets and ids no shim or Calibre-path fixture reaches.
+#[test]
+fn inline_runs_matches_kfxgen() {
+    matches_kfxgen("inline_runs");
+}
+
+#[test]
+fn nested_contents_matches_kfxgen() {
+    matches_kfxgen("nested_contents");
+}
+
+#[test]
+fn heading_runs_matches_kfxgen() {
+    matches_kfxgen("heading_runs");
+}
+
 #[test]
 #[ignore = "a table, block styles and margins, sized and monospace runs, ruby: Tasks 8 to 12"]
 fn links_matches_kfxgen() {
