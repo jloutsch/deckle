@@ -149,9 +149,22 @@ pub(crate) fn decimal(text: &str) -> Decimal {
         None => (text, 0),
     };
     let (int, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-    Decimal {
+    written(Decimal {
         coefficient: format!("{int}{frac}").parse().unwrap_or(0),
         exponent: exponent - frac.len() as i32,
+    })
+}
+
+/// A decimal as kfxlib writes it: any zero, `0.0` too, as an empty decimal, which is 0
+/// (`IonBinary.serialize_decimal_value`); deckle-kfx writes that only for a zero exponent.
+fn written(d: Decimal) -> Decimal {
+    if d.coefficient == 0 {
+        Decimal {
+            coefficient: 0,
+            exponent: 0,
+        }
+    } else {
+        d
     }
 }
 
@@ -174,10 +187,10 @@ pub(crate) fn checked_decimal(text: &str) -> Option<Decimal> {
     {
         return None;
     }
-    Some(Decimal {
+    Some(written(Decimal {
         coefficient: format!("{int}{frac}").parse().ok()?,
         exponent: exponent.checked_sub(i32::try_from(frac.len()).ok()?)?,
-    })
+    }))
 }
 
 /// `f"{x:.{precision}g}"`: `precision` significant digits, no trailing zeros, an exponent
