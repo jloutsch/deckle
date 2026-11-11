@@ -354,6 +354,7 @@ pub(crate) fn build_chapter_content(
         &mut content_pos_id,
         CONTENT_POS_STEP,
     );
+    writing::number_tcy(&mut chunks, &mut content_pos_id, CONTENT_POS_STEP);
     let sizes = Sizes::of(&chunks);
     for (ch_idx, &(start, end)) in chapter_chunk_ranges.iter().enumerate() {
         let fs = chapters[ch_idx].font_size;
@@ -663,6 +664,7 @@ pub(crate) fn build_chapter_content(
         g.push(Fragment::new("$157", Some(&name), value));
         extra_style_names.push(name);
     }
+    writing::build_tcy_fragments(g, &mut extra_style_names, &mut content_names);
 
     Ok(ChapterData {
         chunks,

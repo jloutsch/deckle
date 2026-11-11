@@ -8,8 +8,9 @@ use std::sync::LazyLock;
 use deckle_kfx::ion::Value;
 use regex::{Captures, Regex};
 
-use super::chunks::Chunk;
+use super::chunks::{AmongWords, Chunk};
 use super::images::{Dims, Images, SIZE_HINT};
+use super::writing;
 use super::{GenerateError, Generator, measure, model_err, py, st, sym};
 
 use GenerateError::Unsupported;
@@ -375,22 +376,26 @@ impl InlineStyles {
         ]))
     }
 
-    /// A text entry's `$146` (:4400): its words, each picture among them in its place.
+    /// A text entry's `$146` (:4400): its words, each picture and 縦中横 among them in its
+    /// place.
     pub(crate) fn mixed(
         &mut self,
         g: &mut Generator,
-        text: &str,
-        pictures: &[InlinePicture],
+        chunk: &Chunk,
     ) -> Result<Value, GenerateError> {
+        let text = &chunk.text;
         let mut out = Vec::new();
         let mut last = 0;
-        for p in pictures {
-            let k = p.at as usize;
+        for item in chunk.among_words() {
+            let k = item.at() as usize;
             let words = py::take(py::skip(text, last), k.saturating_sub(last));
             if !words.is_empty() {
                 out.push(Value::string(words));
             }
-            out.push(self.entry(g, p)?);
+            out.push(match item {
+                AmongWords::Picture(p) => self.entry(g, p)?,
+                AmongWords::Tcy(t) => writing::tcy_entry(g, t),
+            });
             last = k + 1;
         }
         let words = py::skip(text, last);
@@ -406,35 +411,40 @@ impl InlineStyles {
     }
 }
 
-/// The positions of a text entry holding pictures (:3383): its words around each picture, a
-/// position at each picture's id, and the entry's again after it. Pushes `$265`'s (offset,
-/// id, offset into the entry, kept beside another at its offset) and the section's (id,
-/// length, offset into the entry).
+/// The positions of a text entry holding pictures or 縦中横 (:3383): its words around each,
+/// positions at each one's id, as many as it is wide, and the entry's again after it.
+/// Pushes `$265`'s (offset, id, offset into the entry, kept beside another at its offset) and
+/// the section's (id, length, offset into the entry). Returns the offsets taken beyond its
+/// text's, a 縦中横's characters but the first.
 pub(crate) fn place(
     chunk: &Chunk,
     pos: i64,
     char_offset: i64,
     entries: &mut Vec<(i64, i64, i64, bool)>,
     located: &mut Vec<(i64, i64, i64)>,
-) {
+) -> i64 {
     let len = py::len(&chunk.text) as i64;
-    let mut done = 0;
-    for p in &chunk.pictures {
-        let base = char_offset + p.at;
-        located.push((pos, p.at - done, done));
-        if p.at > done {
-            // The paragraph reaches the picture here; right after another, where that one's
+    let (mut done, mut extra) = (0, 0);
+    for item in chunk.among_words() {
+        let k = item.at();
+        let base = char_offset + k + extra;
+        located.push((pos, k - done, done));
+        if k > done {
+            // The paragraph reaches the item here; right after another, where that one's
             // resumes it.
-            entries.push((base, pos, p.at, true));
+            entries.push((base, pos, k, true));
         }
-        entries.push((base, p.eid, 0, true));
-        located.push((p.eid, 1, 0));
-        done = p.at + 1;
+        entries.push((base, item.eid(), 0, true));
+        located.push((item.eid(), item.width(), 0));
+        let at = base + item.width();
+        done = k + 1;
         if done < len {
-            entries.push((base + 1, pos, done, true));
+            entries.push((at, pos, done, true));
         }
+        extra += at - base - 1;
     }
     if done < len {
         located.push((pos, len - done, done));
     }
+    extra
 }

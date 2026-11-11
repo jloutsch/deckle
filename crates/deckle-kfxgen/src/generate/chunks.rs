@@ -12,7 +12,7 @@ use super::inline_pictures;
 use super::styles::LINE_EM;
 use super::table_chunks::{CellInfo, TableOpen};
 use super::tables::Border;
-use super::writing::Bidi;
+use super::writing::{Bidi, Tcy};
 use super::{GenerateError, frames, py};
 
 /// `_ASCII_SPACE` (:1061): a paragraph's edges are trimmed of these only.
@@ -28,6 +28,8 @@ pub(crate) struct Chunk {
     pub picture: Option<Picture>,
     /// The pictures among a text entry's words, each one U+FFFC of its text (#529).
     pub pictures: Vec<InlinePicture>,
+    /// Its 縦中横, each one placeholder of its text (#247).
+    pub tcys: Vec<Tcy>,
     pub rule: Option<RuleStyle>,
     pub marker: Option<Marker>,
     /// A text entry in a table cell.
@@ -60,6 +62,36 @@ pub(crate) enum Node {
     Link(String),
 }
 
+/// An entry among a paragraph's words.
+pub(crate) enum AmongWords<'a> {
+    Picture(&'a InlinePicture),
+    Tcy(&'a Tcy),
+}
+
+impl AmongWords<'_> {
+    pub(crate) fn at(&self) -> i64 {
+        match self {
+            AmongWords::Picture(p) => p.at,
+            AmongWords::Tcy(t) => t.at,
+        }
+    }
+
+    pub(crate) fn eid(&self) -> i64 {
+        match self {
+            AmongWords::Picture(p) => p.eid,
+            AmongWords::Tcy(t) => t.eid,
+        }
+    }
+
+    /// `_item_widths` (:1592): a picture takes a position, 縦中横 one per character.
+    pub(crate) fn width(&self) -> i64 {
+        match self {
+            AmongWords::Picture(_) => 1,
+            AmongWords::Tcy(t) => py::len(&t.text) as i64,
+        }
+    }
+}
+
 pub(crate) enum InCell {
     /// A cell's own text: the chunk's `cell` (:6201).
     Text(CellInfo),
@@ -76,6 +108,7 @@ impl Chunk {
             anchors: Anchors::default(),
             picture: None,
             pictures: Vec::new(),
+            tcys: Vec::new(),
             rule: None,
             marker: None,
             in_cell: None,
@@ -101,6 +134,15 @@ impl Chunk {
     /// Not a container's marker: what `_emitted_content` (:5940) counts, ids can go on.
     pub(crate) fn is_content(&self) -> bool {
         self.marker.is_none()
+    }
+
+    /// The pictures and 縦中横 among its words, in their order (:7879).
+    pub(crate) fn among_words(&self) -> Vec<AmongWords<'_>> {
+        let mut items: Vec<AmongWords> = self.pictures.iter().map(AmongWords::Picture).collect();
+        items.extend(self.tcys.iter().map(AmongWords::Tcy));
+        // Stable, as Python's sort: a picture before a 縦中横 at the same place.
+        items.sort_by_key(AmongWords::at);
+        items
     }
 
     /// Bold on its own, as a header cell is (:7809).

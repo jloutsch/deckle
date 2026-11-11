@@ -17,7 +17,7 @@ use super::writing;
 use super::{GenerateError, Generator, measure, py, st, sym};
 
 /// `MAX_CONTENT_FRAGMENT_SIZE` (:1585).
-const MAX_CONTENT_FRAGMENT_SIZE: usize = 8192;
+pub(crate) const MAX_CONTENT_FRAGMENT_SIZE: usize = 8192;
 
 /// `build_fragment_145` (:3545).
 pub(crate) fn build_fragment_145(g: &mut Generator, strings: Vec<String>, name: &str) -> Fragment {
@@ -207,8 +207,9 @@ pub(crate) fn build_fragment_259(
             if popups.positions.contains(&position) {
                 entry.insert("$615", sym("$281"));
             }
-            if !chunk.pictures.is_empty() {
-                let mixed = inline_styles.mixed(g, &chunk.text, &chunk.pictures)?;
+            if !chunk.pictures.is_empty() || !chunk.tcys.is_empty() {
+                let mixed = inline_styles.mixed(g, chunk)?;
+                entry.remove("$145");
                 entry.insert("$146", mixed);
             }
             let (link, runs) = &runs[i];

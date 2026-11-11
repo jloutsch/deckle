@@ -69,6 +69,8 @@ pub struct Generator {
     pub(crate) symtab: SymbolTable,
     /// `self.font_table`: the book's embedded faces.
     pub(crate) fonts: fonts::FontTable,
+    /// `self._math_strings` and `self._wrote_tcy`: 縦中横's texts and whether one was written.
+    pub(crate) tcy: writing::TcyNotes,
 }
 
 impl Generator {
@@ -82,6 +84,7 @@ impl Generator {
             fragments: FragmentList::new(),
             symtab,
             fonts: fonts::FontTable::default(),
+            tcy: writing::TcyNotes::default(),
         }
     }
 

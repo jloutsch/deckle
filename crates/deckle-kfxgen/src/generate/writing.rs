@@ -2,11 +2,14 @@
 //! Writing direction and language: a block's, a container's and an inline element's
 //! direction, unicode-bidi and language as Kindle Previewer 4.0.3 writes them in `$157`
 //! (#246, #605, #710, #714), and the runs an inline element's direction lays out
-//! (`_direction_layers`, `native_generator.py:402`); ruby (#236).
+//! (`_direction_layers`, `native_generator.py:402`); ruby (#236); vertical text, and
+//! characters set across its lines, 縦中横 (#247).
 use deckle_kfx::fragment::Fragment;
 use deckle_kfx::ion::{Struct, Value};
 
 use super::chapters::Block;
+use super::chunks::Chunk;
+use super::fragments::{MAX_CONTENT_FRAGMENT_SIZE, build_fragment_145};
 use super::inline::{Flag, Flags, Run, Span, title_spans};
 use super::{GenerateError, Generator, measure, model_err, py, st, sym};
 use crate::pyvalue::PyValue;
@@ -372,15 +375,16 @@ fn ruby_of(flags: &Flags) -> Option<(i64, &str)> {
     })
 }
 
-/// `without_ruby`: a run's flags less its ruby, which is written as an event of its own.
-pub(crate) fn without_ruby(spans: &[Span]) -> Vec<Span> {
+/// `without_tcy(without_ruby(...))` (:7889): a run's flags less its ruby, written as an event
+/// of its own, and its 縦中横, written as an entry.
+pub(crate) fn without_ruby_or_tcy(spans: &[Span]) -> Vec<Span> {
     spans
         .iter()
         .map(|sp| Span {
             flags: sp
                 .flags
                 .iter()
-                .filter(|f| !matches!(f, Flag::Ruby(..)))
+                .filter(|f| !matches!(f, Flag::Ruby(..) | Flag::Tcy(..)))
                 .cloned()
                 .collect(),
             ..sp.clone()
@@ -596,5 +600,119 @@ pub(crate) fn rotate_margins(v: &mut Struct) {
         .collect();
     for (key, value) in moved {
         v.insert(key, value);
+    }
+}
+
+/// `make_tcy_flag`'s `("tcy", (serial, text))` (#247).
+pub(crate) fn read_tcy_flag(v: &PyValue, at: &str) -> Result<Flag, GenerateError> {
+    match v.as_list() {
+        Some([PyValue::Int(serial), PyValue::Str(text)]) => Ok(Flag::Tcy(*serial, text.clone())),
+        _ => Err(model_err(format!("{at}: a tate-chu-yoko, (serial, text)"))),
+    }
+}
+
+/// 縦中横 in a paragraph's words (#247): where its placeholder is, its id and its text.
+pub(crate) struct Tcy {
+    pub at: i64,
+    pub eid: i64,
+    pub text: String,
+}
+
+/// Each chunk's 縦中横 (:6675, :7870): an id of its own per (chunk, serial) after the rubies'
+/// ids, an item per run carrying one.
+pub(crate) fn number_tcy(chunks: &mut [Chunk], next_eid: &mut i64, step: i64) {
+    for chunk in chunks {
+        let mut eids: Vec<(i64, i64)> = Vec::new();
+        for sp in &chunk.spans {
+            let Some((serial, text)) = sp.flags.iter().find_map(|f| match f {
+                Flag::Tcy(serial, text) => Some((*serial, text)),
+                _ => None,
+            }) else {
+                continue;
+            };
+            let eid = match eids.iter().find(|(s, _)| *s == serial) {
+                Some(&(_, eid)) => eid,
+                None => {
+                    eids.push((serial, *next_eid));
+                    *next_eid += step;
+                    *next_eid - step
+                }
+            };
+            chunk.tcys.push(Tcy {
+                at: sp.start,
+                eid,
+                text: text.clone(),
+            });
+        }
+    }
+}
+
+/// `TCY_STYLE_NAME` (:2398).
+const TCY_STYLE_NAME: &str = "tcy0";
+
+/// The equations' texts and 縦中横's, in `content_math` fragments (:2380); whether a 縦中横
+/// was written.
+#[derive(Default)]
+pub(crate) struct TcyNotes {
+    groups: Vec<(String, Vec<String>)>,
+    wrote: bool,
+}
+
+/// `_math_note` (:2380): a content reference to `text`. A fragment takes strings until it
+/// holds `MAX_CONTENT_FRAGMENT_SIZE` bytes, which leaves out its last string.
+fn math_note(g: &mut Generator, text: &str) -> Value {
+    let full = g.tcy.groups.last().is_none_or(|(_, strings)| {
+        strings.iter().map(String::len).sum::<usize>() >= MAX_CONTENT_FRAGMENT_SIZE
+    });
+    if full {
+        let name = format!("content_math{}", g.tcy.groups.len() + 1);
+        g.local(&name);
+        g.tcy.groups.push((name, Vec::new()));
+    }
+    let (name, strings) = g.tcy.groups.last_mut().expect("a group was just made");
+    strings.push(text.to_owned());
+    st([
+        ("$4", sym(name)),
+        ("$403", Value::Int(strings.len() as i64 - 1)),
+    ])
+}
+
+/// `_tcy_entry` (:2400): an inline container of the paragraph holding the characters, as
+/// Kindle Previewer 4.0.3 writes each `text-combine-upright: all` element.
+pub(crate) fn tcy_entry(g: &mut Generator, tcy: &Tcy) -> Value {
+    g.tcy.wrote = true;
+    g.local(TCY_STYLE_NAME);
+    let note = math_note(g, &tcy.text);
+    st([
+        ("$155", Value::Int(tcy.eid)),
+        ("$601", sym("$283")),
+        ("$157", sym(TCY_STYLE_NAME)),
+        ("$159", sym("$269")),
+        ("$145", note),
+    ])
+}
+
+/// 縦中横's style (:8138), once one is written: horizontal in the vertical line, combined
+/// upright, at the width of its characters. Then the texts' `$145` fragments (:8176), named
+/// in the order they were made.
+pub(crate) fn build_tcy_fragments(
+    g: &mut Generator,
+    extra_style_names: &mut Vec<String>,
+    content_names: &mut Vec<String>,
+) {
+    if g.tcy.wrote {
+        let value = st([
+            ("$560", sym("$557")),
+            ("$707", sym("$573")),
+            ("$708", sym("$383")),
+            ("$173", sym(TCY_STYLE_NAME)),
+        ]);
+        g.push(Fragment::new("$157", Some(TCY_STYLE_NAME), value));
+        extra_style_names.push(TCY_STYLE_NAME.to_owned());
+    }
+    for (name, strings) in std::mem::take(&mut g.tcy.groups) {
+        let f = build_fragment_145(g, strings, &name);
+        g.push(f);
+        content_names.push(name);
     }
 }

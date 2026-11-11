@@ -103,10 +103,12 @@ The converter writes a ruby as `("ruby", (serial, reading))`, an int and a strin
 and writes a reading of another type as that Ion type. A run under two rubies is
 `GenerateError::Unsupported`: kfxgen would take the first in set order.
 
-## Text orientation and emphasis marks of another shape
+## Vertical-text run flags of another shape
 
 The converter writes a run's text-orientation and emphasis marks as `("orientation", value)`
-and `("emphasis-marks", value)`, the value a string (`inline_style.py:547`, :550). The port
-reads exactly that; any other value is a `GenerateError::Model` naming the runs, where kfxgen
-writes nothing for it but keeps the run's style apart. A run carrying two of either is
+and `("emphasis-marks", value)`, the value a string (`inline_style.py:547`, :550), and 縦中横
+as `("tcy", (serial, text))`, an int and a string (`make_tcy_flag`, :378). The port reads
+exactly those; anything else is a `GenerateError::Model` naming the runs, where kfxgen writes
+nothing for an orientation or mark of another type but keeps the run's style apart, and raises
+on most 縦中横 it can't unpack. A run carrying two of one kind is
 `GenerateError::Unsupported`: kfxgen would take the first in set order.

@@ -11,7 +11,9 @@ use super::block_styles::{Sizes, number};
 use super::fonts::FontTable;
 use super::notes::Popups;
 use super::styles::{Style157, StyleArgs, Styles};
-use super::writing::{Bidi, direction_layers, read_bidi_flag, read_ruby_flag, without_ruby};
+use super::writing::{
+    Bidi, direction_layers, read_bidi_flag, read_ruby_flag, read_tcy_flag, without_ruby_or_tcy,
+};
 use super::{GenerateError, Generator, model_err, py, st, sym};
 use crate::pyvalue::{PyValue, truthy};
 
@@ -53,6 +55,9 @@ pub(crate) enum Flag {
     Orientation(String),
     /// `EMPHASIS_MARKS_FLAG` (#247): text-emphasis-style, marks beside vertical text.
     EmphasisMarks(String),
+    /// `make_tcy_flag` (#247): characters set across a vertical line, as (serial, text), on
+    /// the one placeholder character they take.
+    Tcy(i64, String),
 }
 
 /// A size in CSS px, ordered by `total_cmp` so a run's flags can be a set; read with no sign
@@ -128,7 +133,7 @@ fn flag_of(f: &PyValue, at: &str) -> Result<Flag, GenerateError> {
         PyValue::Tuple(kv) if kv.len() == 2 => match (kv[0].as_str(), &kv[1]) {
             (Some("link"), PyValue::Str(target)) => Flag::Link(target.clone()),
             (Some("ruby"), v) => read_ruby_flag(v, &format!("{at}.spans"))?,
-            (Some("tcy"), _) => return Err(Unsupported("tate-chu-yoko")),
+            (Some("tcy"), v) => read_tcy_flag(v, &format!("{at}.spans"))?,
             (Some("bidi"), v) => read_bidi_flag(v, &format!("{at}.spans"))?,
             (Some("lang"), PyValue::Str(lang)) => Flag::Lang(lang.clone()),
             (Some("lang"), _) => {
@@ -220,6 +225,9 @@ pub(crate) fn read_spans(v: Option<&PyValue>, at: &str) -> Result<Vec<Span>, Gen
         }
         if count(|f| matches!(f, Flag::Ruby(..))) > 1 {
             return Err(Unsupported("a run under two rubies"));
+        }
+        if count(|f| matches!(f, Flag::Tcy(..))) > 1 {
+            return Err(Unsupported("a run of two tate-chu-yoko"));
         }
         if count(|f| matches!(f, Flag::Orientation(_))) > 1
             || count(|f| matches!(f, Flag::EmphasisMarks(_))) > 1
@@ -638,7 +646,7 @@ pub(crate) fn entry_runs(
     popups: &Popups,
 ) -> Vec<Run> {
     let mut runs = Vec::new();
-    for mut layer in direction_layers(&without_ruby(spans)) {
+    for mut layer in direction_layers(&without_ruby_or_tcy(spans)) {
         // A run layered on others starts from their weight, slant and font (#715).
         let (mut run_b, mut run_i, mut run_fam) = (base.bold, base.italic, base.family);
         let under = std::mem::take(&mut layer.under);

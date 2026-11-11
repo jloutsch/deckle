@@ -51,7 +51,6 @@ fn vertical_contents_matches_kfxgen() {
 /// kfxgen's `test_books/tcy_emphasis_748/s748k.epub`: tate-chu-yoko, bold and in bold, and
 /// emphasis marks of four kinds, one the book's own, in a vertical-rl book (#247).
 #[test]
-#[ignore = "tate-chu-yoko, the next commit"]
 fn ruby_tcy_matches_kfxgen() {
     matches_kfxgen("ruby_tcy");
 }
@@ -171,4 +170,45 @@ fn a_ruby_of_another_shape_is_a_model_error() {
         with_flags(vec![ruby(0), ruby(1)]),
         Err(GenerateError::Unsupported("a run under two rubies"))
     ));
+}
+
+/// 縦中横, a text-orientation or emphasis marks kfxgen can't unpack are model errors naming
+/// the runs; two of one kind on a run are unsupported: kfxgen would take the first in set
+/// order.
+#[test]
+fn vertical_run_flags_of_another_shape_are_model_errors() {
+    for flag in [
+        pair("tcy", s("12")),
+        pair(
+            "tcy",
+            PyValue::Tuple(vec![PyValue::Int(0), PyValue::Int(12)]),
+        ),
+        pair("orientation", PyValue::Int(1)),
+        pair("emphasis-marks", PyValue::None),
+    ] {
+        match with_flags(vec![flag.clone()]) {
+            Err(GenerateError::Model(m)) => assert!(m.contains(".spans"), "{flag:?}: {m}"),
+            other => panic!("{flag:?}: {other:?}"),
+        }
+    }
+    let tcy = |n: i64| pair("tcy", PyValue::Tuple(vec![PyValue::Int(n), s("12")]));
+    for flags in [
+        vec![tcy(0), tcy(1)],
+        vec![
+            pair("orientation", s("upright")),
+            pair("orientation", s("mixed")),
+        ],
+        vec![
+            pair("emphasis-marks", s("filled")),
+            pair("emphasis-marks", s("open")),
+        ],
+    ] {
+        assert!(
+            matches!(
+                with_flags(flags.clone()),
+                Err(GenerateError::Unsupported(_))
+            ),
+            "{flags:?}"
+        );
+    }
 }
