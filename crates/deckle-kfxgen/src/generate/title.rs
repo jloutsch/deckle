@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Whether and how a chapter's title is already in its text: kfxgen's heading takes the title's
 //! place, so the text and blocks are cut of it (`_normalize_title` :827 and its callers).
-use super::boxes::{drop_edge_rules, unboxed};
+use super::boxes::{Line, box_title_lines, drop_box_lines, drop_edge_rules, unboxed};
 use super::chapters::Block;
-use super::{GenerateError, py, tables};
-
-use GenerateError::Unsupported;
+use super::{py, tables};
 
 /// `_MAX_SPLIT_TITLE_BLOCKS` (:824).
 pub(crate) const MAX_SPLIT_TITLE_BLOCKS: usize = 3;
@@ -107,61 +105,83 @@ pub(crate) type Eaten = (Vec<Block>, Vec<String>);
 
 /// `_eat_split_title` (:1524): the blocks less the leading ones that make up `title`, and
 /// their ids; None when they don't. A table counts one block per row with text, and one
-/// partly eaten keeps its other rows (#64, #219). A box's lines (#238) are not ported.
-pub(crate) fn eat_split_title(
-    blocks: &[Block],
-    title: &str,
-) -> Result<Option<Eaten>, GenerateError> {
-    // (block, its row, the text)
-    let mut entries: Vec<(usize, Option<usize>, String)> = Vec::new();
+/// partly eaten keeps its other rows (#64, #219); a box one per line it opens with, through
+/// a box it opens with, never into a table (#238, #310).
+pub(crate) fn eat_split_title(blocks: &[Block], title: &str) -> Option<Eaten> {
+    // (block, the line in it: a row of a table, a box's line, the text)
+    let mut entries: Vec<(usize, Line, String)> = Vec::new();
     for (i, b) in blocks.iter().enumerate() {
         if entries.len() >= MAX_SPLIT_TITLE_BLOCKS {
             break;
         }
-        if b.boxed.is_some() {
-            return Err(Unsupported("a title split over a box's lines"));
+        if let Some(bx) = &b.boxed {
+            let (lines, whole) = box_title_lines(bx, &[]);
+            entries.extend(
+                lines
+                    .into_iter()
+                    .map(|(path, row, text)| (i, Line::Boxed(path, row), text)),
+            );
+            if !whole {
+                break;
+            }
+            continue;
         }
         match &b.table {
             Some(t) => entries.extend(
                 tables::source_order(&t.rows)
                     .into_iter()
-                    .map(|j| (i, Some(j), tables::row_text(&t.rows[j])))
+                    .map(|j| (i, Line::Row(j), tables::row_text(&t.rows[j])))
                     .filter(|e| !e.2.is_empty()),
             ),
-            None => entries.push((i, None, b.text.clone())),
+            None => entries.push((i, Line::Whole, b.text.clone())),
         }
     }
     let texts: Vec<&str> = entries.iter().map(|e| e.2.as_str()).collect();
     let eaten = consume_split_title(&texts, title);
     if eaten == 0 {
-        return Ok(None);
+        return None;
     }
-    let (last, last_row, _) = entries[eaten - 1];
+    let (last, line, _) = &entries[eaten - 1];
+    let last = *last;
     let mut carried: Vec<String> = blocks[..last]
         .iter()
         .flat_map(|b| b.anchors.keys.iter().cloned())
         .collect();
-    if let (Some(row), Some(t)) = (last_row, &blocks[last].table) {
-        let order = tables::source_order(&t.rows);
-        let upto = order.iter().position(|&j| j == row).unwrap_or(0);
-        if let Some(kept) = tables::drop_rows(&blocks[last], &order[..=upto]) {
-            let mut rest = vec![kept];
-            rest.extend_from_slice(&blocks[last + 1..]);
-            return Ok(Some((rest, carried)));
+    let rest = |kept: Option<Block>| {
+        let mut rest: Vec<Block> = kept.into_iter().collect();
+        rest.extend_from_slice(&blocks[last + 1..]);
+        rest
+    };
+    match line {
+        Line::Boxed(path, row) => {
+            let (kept, more) = drop_box_lines(&blocks[last], path, *row);
+            carried.extend(more);
+            return Some((rest(kept), carried));
         }
+        Line::Row(row) => {
+            let t = blocks[last].table.as_deref()?;
+            let order = tables::source_order(&t.rows);
+            let upto = order.iter().position(|j| j == row).unwrap_or(0);
+            if let Some(kept) = tables::drop_rows(&blocks[last], &order[..=upto]) {
+                return Some((rest(Some(kept)), carried));
+            }
+        }
+        Line::Whole => {}
     }
     carried.extend(blocks[last].anchors.keys.iter().cloned());
-    Ok(Some((blocks[last + 1..].to_vec(), carried)))
+    Some((rest(None), carried))
 }
 
 /// `_title_in_table` (:1187): the chapter opens with a table, or a box opening with one,
 /// whose first rows print its title, in one row or spelled over rows. The table prints as
 /// written, and kfxgen prints no heading (#470).
-pub(crate) fn title_in_table(blocks: &[Block], title: &str) -> Result<bool, GenerateError> {
+pub(crate) fn title_in_table(blocks: &[Block], title: &str) -> bool {
     match first_unboxed(blocks).and_then(|b| b.table.as_deref()) {
-        Some(t) if tables::opens_with_title(t, title) => Ok(true),
-        Some(_) => Ok(eat_split_title(drop_edge_rules(blocks), title)?.is_some()),
-        None => Ok(false),
+        Some(t) => {
+            tables::opens_with_title(t, title)
+                || eat_split_title(drop_edge_rules(blocks), title).is_some()
+        }
+        None => false,
     }
 }
 

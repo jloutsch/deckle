@@ -7,15 +7,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::block_styles::{
-    self, HeadingStyle, Sizes, bidi_diff, heading_attrs, heading_style, keep_space,
-    text_entry_style,
+    self, Containers, HeadingStyle, Sizes, heading_attrs, heading_style, text_entry_style,
 };
-use super::boxes::{
-    self, BoxStyle, box_heading, cut_title_from_box, drop_edge_rules, emit_box_chunks,
-    leading_blocks, rule_chunk, unboxed,
-};
+use super::boxes::{self, drop_edge_rules, emit_box_chunks, rule_chunk, unboxed};
 use super::chapters::{Block, Chapter, cut_at_empty_line};
-use super::chunks::{Chunk, Marker, Node, emit_paragraph, print_book_heading};
+use super::chunks::{Chunk, Marker, emit_paragraph, print_book_heading};
 use super::fragments::{
     ContentRef, build_fragment_145, build_fragment_259, pack_content_fragments, style_refs,
 };
@@ -23,12 +19,12 @@ use super::images::{self, ImageStyles, Images, Picture};
 use super::inline::{self, ChunkLinks, RunBase};
 use super::notes::{self, Popups};
 use super::styles::{Style157, StyleArgs, Styles};
+use super::table_chunks;
 use super::title::{
     eat_split_title, heading_near_start, label_blocks, opens_with_title, title_in_table,
     title_runs_in,
 };
 use super::{GenerateError, Generator, py};
-use super::{table_chunks, table_styles};
 
 use GenerateError::Unsupported;
 
@@ -106,14 +102,14 @@ pub(crate) fn build_chapter_content(
         // Rules are passed over and boxes opened; a table says no (:1148).
         let title_after_pictures = !toc
             && images::title_after_pictures(
-                leading_blocks(blocks)
+                unboxed(blocks)
                     .into_iter()
                     .filter(|b| b.rule.is_none())
                     .map_while(|b| b.table.is_none().then_some(b.text.as_str())),
                 &title,
             );
         let runs_in = !toc && title_runs_in(blocks, &title);
-        let in_table = !toc && title_in_table(blocks, &title)?;
+        let in_table = !toc && title_in_table(blocks, &title);
         let heading_near_start =
             !toc && title_spans.is_none() && heading_near_start(blocks, &title);
         let label_over_blocks = !toc && label_blocks(&unboxed(blocks), &title) > 1;
@@ -171,48 +167,24 @@ pub(crate) fn build_chapter_content(
                         // An opening table printing the title is kept whole; one that
                         // doesn't has none to cut (:6382).
                         if !iter_blocks.is_empty() && cut_title && iter_blocks[0].table.is_none() {
-                            let first_stripped = py::lstrip(&iter_blocks[0].text);
-                            if let Some((kept, keys)) = cut_title_from_box(&iter_blocks[0], &title)
-                            {
-                                let first = iter_blocks.remove(0);
-                                carried.extend(keys);
-                                let first_box = first.boxed.as_deref().expect("a box");
-                                let kept_fewer = kept.as_ref().is_none_or(|k| {
-                                    let kids = &k.boxed.as_deref().expect("a box").blocks;
-                                    kids.len() < first_box.blocks.len()
-                                });
-                                let mut kept = kept;
-                                // Only when the title was a block of its own: a paragraph
-                                // running it in keeps the rest in the box, the heading above.
-                                if let Some(h) = heading_chunk
-                                    && h + 1 == chunks.len()
-                                    && first_box.blocks[0].boxed.is_none()
-                                    && kept_fewer
-                                {
-                                    let close = kept.is_none();
-                                    let at = box_heading(&first, &mut chunks, h, close);
-                                    heading_chunk = Some(at);
-                                    let kid = &first_box.blocks[0];
-                                    keep_space(
-                                        &mut chunks[at].heading,
-                                        kid.style.as_ref(),
-                                        None,
-                                        kid.margin_below,
-                                    );
-                                    if let Some(k) = kept.as_mut().and_then(|k| k.boxed.as_mut()) {
-                                        k.opened = true;
-                                    }
-                                }
-                                iter_blocks.splice(0..0, kept);
-                            } else if iter_blocks[0].boxed.is_some() {
+                            let first_stripped = py::lstrip(&iter_blocks[0].text).to_owned();
+                            if iter_blocks[0].boxed.is_some() {
                                 // A box is written from its blocks: a title split over its
                                 // lines is eaten from them (#344).
-                                if let Some((rest, keys)) = eat_split_title(&iter_blocks, &title)? {
+                                if !boxes::cut_title_in_box(
+                                    &mut iter_blocks,
+                                    &title,
+                                    &mut chunks,
+                                    &mut heading_chunk,
+                                    &mut carried,
+                                ) && let Some((rest, keys)) =
+                                    eat_split_title(&iter_blocks, &title)
+                                {
                                     iter_blocks = rest;
                                     carried.extend(keys);
                                 }
-                            } else if opens_with_title(first_stripped, &title) {
-                                let remainder = py::lstrip(py::skip(first_stripped, n)).to_owned();
+                            } else if opens_with_title(&first_stripped, &title) {
+                                let remainder = py::lstrip(py::skip(&first_stripped, n)).to_owned();
                                 if !remainder.is_empty() {
                                     // `_trim_text` (:909): runs and offsets move with the cut.
                                     let rest = py::len(&remainder) as i64;
@@ -236,7 +208,7 @@ pub(crate) fn build_chapter_content(
                                 // Split over blocks or a table's rows (#64, #219). The book's
                                 // heading prints: its style (#490).
                                 let first_style = iter_blocks[0].style.clone();
-                                if let Some((rest, keys)) = eat_split_title(&iter_blocks, &title)? {
+                                if let Some((rest, keys)) = eat_split_title(&iter_blocks, &title) {
                                     if let Some(h) = heading_chunk {
                                         chunks[h].heading.book_style = first_style;
                                     }
@@ -478,56 +450,14 @@ pub(crate) fn build_chapter_content(
         // A container's own `$157`: a row's or group's border (:7556), a box's (:7520).
         let mut entry_parts = Vec::new();
         let mut entry_runs = Vec::new();
-        // Each open container's size when it is a cell (#681), and its language (#246).
-        let mut open_sizes: Vec<Option<f64>> = Vec::new();
-        let mut open_bidi: Vec<Option<String>> = Vec::new();
+        let mut open = Containers::default();
         for chunk_idx in start..end {
             let chunk = &chunks[chunk_idx];
-            let around = open_bidi.last().cloned().flatten();
+            let around = open.around().map(str::to_owned);
             let around = around.as_deref();
             if let Some(marker) = &chunk.marker {
-                let (style, part) = match marker {
-                    Marker::Open(node) => {
-                        // A table's and a row's direction aren't ported: theirs is None.
-                        let own = match node {
-                            Node::Cell(_) => chunk.style.as_ref().and_then(|b| b.bidi.clone()),
-                            Node::Box(b) => b.spec.bidi.clone(),
-                            _ => None,
-                        };
-                        let cont_lang = bidi_diff(own.as_ref().and_then(|o| o.as_deref()), around)
-                            .map(str::to_owned);
-                        open_bidi.push(own.unwrap_or_else(|| around.map(str::to_owned)));
-                        let cell_size =
-                            matches!(node, Node::Cell(_)).then(|| sizes.block_font_size(fs, chunk));
-                        open_sizes.push(cell_size);
-                        match node {
-                            Node::Box(b) => {
-                                let style = BoxStyle::of(b, sizes.rem(b.spec.font_px));
-                                style.check()?;
-                                let name = styles.allocate_in(
-                                    g,
-                                    "_box",
-                                    StyleArgs::Box(style),
-                                    cont_lang.as_deref(),
-                                );
-                                (None, Some(name))
-                            }
-                            _ => table_styles::marker_styles(
-                                g,
-                                &mut styles,
-                                marker,
-                                chunk.style.as_ref(),
-                                cell_size.unwrap_or(fs),
-                                cont_lang.as_deref(),
-                            ),
-                        }
-                    }
-                    Marker::Close => {
-                        open_sizes.pop();
-                        open_bidi.pop();
-                        (None, None)
-                    }
-                };
+                let (style, part) =
+                    open.marker_styles(g, &mut styles, &sizes, chunk, marker, fs)?;
                 // A `close`, a box, or a row or group drawing no border, takes the
                 // chapter's, unused.
                 entry_styles.push(style.unwrap_or_else(|| story_names[ch_idx].clone()));
@@ -580,7 +510,7 @@ pub(crate) fn build_chapter_content(
                         story_names[ch_idx].clone()
                     }
                 }
-                _ => text_entry_style(g, &mut styles, &sizes, chunk, fs, &open_sizes, around),
+                _ => text_entry_style(g, &mut styles, &sizes, chunk, fs, &open.sizes, around),
             };
             entry_styles.push(style);
             // kfxgen's chapter heading is bold, and so are the runs in it (#366), unless it

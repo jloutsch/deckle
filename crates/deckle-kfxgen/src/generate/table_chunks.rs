@@ -30,6 +30,7 @@ pub(crate) struct TableOpen {
     pub border: Option<Border>,
     pub column_widths: Option<ColumnWidths>,
     pub width: Option<f64>,
+    pub bidi: Option<Option<String>>,
 }
 
 /// `_table_has_zoom` (:2101): every table of 2 or more columns (#272).
@@ -76,6 +77,7 @@ pub(crate) fn emit_table_chunks(block: &Block, t: &Table, chunks: &mut Vec<Chunk
         border: t.border.clone(),
         column_widths: t.column_widths.clone(),
         width: t.width,
+        bidi: t.bidi.clone(),
     }))));
     let mut group = None;
     let mut last_row = None;

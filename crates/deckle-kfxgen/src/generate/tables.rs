@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 
-use super::block_styles::{BlockStyle, read_block_style};
+use super::block_styles::{BlockStyle, number, read_bidi, read_block_style};
 use super::chapters::Block;
 use super::images;
 use super::inline::{Anchors, Span, read_spans};
@@ -39,6 +39,8 @@ pub(crate) struct Table {
     pub border: Option<Border>,
     pub column_widths: Option<ColumnWidths>,
     pub width: Option<f64>,
+    /// `bidi`: `{}` sets none inside it, where None takes the container's (#246).
+    pub bidi: Option<Option<String>>,
 }
 
 #[derive(Clone)]
@@ -79,14 +81,6 @@ pub(crate) struct Paragraph {
     pub spans: Vec<Span>,
     pub anchors: Anchors,
     pub heading: bool,
-}
-
-fn number(v: &PyValue) -> Option<f64> {
-    match v {
-        PyValue::Int(i) => Some(*i as f64),
-        PyValue::Float(f) => Some(*f),
-        _ => None,
-    }
 }
 
 fn opt<T>(
@@ -174,7 +168,9 @@ pub(crate) fn read_table_block(b: &PyValue, at: &str) -> Result<Block, GenerateE
         .get("table")
         .ok_or_else(|| model_err(format!("{at}.table: a dict")))?;
     let at_t = format!("{at}.table");
-    if truthy(t.get("bidi")) {
+    let bidi = read_bidi(t.get("bidi"), &at_t)?;
+    // A table's language is written on its style (#246), not ported.
+    if matches!(bidi, Some(Some(_))) {
         return Err(Unsupported("text direction"));
     }
     if truthy(t.get("horizontal")) {
@@ -214,6 +210,7 @@ pub(crate) fn read_table_block(b: &PyValue, at: &str) -> Result<Block, GenerateE
         width: opt(t.get("width"), number, || {
             model_err(format!("{at_t}.width: a number"))
         })?,
+        bidi,
     };
     // kfxgen's `quantize` raises on a side it can't write in 28 digits (:2071).
     for (j, row) in table.rows.iter().enumerate() {
@@ -235,7 +232,9 @@ pub(crate) fn read_table_block(b: &PyValue, at: &str) -> Result<Block, GenerateE
 }
 
 fn read_row(r: &PyValue, at: &str) -> Result<Row, GenerateError> {
-    if truthy(r.get("bidi")) || truthy(r.get("group_bidi")) {
+    // Even `{}`, which sets none inside it, as a table's does.
+    let set = |key: &str| r.get(key).is_some_and(|v| !matches!(v, PyValue::None));
+    if set("bidi") || set("group_bidi") {
         return Err(Unsupported("text direction"));
     }
     let group = match r.get("group").and_then(PyValue::as_str) {

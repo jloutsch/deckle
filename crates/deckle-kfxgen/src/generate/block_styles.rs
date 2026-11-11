@@ -4,9 +4,10 @@
 //! the book's main text size (#241), line heights against its main line (#463), the book's
 //! alignment, indent, margins, weight and language (:7735), and the book's heading printing
 //! as kfxgen's (#490, :7646).
-use super::chunks::{Chunk, InCell};
+use super::boxes::BoxStyle;
+use super::chunks::{Chunk, InCell, Marker, Node};
 use super::styles::{Style157, StyleArgs, Styles};
-use super::table_styles::CellStyle;
+use super::table_styles::{self, CellStyle};
 use super::{GenerateError, Generator, model_err, py};
 use crate::pyvalue::PyValue;
 
@@ -415,4 +416,70 @@ pub(crate) fn keep_space(
 /// dict with no language is `{}`, which is false.
 pub(crate) fn page_bidi<'a>(langs: impl IntoIterator<Item = Option<&'a str>>) -> Option<String> {
     langs.into_iter().flatten().next().map(str::to_owned)
+}
+
+/// The containers open around the entry being written (:7376): each one's size when it is a
+/// cell (#681), and its language (#246).
+#[derive(Default)]
+pub(crate) struct Containers {
+    pub sizes: Vec<Option<f64>>,
+    langs: Vec<Option<String>>,
+}
+
+impl Containers {
+    /// The language of the container around, None outside one.
+    pub(crate) fn around(&self) -> Option<&str> {
+        self.langs.last()?.as_deref()
+    }
+
+    /// A container's `open` or `close` (:7398): (the entry's style, its own `$157`, a row's,
+    /// group's or box's). A table's or row's language isn't ported: a table's is none or
+    /// `{}`, a row's None.
+    pub(crate) fn marker_styles(
+        &mut self,
+        g: &mut Generator,
+        styles: &mut Styles,
+        sizes: &Sizes,
+        chunk: &Chunk,
+        marker: &Marker,
+        chapter_fs: f64,
+    ) -> Result<(Option<String>, Option<String>), GenerateError> {
+        let node = match marker {
+            Marker::Open(node) => node,
+            Marker::Close => {
+                self.sizes.pop();
+                self.langs.pop();
+                return Ok((None, None));
+            }
+        };
+        let own = match node {
+            Node::Table(t) => t.bidi.clone(),
+            Node::Cell(_) => chunk.style.as_ref().and_then(|b| b.bidi.clone()),
+            Node::Box(b) => b.spec.bidi.clone(),
+            Node::Group(..) | Node::Row(_) => None,
+        };
+        let around = self.around().map(str::to_owned);
+        let lang = bidi_diff(own.as_ref().and_then(|o| o.as_deref()), around.as_deref());
+        let lang = lang.map(str::to_owned);
+        self.langs.push(own.unwrap_or(around));
+        let cell_size =
+            matches!(node, Node::Cell(_)).then(|| sizes.block_font_size(chapter_fs, chunk));
+        self.sizes.push(cell_size);
+        Ok(match node {
+            Node::Box(b) => {
+                let style = BoxStyle::of(b, sizes.rem(b.spec.font_px));
+                style.check()?;
+                let name = styles.allocate_in(g, "_box", StyleArgs::Box(style), lang.as_deref());
+                (None, Some(name))
+            }
+            _ => table_styles::marker_styles(
+                g,
+                styles,
+                marker,
+                chunk.style.as_ref(),
+                cell_size.unwrap_or(chapter_fs),
+                lang.as_deref(),
+            ),
+        })
+    }
 }

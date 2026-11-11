@@ -7,7 +7,7 @@ use std::borrow::Borrow;
 
 use deckle_kfx::ion::Value;
 
-use super::block_styles::{number, read_bidi};
+use super::block_styles::{keep_space, number, read_bidi};
 use super::chapters::{Block, read_block};
 use super::chunks::{Chunk, Marker, Node, emit_paragraph};
 use super::images::{IMG_TOKEN, Images};
@@ -15,7 +15,7 @@ use super::inline;
 use super::styles::{LINE_EM, g6};
 use super::table_chunks::{emit_table_chunks, link_target};
 use super::table_styles::{apply_border, border_style_symbol, padding_values, side_keys};
-use super::tables::{Border, Padding, read_border, read_padding, read_sides};
+use super::tables::{self, Border, Padding, read_border, read_padding, read_sides};
 use super::title::opens_with_title;
 use super::{GenerateError, Generator, model_err, py, st, sym};
 use crate::pyvalue::{PyValue, truthy};
@@ -239,7 +239,7 @@ pub(crate) fn drop_edge_rules<B: Borrow<Block>>(blocks: &[B]) -> &[B] {
     }
 }
 
-/// `_unboxed` (:1294): each box replaced by its blocks.
+/// `_unboxed` (:1294): each box replaced by its blocks; `_leading_blocks` (:1134) too.
 pub(crate) fn unboxed(blocks: &[Block]) -> Vec<&Block> {
     let mut out = Vec::new();
     for b in blocks {
@@ -249,11 +249,6 @@ pub(crate) fn unboxed(blocks: &[Block]) -> Vec<&Block> {
         }
     }
     out
-}
-
-/// `_leading_blocks` (:1134): a chapter's blocks in reading order, boxes opened.
-pub(crate) fn leading_blocks(blocks: &[Block]) -> Vec<&Block> {
-    unboxed(blocks)
 }
 
 /// `_rule_chunk` (:1105).
@@ -535,20 +530,7 @@ pub(crate) fn cut_title_from_box(
         carried.extend(block.anchors.keys.iter().cloned());
         return Some((None, carried));
     }
-    let text = kids
-        .iter()
-        .map(|k| k.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    let kept = Block {
-        text,
-        boxed: Some(Box::new(BoxBlock {
-            blocks: kids,
-            ..bx.clone()
-        })),
-        ..block.clone()
-    };
-    Some((Some(kept), carried))
+    Some((Some(with_blocks(block, bx, kids)), carried))
 }
 
 /// `_box_heading` (:5921): the box `block`, which opened with the chapter's title, opened
@@ -570,4 +552,143 @@ pub(crate) fn box_heading(
         chunks.push(Chunk::marker(Marker::Close));
     }
     heading + 1
+}
+
+/// Where a title line is in a block: the block whole, a table's row, or a box's line.
+pub(crate) enum Line {
+    Whole,
+    Row(usize),
+    /// The blocks' indices through the boxes it opens with, and a row of a table there.
+    Boxed(Vec<usize>, Option<usize>),
+}
+
+/// A box's line as the split-title cut reads it: its path through the boxes, a table's row
+/// there, its text.
+pub(crate) type BoxLine = (Vec<usize>, Option<usize>, String);
+
+/// `_box_title_lines` (:1413): the paragraphs a box opens with, through the boxes it opens
+/// with, as the split-title cut reads them, a table's rows with text as lines too; and
+/// whether no picture or rule stopped them.
+pub(crate) fn box_title_lines(bx: &BoxBlock, path: &[usize]) -> (Vec<BoxLine>, bool) {
+    let mut out = Vec::new();
+    for (j, kid) in bx.blocks.iter().enumerate() {
+        let here = [path, &[j]].concat();
+        if let Some(inner) = &kid.boxed {
+            let (lines, whole) = box_title_lines(inner, &here);
+            out.extend(lines);
+            if !whole {
+                return (out, false);
+            }
+        } else if let Some(t) = &kid.table {
+            for r in tables::source_order(&t.rows) {
+                let text = tables::row_text(&t.rows[r]);
+                if !text.is_empty() {
+                    out.push((here.clone(), Some(r), text));
+                }
+            }
+        } else if is_text_block(kid) {
+            out.push((here, None, kid.text.clone()));
+        } else {
+            return (out, false);
+        }
+    }
+    (out, true)
+}
+
+/// `_drop_box_lines` (:1441): the box block without its blocks up to and including the line
+/// at `path`, a table's rows up to and including `row` (#310, #344); None when nothing is
+/// left. And the ids of what it dropped.
+pub(crate) fn drop_box_lines(
+    block: &Block,
+    path: &[usize],
+    row: Option<usize>,
+) -> (Option<Block>, Vec<String>) {
+    let bx = block.boxed.as_deref().expect("a box block");
+    let kids = &bx.blocks;
+    let j = path[0];
+    let mut carried: Vec<String> = kids[..j].iter().flat_map(block_keys).collect();
+    let mut rest: Vec<Block> = Vec::new();
+    match (path.len(), row) {
+        (1, None) => carried.extend(kids[j].anchors.keys.iter().cloned()),
+        (1, Some(r)) => {
+            let t = kids[j].table.as_deref().expect("a table line");
+            let order = tables::source_order(&t.rows);
+            let upto = order.iter().position(|&o| o == r).unwrap_or(0);
+            match tables::drop_rows(&kids[j], &order[..=upto]) {
+                Some(kept) => rest.push(kept),
+                None => carried.extend(kids[j].anchors.keys.iter().cloned()),
+            }
+        }
+        _ => {
+            let (inner, more) = drop_box_lines(&kids[j], &path[1..], row);
+            carried.extend(more);
+            rest.extend(inner);
+        }
+    }
+    rest.extend_from_slice(&kids[j + 1..]);
+    if rest.is_empty() {
+        carried.extend(block.anchors.keys.iter().cloned());
+        return (None, carried);
+    }
+    (Some(with_blocks(block, bx, rest)), carried)
+}
+
+/// `{**box, "blocks": kids, "text": "\n\n".join(...)}`.
+fn with_blocks(block: &Block, bx: &BoxBlock, kids: Vec<Block>) -> Block {
+    let text = kids
+        .iter()
+        .map(|k| k.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    Block {
+        text,
+        boxed: Some(Box::new(BoxBlock {
+            blocks: kids,
+            ..bx.clone()
+        })),
+        ..block.clone()
+    }
+}
+
+/// The chapter title cut from the box `iter_blocks` opens with (:6392): the box kept without
+/// it, its ids carried, and the box drawn round kfxgen's heading when the title was a block
+/// of its own (#646). False when the box doesn't open with the title.
+pub(crate) fn cut_title_in_box(
+    iter_blocks: &mut Vec<Block>,
+    title: &str,
+    chunks: &mut Vec<Chunk>,
+    heading_chunk: &mut Option<usize>,
+    carried: &mut Vec<String>,
+) -> bool {
+    let Some((mut kept, keys)) = cut_title_from_box(&iter_blocks[0], title) else {
+        return false;
+    };
+    let first = iter_blocks.remove(0);
+    carried.extend(keys);
+    let first_box = first.boxed.as_deref().expect("a box");
+    let kept_fewer = kept.as_ref().is_none_or(|k| {
+        let kids = &k.boxed.as_deref().expect("a box").blocks;
+        kids.len() < first_box.blocks.len()
+    });
+    // A paragraph running the title in keeps the rest in the box, the heading above.
+    if let Some(h) = *heading_chunk
+        && h + 1 == chunks.len()
+        && first_box.blocks[0].boxed.is_none()
+        && kept_fewer
+    {
+        let at = box_heading(&first, chunks, h, kept.is_none());
+        *heading_chunk = Some(at);
+        let kid = &first_box.blocks[0];
+        keep_space(
+            &mut chunks[at].heading,
+            kid.style.as_ref(),
+            None,
+            kid.margin_below,
+        );
+        if let Some(k) = kept.as_mut().and_then(|k| k.boxed.as_mut()) {
+            k.opened = true;
+        }
+    }
+    iter_blocks.splice(0..0, kept);
+    true
 }
