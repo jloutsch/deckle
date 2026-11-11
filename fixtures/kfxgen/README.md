@@ -58,6 +58,7 @@ hrefs, unreadable JPEGs). The books are `ARG_BOOKS` in that script, their other 
 | `image_refs_unresolved` | an unresolved href (`resolved_image_refs` false) found by its file name |
 | `cover_paths` | a cover opening the first chapter, left out there, its ids moved on; the cover's picture used later in the text; a contents page's targets after the cover's page |
 | `cover_page` | a PNG cover over 1920 px whose first page holds only its picture, which stays |
+| `cover_alone` | a first page whose cover picture has only blank blocks after it: the picture stays, its ids with it |
 
 **Calibre path** (`ebook-convert` with kfxgen, CSS applied): the source is
 `sources/<name>.epub`. For each, the script also checks that replaying the model gives exactly

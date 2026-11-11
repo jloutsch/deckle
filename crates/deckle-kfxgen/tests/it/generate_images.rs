@@ -58,6 +58,12 @@ fn cover_page_matches_kfxgen() {
     matches_kfxgen("cover_page");
 }
 
+/// A cover picture with only blank blocks after it on its page stays there (#524).
+#[test]
+fn cover_alone_matches_kfxgen() {
+    matches_kfxgen("cover_alone");
+}
+
 /// kfxgen refuses a cover that is neither a JPEG nor a PNG (:4692).
 #[test]
 fn a_cover_neither_jpeg_nor_png_is_a_model_error() {

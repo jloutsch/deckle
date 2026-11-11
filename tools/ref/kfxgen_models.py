@@ -563,6 +563,22 @@ ARG_BOOKS = {
         _chapter("Cover", [_block(_pic("cover.png", "cover"))]),
         _chapter("One", [_block("One"), _block("The first chapter.")]),
     ],
+    # A first page whose cover picture has only blank blocks after it: it stays, its ids
+    # with it.
+    "cover_alone": [
+        _chapter(
+            "Cover",
+            [
+                _block(_pic("cover.jpg", "cover"), keys=["c0.xhtml#cover"]),
+                _block(""),
+                _block("   "),
+            ],
+        ),
+        _chapter(
+            "One",
+            [_block("One"), _block("Back to the cover.", [(12, 5, _link("c0.xhtml#cover"))])],
+        ),
+    ],
 }
 
 #: The image books' other arguments.
@@ -595,6 +611,11 @@ ARG_BOOK_EXTRAS = {
         "cover_image": _COVER,
         "images": {"cover.jpg": _COVER, "OEBPS/plate.png": _png(1024, 512)},
         "display_dims": {"cover.jpg": (300, 400)},
+        "resolved_image_refs": True,
+    },
+    "cover_alone": {
+        "cover_image": _COVER,
+        "images": {"cover.jpg": _COVER},
         "resolved_image_refs": True,
     },
     "cover_page": {
