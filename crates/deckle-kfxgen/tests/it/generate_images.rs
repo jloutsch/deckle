@@ -4,7 +4,7 @@ use deckle_kfxgen::generate::{GenerateError, generate};
 use deckle_kfxgen::load::load_model;
 use deckle_kfxgen::pyvalue::PyValue;
 
-use crate::generate_inline::{entry, item};
+use crate::generate_inline::entry;
 use crate::generate_skeleton::matches_kfxgen;
 
 #[test]
@@ -72,21 +72,5 @@ fn a_cover_neither_jpeg_nor_png_is_a_model_error() {
     assert!(matches!(
         generate(&model),
         Err(GenerateError::Model(m)) if m.contains("cover_image")
-    ));
-}
-
-/// A picture among a paragraph's words is written in them (#529), which isn't ported.
-#[test]
-fn pictures_among_words_are_reported_unsupported() {
-    let mut model = load_model(&deckle_kfx::fixtures::kfxgen("models/body_images")).unwrap();
-    let chapter = item(entry(&mut model.args, "chapters"), 0);
-    let paragraph = item(entry(chapter, "blocks"), 1);
-    let PyValue::Str(text) = entry(paragraph, "text") else {
-        panic!("not a string")
-    };
-    text.insert_str(0, "Words before ");
-    assert!(matches!(
-        generate(&model),
-        Err(GenerateError::Unsupported("pictures among words"))
     ));
 }

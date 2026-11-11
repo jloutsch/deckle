@@ -290,42 +290,6 @@ pub(crate) fn trim(spans: &mut Vec<Span>, anchors: &mut Anchors, cut: i64, rest:
     }
 }
 
-/// `_append_text_with_spans` (:5507) and the keys `_emit_paragraph` (:5847) gives its first
-/// chunk, for a paragraph that is one chunk of `len` characters at offset 0 of its text: the
-/// runs inside it, and the anchors, each at its offset when it is in the text, else at 0.
-pub(crate) fn place(spans: &[Span], anchors: &Anchors, len: i64) -> (Vec<Span>, Anchors) {
-    let runs = spans
-        .iter()
-        .filter_map(|sp| {
-            let a = sp.start.max(0);
-            let b = (sp.start + sp.len).min(len);
-            (b > a).then(|| Span {
-                start: a,
-                len: b - a,
-                flags: sp.flags.clone(),
-            })
-        })
-        .collect();
-    // One after the last word lands on the last character (#487).
-    let last = (len - 1).max(0);
-    let (mine, rest): (Vec<&String>, Vec<&String>) = anchors
-        .keys
-        .iter()
-        .partition(|k| (0..=len).contains(&anchors.offset(k)));
-    let mut placed = Anchors {
-        keys: mine.iter().map(|k| (*k).clone()).collect(),
-        offsets: mine
-            .iter()
-            .map(|k| ((*k).clone(), anchors.offset(k).min(last)))
-            .collect(),
-    };
-    let rest: Vec<String> = rest.into_iter().cloned().collect();
-    if !rest.is_empty() {
-        placed.attach(&rest);
-    }
-    (runs, placed)
-}
-
 /// `build_fragment_266` (:4155).
 fn build_fragment_266(g: &mut Generator, name: &str, position: i64, offset: i64) -> Fragment {
     g.local(name);

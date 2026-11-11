@@ -5,8 +5,7 @@
 //! their `$157` styles (:7008), the cover's page (:4876), the pictures nothing shows
 //! (:4910), and what `$419` and `$585` say about them (:149, :2256).
 //!
-//! A picture among a paragraph's words, a linked picture, and a float among words are not
-//! ported: [`GenerateError::Unsupported`].
+//! A picture among a paragraph's words, linked, or a float among words is `inline_pictures`'.
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
@@ -17,7 +16,7 @@ use regex::Regex;
 
 use super::chapters::{Block, Chapter};
 use super::chunks::Chunk;
-use super::inline::{Anchors, Flag, Span};
+use super::inline::{Flag, Span};
 use super::{GenerateError, Generator, measure, model_err, py, st, sym};
 use crate::pyvalue::PyValue;
 
@@ -43,7 +42,7 @@ pub(crate) const IMAGE_COLUMN_PX: f64 = 512.0;
 /// A resource's `$164` and `$417` names.
 type Pair = (String, String);
 /// A picture's width and height as its style reads them: its pixels, or `display_dims`'.
-type Dims = (Option<f64>, Option<f64>);
+pub(crate) type Dims = (Option<f64>, Option<f64>);
 
 /// A Python dict's insertion order: `set` replaces a value where its key stands.
 fn get<'a, V>(map: &'a [(String, V)], key: &str) -> Option<&'a V> {
@@ -69,7 +68,7 @@ pub(crate) struct Images {
 impl Images {
     /// `_token_resource` (:1923): the exact href, its decoded form, then its file name for an
     /// href never resolved. A query string names no other file.
-    fn resource(&self, href: &str) -> Option<&Pair> {
+    pub(crate) fn resource(&self, href: &str) -> Option<&Pair> {
         let bare = href.split('#').next().unwrap_or("");
         let bare = bare.split('?').next().unwrap_or("");
         get(&self.resources, bare)
@@ -79,6 +78,17 @@ impl Images {
                     .then(|| get(&self.resources, bare.rsplit('/').next().unwrap_or("")))
                     .flatten()
             })
+    }
+
+    /// Each resource's dims, from its first href that has them (:2434).
+    pub(crate) fn dims_by_resource(&self) -> BTreeMap<String, Dims> {
+        let mut out = BTreeMap::new();
+        for (key, (res, _)) in &self.resources {
+            if let Some(d) = get(&self.dims, key) {
+                out.entry(res.clone()).or_insert(*d);
+            }
+        }
+        out
     }
 
     /// `_may_fall_back_by_basename` (:1937).
@@ -376,7 +386,9 @@ pub(crate) struct Picture {
     /// The markup's own size (`w=98%`, `h=50%`, `w=200px`).
     pub size: Option<String>,
     /// `left` or `right` (#243).
-    float: Option<String>,
+    pub float: Option<String>,
+    /// In a link's container: inline, the one position its link covers (#355).
+    pub inline: bool,
 }
 
 /// Whether `text` holds pictures and nothing else but spaces: `IMG_TOKEN_RE.sub("", text)`
@@ -389,38 +401,31 @@ pub(crate) fn has_picture(text: &str) -> bool {
     IMG_TOKEN.is_match(text)
 }
 
-/// `_emit_text_chunks` (:5454) for a paragraph of pictures alone: those the book holds, in
-/// order. A picture a link covers is a link's container (#355), not ported.
-pub(crate) fn pictures(
-    text: &str,
-    spans: &[Span],
-    images: &Images,
-) -> Result<Vec<Picture>, GenerateError> {
-    let mut out = Vec::new();
-    for m in IMG_TOKEN.captures_iter(text) {
-        let whole = m.get(0).unwrap();
-        let Some((resource, _)) = images.resource(&m[1]) else {
-            continue;
-        };
-        if picture_link(spans, py::len(&text[..whole.start()]) as i64) {
-            return Err(Unsupported("a linked picture"));
-        }
-        let field = |i: usize| m.get(i).map(|g| g.as_str()).filter(|s| !s.is_empty());
-        out.push(Picture {
-            resource: resource.clone(),
-            alt: m[2].replace('\x02', " "),
-            size: field(3).map(str::to_owned),
-            float: field(4).map(str::to_owned),
-        });
-    }
-    Ok(out)
+/// `_emit_text_chunks`' image chunk (:5487) for the token `m`, when the book holds its picture.
+pub(crate) fn picture_of(m: &regex::Captures, images: &Images) -> Option<Picture> {
+    let (resource, _) = images.resource(&m[1])?;
+    let field = |i: usize| m.get(i).map(|g| g.as_str()).filter(|s| !s.is_empty());
+    Some(Picture {
+        resource: resource.clone(),
+        alt: m[2].replace('\x02', " "),
+        size: field(3).map(str::to_owned),
+        float: field(4).map(str::to_owned),
+        inline: false,
+    })
 }
 
-/// `_picture_link` (:1826): whether a link covers the token at `at`, in characters.
-pub(crate) fn picture_link(spans: &[Span], at: i64) -> bool {
-    spans.iter().any(|s| {
-        s.start <= at && at < s.start + s.len && s.flags.iter().any(|f| matches!(f, Flag::Link(_)))
-    })
+/// `_picture_link` (:1826): the target of the first link covering the token at `at`, in
+/// characters.
+pub(crate) fn picture_link(spans: &[Span], at: i64) -> Option<&String> {
+    spans
+        .iter()
+        .filter(|s| s.start <= at && at < s.start + s.len)
+        .find_map(|s| {
+            s.flags.iter().find_map(|f| match f {
+                Flag::Link(t) => Some(t),
+                _ => None,
+            })
+        })
 }
 
 /// `_same_words` (:1143).
@@ -835,7 +840,7 @@ pub(crate) fn picture_entry(
     style: &str,
 ) -> deckle_kfx::ion::Struct {
     g.local(&p.resource);
-    let Value::Struct(entry) = st([
+    let Value::Struct(mut entry) = st([
         ("$155", Value::Int(position)),
         ("$157", sym(style)),
         ("$159", sym("$271")),
@@ -844,50 +849,10 @@ pub(crate) fn picture_entry(
     ]) else {
         unreachable!()
     };
+    if p.inline {
+        entry.insert("$601", sym("$283"));
+    }
     entry
-}
-
-/// `_emit_paragraph` (:5745) for a paragraph of pictures alone: a chunk per picture the book
-/// holds. Returns the ids it could not place because it emitted nothing: only pictures the
-/// book doesn't hold.
-pub(crate) fn emit_picture_paragraph(
-    para: &str,
-    block: &Block,
-    images: &Images,
-    chunks: &mut Vec<Chunk>,
-) -> Result<Vec<String>, GenerateError> {
-    // Pictures among words are cut at picture lines and written in the words (#529,
-    // #565), not ported.
-    if !only_pictures(para) {
-        return Err(Unsupported("pictures among words"));
-    }
-    let pictures = pictures(para, &block.spans, images)?;
-    if pictures.is_empty() {
-        return Ok(block.anchors.keys.clone());
-    }
-    // Ids at its start go on its first picture (#62), then the others, all at 0 (:5847);
-    // a picture has no text for a heading level or space above to go on.
-    let (at_start, rest): (Vec<String>, Vec<String>) = block
-        .anchors
-        .keys
-        .iter()
-        .cloned()
-        .partition(|k| block.anchors.offsets.get(k).is_none_or(|&o| o == 0));
-    let mut anchors = Anchors {
-        keys: at_start,
-        offsets: BTreeMap::new(),
-    };
-    if !rest.is_empty() {
-        anchors.attach(&rest);
-    }
-    for picture in pictures {
-        chunks.push(Chunk {
-            anchors: std::mem::take(&mut anchors),
-            picture: Some(picture),
-            ..Chunk::text(String::new())
-        });
-    }
-    Ok(Vec::new())
 }
 
 /// A contents page's pictures the converter replaced (#117), a chunk each.
@@ -900,11 +865,13 @@ pub(crate) fn push_preserved(
         if !py::strip(&IMG_TOKEN.replace_all(token, "")).is_empty() {
             return Err(Unsupported("words kept from a replaced contents page"));
         }
-        for picture in pictures(token, &[], images)? {
-            chunks.push(Chunk {
-                picture: Some(picture),
-                ..Chunk::text(String::new())
-            });
+        for m in IMG_TOKEN.captures_iter(token) {
+            if let Some(picture) = picture_of(&m, images) {
+                chunks.push(Chunk {
+                    picture: Some(picture),
+                    ..Chunk::text(String::new())
+                });
+            }
         }
     }
     Ok(())

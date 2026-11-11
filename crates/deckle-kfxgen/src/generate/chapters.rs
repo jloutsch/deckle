@@ -8,7 +8,7 @@ use super::boxes::{BoxBlock, RuleStyle, read_box, read_rule};
 use super::images;
 use super::inline::{Anchors, Span, TocLink, read_spans};
 use super::tables::{self, Table};
-use super::{GenerateError, model_err, py};
+use super::{GenerateError, model_err};
 use crate::pyvalue::{PyValue, truthy};
 
 use GenerateError::Unsupported;
@@ -26,7 +26,7 @@ const BLOCK_UNPORTED: [(&str, &str); 7] = [
     ("float_wrapped", "floated pictures"),
     ("in_cell_paragraph", "tables"),
     ("table", "tables"),
-    ("trailing", "a paragraph cut at an empty line"),
+    ("trailing", "a block's own trailing text"),
     ("clear", "clearing floats"),
     ("label_texts", "equations"),
 ];
@@ -94,6 +94,9 @@ pub(crate) struct Block {
     pub margin_below: f64,
     /// A list item's line, set with no space above (#701).
     pub tight: bool,
+    /// What a part cut before an empty line keeps after its words (#602, #626): never the
+    /// model's.
+    pub trailing: String,
 }
 
 impl Block {
@@ -113,6 +116,7 @@ impl Block {
             margin_above: None,
             margin_below: 0.0,
             tight: false,
+            trailing: String::new(),
         }
     }
 
@@ -282,12 +286,6 @@ pub(crate) fn read_block(b: &PyValue, at: &str) -> Result<Block, GenerateError> 
         Some(PyValue::Str(s)) => s.clone(),
         _ => return Err(model_err(format!("{at}.text: a string"))),
     };
-    // With pictures, `_cut_after_picture_lines` cuts only a paragraph that also has words:
-    // `emit_paragraph` reports words after floats cut at an empty line, and any other
-    // pictures among words.
-    if !images::has_picture(&text) && cut_at_empty_line(&text) {
-        return Err(Unsupported("a paragraph cut at an empty line"));
-    }
     let heading_level = match b.get("heading_level") {
         Some(v) if v.is_truthy() => match v.as_int() {
             Some(n @ 1..=6) => Some(n),
@@ -308,20 +306,4 @@ pub(crate) fn read_block(b: &PyValue, at: &str) -> Result<Block, GenerateError> 
         tight: truthy(b.get("tight")),
         ..Block::plain(text)
     })
-}
-
-/// Whether `_cut_after_picture_lines` (:535) cuts a paragraph with no pictures: at a line with
-/// words after an empty one, words before it.
-pub(crate) fn cut_at_empty_line(text: &str) -> bool {
-    let mut words_before = false;
-    let mut previous_empty = false;
-    for line in text.split('\n') {
-        let empty = py::strip(line).is_empty();
-        if !empty && previous_empty && words_before {
-            return true;
-        }
-        words_before |= !empty;
-        previous_empty = empty;
-    }
-    false
 }

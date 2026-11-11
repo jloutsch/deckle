@@ -193,7 +193,13 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
     let shown: Vec<&str> = data
         .chunks
         .iter()
-        .filter_map(|c| c.picture.as_ref().map(|p| p.resource.as_str()))
+        .flat_map(|c| {
+            let among_words = c.pictures.iter().map(|p| p.resource.as_str());
+            c.picture
+                .iter()
+                .map(|p| p.resource.as_str())
+                .chain(among_words)
+        })
         .collect();
     images::drop_unshown(&mut g, &mut images, &shown);
 
@@ -250,8 +256,17 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
     g.push(f);
     g.push(build_fragment_265(&pos.entries_265));
 
-    // $593 (:5080). No entry starts part-way into a paragraph, so no pidMapWithOffset.
+    // $593 (:5080).
     let mut capabilities = Vec::new();
+    if pos.entries_265.iter().any(|e| e.2 != 0) {
+        // Positions part-way into a paragraph: around a picture among its words (#529).
+        g.local("kfxgen.pidMapWithOffset");
+        g.local("version");
+        capabilities.push(st([
+            ("$492", Value::string("kfxgen.pidMapWithOffset")),
+            ("version", Value::Int(1)),
+        ]));
+    }
     if !data.content_names.is_empty() {
         g.local("kfxgen.textBlock");
         g.local("version");

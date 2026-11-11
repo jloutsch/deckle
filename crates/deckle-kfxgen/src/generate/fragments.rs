@@ -10,9 +10,10 @@ use super::chunks::{Chunk, Marker, Node};
 use super::frames;
 use super::images;
 use super::inline::{self, EntryLink, Run};
+use super::inline_picture_entries::InlineStyles;
 use super::notes::Popups;
 use super::table_styles::column_widths_152;
-use super::{Generator, measure, py, st, sym};
+use super::{GenerateError, Generator, measure, py, st, sym};
 
 /// `MAX_CONTENT_FRAGMENT_SIZE` (:1585).
 const MAX_CONTENT_FRAGMENT_SIZE: usize = 8192;
@@ -67,9 +68,10 @@ pub(crate) fn pack_content_fragments(
 /// `build_fragment_259` (:4199): one entry per chunk, text or picture, the first leaf marked
 /// `$790`, a text entry with its link and runs. A table's `open` starts a container whose
 /// `$146` holds the entries up to its `close` (#219): `$278` table, `$151`/`$454`/`$455` row
-/// group, `$279` row, `$269` cell of several blocks, `$270` box (#238). `parts`: a row's,
-/// group's or box's own `$157`. A rule is a `$596` entry (#230); a pop-up note's entry is
-/// marked `$615` (#445).
+/// group, `$279` row, `$269` cell of several blocks, `$270` box (#238), `$269` a linked
+/// picture's (#355). `parts`: a row's, group's, box's or link's own `$157`; a link's anchor is
+/// its `runs`' link. A rule is a `$596` entry (#230); a pop-up note's entry is marked `$615`
+/// (#445). A text entry holding pictures holds them among its words (#529).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_fragment_259(
     g: &mut Generator,
@@ -81,7 +83,8 @@ pub(crate) fn build_fragment_259(
     runs: &[(Option<EntryLink>, Vec<Run>)],
     chunks: &[Chunk],
     popups: &Popups,
-) -> Fragment {
+    inline_styles: &mut InlineStyles,
+) -> Result<Fragment, GenerateError> {
     g.local(name);
     for (content, _) in refs.iter().flatten() {
         g.local(content);
@@ -134,6 +137,19 @@ pub(crate) fn build_fragment_259(
                 Node::Cell(_) => {
                     g.local(style);
                     entry.insert("$157", sym(style));
+                }
+                Node::Link(_) => {
+                    if let Some((anchor, ..)) = &runs[i].0 {
+                        let link = st([
+                            ("$143", Value::Int(0)),
+                            ("$144", Value::Int(1)),
+                            ("$179", sym(anchor)),
+                        ]);
+                        entry.insert("$142", Value::List(vec![link]));
+                    }
+                    if let Some(part) = &parts[i] {
+                        entry.insert("$157", sym(part));
+                    }
                 }
                 Node::Group(..) | Node::Row(_) | Node::Box(_) => {
                     if let Some(part) = &parts[i] {
@@ -190,6 +206,10 @@ pub(crate) fn build_fragment_259(
             if popups.positions.contains(&position) {
                 entry.insert("$615", sym("$281"));
             }
+            if !chunk.pictures.is_empty() {
+                let mixed = inline_styles.mixed(g, &chunk.text, &chunk.pictures)?;
+                entry.insert("$146", mixed);
+            }
             let (link, runs) = &runs[i];
             inline::write_runs(g, &mut entry, link.as_ref(), runs);
         }
@@ -199,7 +219,7 @@ pub(crate) fn build_fragment_259(
         }
     }
     let value = st([("$176", sym(name)), ("$146", Value::List(root))]);
-    Fragment::new("$259", Some(name), value)
+    Ok(Fragment::new("$259", Some(name), value))
 }
 
 /// `_TABLE_NODE_TYPES` (:702).
@@ -210,7 +230,7 @@ fn node_type(node: &Node) -> &'static str {
         Node::Group("foot", _) => "$455",
         Node::Group(..) => "$454",
         Node::Row(_) => "$279",
-        Node::Cell(_) => "$269",
+        Node::Cell(_) | Node::Link(_) => "$269",
         // A frame is Previewer's plain container (:7485, #382, #565).
         Node::Box(b) if frames::is_frame(&b.spec) => "$269",
         Node::Box(_) => "$270",

@@ -5,6 +5,7 @@ mod generate_boxes;
 mod generate_frames;
 mod generate_images;
 mod generate_inline;
+mod generate_inline_pictures;
 mod generate_skeleton;
 mod generate_tables;
 mod load;

@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! A chapter's entries: [`Chunk`], one per paragraph, picture or contents line, and
-//! `_emit_paragraph`'s paragraph of text.
+//! `_emit_paragraph`'s dispatch.
 
 use super::block_styles::{BlockStyle, HeadingStyle, keep_space};
 use super::boxes::{BoxOpen, RuleStyle};
 use super::chapters::Block;
-use super::images::{self, Images, Picture};
+use super::images::{Images, Picture};
 use super::inline::{self, Anchors, Span};
+use super::inline_picture_entries::InlinePicture;
+use super::inline_pictures;
 use super::styles::LINE_EM;
 use super::table_chunks::{CellInfo, TableOpen};
 use super::tables::Border;
@@ -23,6 +25,8 @@ pub(crate) struct Chunk {
     pub spans: Vec<Span>,
     pub anchors: Anchors,
     pub picture: Option<Picture>,
+    /// The pictures among a text entry's words, each one U+FFFC of its text (#529).
+    pub pictures: Vec<InlinePicture>,
     pub rule: Option<RuleStyle>,
     pub marker: Option<Marker>,
     /// A text entry in a table cell.
@@ -51,6 +55,8 @@ pub(crate) enum Node {
     Cell(CellInfo),
     /// A box (#238), or a frame (#382, #565).
     Box(Box<BoxOpen>),
+    /// A linked picture's container, and its link's target (#355).
+    Link(String),
 }
 
 pub(crate) enum InCell {
@@ -68,6 +74,7 @@ impl Chunk {
             spans: Vec::new(),
             anchors: Anchors::default(),
             picture: None,
+            pictures: Vec::new(),
             rule: None,
             marker: None,
             in_cell: None,
@@ -133,9 +140,9 @@ pub(crate) fn space_to_write(block: &Block, space_above: f64) -> Option<f64> {
     (space_above > own + 0.01).then_some(space_above)
 }
 
-/// `_emit_paragraph` (:5745) for a paragraph of text alone, one chunk, of pictures alone, a
-/// chunk per picture the book holds, or opening with floated pictures, a frame round them and
-/// its words (#565). Returns the ids it could not place because it emitted nothing: only
+/// `_emit_paragraph` (:5745): a paragraph cut after its picture lines and at an empty line,
+/// each part on its own; one opening with floated pictures in a frame of its own (#565);
+/// else its entries. Returns the ids it could not place because it emitted nothing: only
 /// pictures the book doesn't hold.
 pub(crate) fn emit_paragraph(
     block: &Block,
@@ -143,53 +150,48 @@ pub(crate) fn emit_paragraph(
     images: &Images,
     chunks: &mut Vec<Chunk>,
 ) -> Result<Vec<String>, GenerateError> {
-    if frames::floats_among_words(block) {
-        return frames::emit_floated_paragraph(block, first_in_chapter, images, chunks);
-    }
-    emit_float_wrapped(block, first_in_chapter, images, chunks)
+    emit(block, first_in_chapter, false, images, chunks)
 }
 
-/// `_emit_paragraph` of a block kfxgen marks `float_wrapped`, or one with no float among words:
-/// no frame of its own.
+/// `_emit_paragraph` of a block kfxgen marks `float_wrapped`: a frame's, whose floats are
+/// written among its words.
 pub(crate) fn emit_float_wrapped(
     block: &Block,
     first_in_chapter: bool,
     images: &Images,
     chunks: &mut Vec<Chunk>,
 ) -> Result<Vec<String>, GenerateError> {
-    let para = block.text.trim_matches(ASCII_SPACE);
-    if images::has_picture(para) {
-        // A picture has no text for a level, a style or space to go on (:5862).
-        return images::emit_picture_paragraph(para, block, images, chunks);
-    }
-    if py::strip(para).is_empty() {
-        return Ok(Vec::new());
-    }
-    // A chapter's first paragraph opens a page or sits under its heading (#230, :6496).
-    let scene = if first_in_chapter {
-        0.0
-    } else {
-        block.space_above
-    };
-    let space_above = if block.tight {
-        Some(0.0)
-    } else {
-        match block.margin_above {
-            // The book's margins, as Previewer writes them (#553).
-            Some(margin) => margin,
-            None => space_to_write(block, scene),
+    emit(block, first_in_chapter, true, images, chunks)
+}
+
+fn emit(
+    block: &Block,
+    first_in_chapter: bool,
+    float_wrapped: bool,
+    images: &Images,
+    chunks: &mut Vec<Chunk>,
+) -> Result<Vec<String>, GenerateError> {
+    if let Some(pieces) = inline_pictures::cut_after_picture_lines(block) {
+        let mut unplaced = Vec::new();
+        for piece in &pieces {
+            unplaced.extend(emit(
+                piece,
+                first_in_chapter,
+                float_wrapped,
+                images,
+                chunks,
+            )?);
         }
-    };
-    // Spans and offsets count from the block's text, not the trimmed paragraph (:5530).
-    let (spans, anchors) = inline::place(&block.spans, &block.anchors, py::len(para) as i64);
-    chunks.push(Chunk {
-        heading_level: block.heading_level,
-        spans,
-        anchors,
-        style: block.style.clone(),
-        space_above,
-        space_below: (block.margin_below != 0.0).then_some(block.margin_below),
-        ..Chunk::text(para.to_owned())
-    });
-    Ok(Vec::new())
+        return Ok(unplaced);
+    }
+    if !float_wrapped && frames::floats_among_words(block) {
+        return frames::emit_floated_paragraph(block, first_in_chapter, images, chunks);
+    }
+    Ok(inline_pictures::emit_entries(
+        block,
+        first_in_chapter,
+        float_wrapped,
+        images,
+        chunks,
+    ))
 }

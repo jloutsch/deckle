@@ -2,19 +2,16 @@
 //! Frames: a box written as Kindle Previewer's plain container (`_is_frame`,
 //! `native_generator.py:726`), a picture's size in a sized box (`_size_in_box` :224, #382), and
 //! a paragraph opening with floated pictures, written in a frame of its own
-//! (`_emit_floated_paragraph` :5642, #565).
-//!
-//! A float later among a paragraph's words is written in them as an inline picture
-//! (`_inline_pictures` :5563), which isn't ported: such a paragraph is still
-//! `Unsupported("pictures among words")`.
+//! (`_emit_floated_paragraph` :5642, #565). A float later among its words is written in them
+//! (`inline_pictures`).
 use std::collections::BTreeMap;
 
 use regex::Captures;
 
 use super::boxes::{BoxOpen, BoxSpec};
-use super::chapters::{Block, cut_at_empty_line};
+use super::chapters::Block;
 use super::chunks::{ASCII_SPACE, Chunk, Marker, Node, emit_float_wrapped, space_to_write};
-use super::images::{IMAGE_COLUMN_PX, IMG_TOKEN, Images, SIZE_HINT, has_picture, picture_link};
+use super::images::{IMAGE_COLUMN_PX, IMG_TOKEN, Images, SIZE_HINT, picture_link};
 use super::inline::{Anchors, Span};
 use super::styles::LINE_EM;
 use super::{GenerateError, py};
@@ -88,10 +85,10 @@ fn size_in_box(
 fn floats(text: &str, m: &Captures, spans: &[Span]) -> bool {
     let whole = m.get(0).unwrap();
     m.get(4).is_some_and(|f| !f.as_str().is_empty())
-        && !picture_link(spans, py::len(&text[..whole.start()]) as i64)
+        && picture_link(spans, py::len(&text[..whole.start()]) as i64).is_none()
 }
 
-/// `_floats_among_words` (:313): a paragraph holding words and a floated picture. A table
+/// `_floats_among_words` (:315): a paragraph holding words and a floated picture. A table
 /// cell's, a list item's and preformatted text never get here: with a picture they are
 /// Unsupported when read.
 pub(crate) fn floats_among_words(block: &Block) -> bool {
@@ -123,13 +120,6 @@ pub(crate) fn emit_floated_paragraph(
             break;
         }
         lead = whole.end();
-    }
-    // `_emit_paragraph` cuts the words after the floats at an empty line
-    // (`_cut_after_picture_lines` :535), not ported. With a float among them, the words are
-    // Unsupported below.
-    let words = &text[lead..];
-    if !has_picture(words) && cut_at_empty_line(words) {
-        return Err(Unsupported("a paragraph cut at an empty line"));
     }
     let space = if block.tight {
         0.0
@@ -178,7 +168,7 @@ pub(crate) fn emit_floated_paragraph(
     };
     unplaced.extend(emit_float_wrapped(&rest, false, images, chunks)?);
     // kfxgen drops a frame holding no entry (:5690); the words after the floats always make
-    // one here, a float among them being Unsupported.
+    // one here.
     chunks.push(Chunk::marker(Marker::Close));
     Ok(unplaced)
 }

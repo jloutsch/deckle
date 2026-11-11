@@ -9,6 +9,7 @@ use super::block_styles::{BlockStyle, number, read_bidi, read_block_style};
 use super::chapters::Block;
 use super::images;
 use super::inline::{Anchors, Span, read_spans};
+use super::inline_pictures::cut_after_picture_lines;
 use super::table_styles::padding_values;
 use super::{GenerateError, model_err, py};
 use crate::pyvalue::{PyValue, truthy};
@@ -289,7 +290,7 @@ fn read_cell(c: &PyValue, at: &str) -> Result<Cell, GenerateError> {
         if images::has_picture(&text) {
             return Err(Unsupported("pictures in a table cell"));
         }
-        if super::chapters::cut_at_empty_line(&text) {
+        if cut_after_picture_lines(&Block::plain(text.clone())).is_some() {
             return Err(Unsupported("a cell cut at an empty line"));
         }
     }

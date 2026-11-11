@@ -6,17 +6,20 @@
 //! `inline`'s, pictures `images`', boxes and rules `boxes`', pop-up notes `notes`'.
 use std::collections::{BTreeMap, BTreeSet};
 
+use deckle_kfx::fragment::Fragment;
+
 use super::block_styles::{
     self, Containers, HeadingStyle, Sizes, heading_attrs, heading_style, text_entry_style,
 };
 use super::boxes::{self, drop_edge_rules, emit_box_chunks, rule_chunk, unboxed};
-use super::chapters::{Block, Chapter, cut_at_empty_line};
-use super::chunks::{Chunk, Marker, emit_paragraph, print_book_heading};
+use super::chapters::{Block, Chapter};
+use super::chunks::{Chunk, Marker, Node, emit_paragraph, print_book_heading};
 use super::fragments::{
     ContentRef, build_fragment_145, build_fragment_259, pack_content_fragments, style_refs,
 };
 use super::images::{self, ImageStyles, Images, Picture};
 use super::inline::{self, ChunkLinks, RunBase};
+use super::inline_picture_entries::{self, InlineStyles};
 use super::notes::{self, Popups};
 use super::styles::{Style157, StyleArgs, Styles};
 use super::table_chunks;
@@ -221,13 +224,8 @@ pub(crate) fn build_chapter_content(
                     }
                     None => text
                         .split("\n\n")
-                        .map(|p| {
-                            if !images::has_picture(p) && cut_at_empty_line(p) {
-                                return Err(Unsupported("a paragraph cut at an empty line"));
-                            }
-                            Ok(Block::plain(p.to_owned()))
-                        })
-                        .collect::<Result<_, _>>()?,
+                        .map(|p| Block::plain(p.to_owned()))
+                        .collect(),
                 };
                 // Ids of a paragraph that emitted nothing, only pictures the book doesn't
                 // hold, wait for the next block's first chunk (#291), else go on the
@@ -333,6 +331,16 @@ pub(crate) fn build_chapter_content(
             content_pos_id += CONTENT_POS_STEP;
         }
     }
+    let sizes = Sizes::of(&chunks);
+    for (ch_idx, &(start, end)) in chapter_chunk_ranges.iter().enumerate() {
+        let fs = chapters[ch_idx].font_size;
+        inline_picture_entries::number(
+            &mut chunks[start..end],
+            |c| sizes.block_font_size(fs, c),
+            &mut content_pos_id,
+            CONTENT_POS_STEP,
+        );
+    }
     // `_section_base` (:5267): above the content's positions.
     let content_max = content_pos_id - CONTENT_POS_STEP;
     let section_base = SECTION_POS_BASE.max(content_max + SECTION_POS_STEP);
@@ -382,7 +390,10 @@ pub(crate) fn build_chapter_content(
     let mut next_content_index = 1;
     for &(start, end) in &chapter_chunk_ranges {
         let text_chunks: Vec<usize> = (start..end)
-            .filter(|&i| chunks[i].is_leaf() && chunks[i].picture.is_none())
+            // A paragraph holding pictures holds its words in its entry (#567).
+            .filter(|&i| {
+                chunks[i].is_leaf() && chunks[i].picture.is_none() && chunks[i].pictures.is_empty()
+            })
             .collect();
         let mut refs_by_chunk: Vec<Option<ContentRef>> = vec![None; end - start];
         if !text_chunks.is_empty() {
@@ -439,7 +450,7 @@ pub(crate) fn build_chapter_content(
     }
     let pictures: Vec<&Picture> = chunks.iter().filter_map(|c| c.picture.as_ref()).collect();
     let image_styles = ImageStyles::allocate(g, &pictures, images, &mut extra_style_names)?;
-    let sizes = Sizes::of(&chunks);
+    let mut inline_styles = InlineStyles::new(images);
 
     // $259: a storyline per chapter (:7359).
     let mut storyline_names = Vec::new();
@@ -462,7 +473,14 @@ pub(crate) fn build_chapter_content(
                 // chapter's, unused.
                 entry_styles.push(style.unwrap_or_else(|| story_names[ch_idx].clone()));
                 entry_parts.push(part);
-                entry_runs.push((None, Vec::new()));
+                // A linked picture's container: its link's anchor (:7495).
+                let link = match marker {
+                    Marker::Open(Node::Link(target)) => body_anchor_map
+                        .get(target)
+                        .map(|a| (a.clone(), String::new(), 1)),
+                    _ => None,
+                };
+                entry_runs.push((link, Vec::new()));
                 continue;
             }
             entry_parts.push(None);
@@ -545,7 +563,8 @@ pub(crate) fn build_chapter_content(
             &entry_runs,
             &chunks[start..end],
             &popups,
-        );
+            &mut inline_styles,
+        )?;
         g.push(fragment);
         storyline_names.push(sl_name);
     }
@@ -571,6 +590,11 @@ pub(crate) fn build_chapter_content(
         });
         story_names.retain(|n| !unused.contains(n));
         extra_style_names.retain(|n| !unused.contains(n));
+    }
+    // Pictures among words: their styles after the pruning (:8133).
+    for (name, value) in inline_styles.into_styles() {
+        g.push(Fragment::new("$157", Some(&name), value));
+        extra_style_names.push(name);
     }
 
     Ok(ChapterData {

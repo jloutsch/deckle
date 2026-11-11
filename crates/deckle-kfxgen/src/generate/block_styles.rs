@@ -458,7 +458,7 @@ impl Containers {
             Node::Table(t) => t.bidi.clone(),
             Node::Cell(_) => chunk.style.as_ref().and_then(|b| b.bidi.clone()),
             Node::Box(b) => b.spec.bidi.clone(),
-            Node::Group(..) | Node::Row(_) => None,
+            Node::Group(..) | Node::Row(_) | Node::Link(_) => None,
         };
         let around = self.around().map(str::to_owned);
         let lang = bidi_diff(own.as_ref().and_then(|o| o.as_deref()), around.as_deref());
@@ -468,6 +468,14 @@ impl Containers {
             matches!(node, Node::Cell(_)).then(|| sizes.block_font_size(chapter_fs, chunk));
         self.sizes.push(cell_size);
         Ok(match node {
+            // A linked picture's container centres it, as `$580` does a picture alone (:7505).
+            Node::Link(_) => {
+                let centred = Style157 {
+                    align: Some("center".to_owned()),
+                    ..Style157::body(chapter_fs)
+                };
+                (None, Some(styles.allocate(g, "", centred)))
+            }
             Node::Box(b) => {
                 let style = BoxStyle::of(b, sizes.rem(b.spec.font_px));
                 style.check()?;

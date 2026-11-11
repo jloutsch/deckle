@@ -12,6 +12,8 @@ mod fragments;
 mod frames;
 mod images;
 mod inline;
+mod inline_picture_entries;
+mod inline_pictures;
 mod metadata;
 mod nav;
 mod notes;
