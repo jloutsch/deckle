@@ -66,6 +66,7 @@ hrefs, unreadable JPEGs). The books are `ARG_BOOKS` in that script, their other 
 | `main_size_tie` | two text sizes with as many characters each: the smaller is the book's main size |
 | `frame_edges` | a paragraph opening with floats (#565): tight, a scene break's space, kfxgen's own above an indented and an unindented paragraph, a margin of None, first in its chapter, a heading level, ids before, at and after the cut, at its end and with no offset, a run over the cut, a float the book doesn't hold, in a bordered box; pictures in sized boxes (#382) in pt, em, px against a box in px, an unreadable size, a width of 0, nested a box deeper; a sized box bordered, floated right, to a side that isn't left, to ""; centred with no width |
 | `inline_pictures` | pictures among words (#529, #565): no size, each width and height unit, a width with a given height in % and in lengths, each vertical-align keyword and length, one the book doesn't hold with runs into it, one it can't measure, at a text size of 24px and in a 0.75 chapter, two side by side, one ending its paragraph, in a sized box, in a paragraph of 4,700 characters; a linked one among words; a linked picture alone, with ids, at a location, its link to nothing, and one an earlier paragraph's ids land on; a linked float among words, cut into entries (kfxgen #21: a repeated piece takes the first's runs); floats among words of each size, a side that isn't left or right, the space after one, a frame's float and linked float among words; paragraphs cut after a picture line (its level, indent and margins on the right part, ids at the cut) and at an empty line (verse keeping its level, a scene break's space, a no-break-space spacer, ids in the blank lines, a run over the cut, a lost picture before the cut, a tight line, in a box, after floats); a chapter of plain text cut at an empty line |
+| `font_faces` | embedded faces (#15, #50): a family of a bold, an italic and, last, a regular face, matched exactly and by falling back to the regular; a family of a bold italic and a bold face, no regular; a monospace family of a regular and a 600 weight; a family found second in a paragraph's list; bold and not-bold, italic and upright runs; a header cell's bold face, an italic cell's; monospace runs (#242) embedded, not embedded, in no family and in no families at all, inside a link; runs of their own size (#241, #375): bigger, at, back to and off the paragraph's size, with a link found and not, with super, a size of 0, a paragraph wholly in one, the book's main size set by runs; the book's heading in runs of one size, of two sizes and with no CSS (QA on #720, #721); a picture's resource before the faces |
 
 **Calibre path** (`ebook-convert` with kfxgen, CSS applied): the source is
 `sources/<name>.epub`. For each, the script also checks that replaying the model gives exactly
@@ -87,9 +88,12 @@ the KFX `ebook-convert` wrote.
 | `frames` | synthetic, shaped as kfxgen `test_books/figures` and `floats` less a linked picture and a picture among words | figures 40% wide, centred at 60%, 300px and 12em wide, floated, shaded; pictures with no size, in px and high in a sized box; floats opening a paragraph, with ids; a float in a sized box |
 | `floats` | kfxgen `test_books/floats/floats-fix-source.epub` | floats opening a paragraph and among its words, linked floats, a picture among words |
 | `floats_697` | kfxgen `test_books/floats_697/F697 kfxgen source.epub` | floats in mid-sentence, left and right (#697) |
+| `font_sizes` | kfxgen `test_books/font_sizes/font-sizes-source.epub` | paragraphs, spans and cells sized in CSS (#241) |
 
 The `fonts` fixture embeds Liberation Serif 2.1.5 (SIL Open Font License 1.1), taken from
-calibre's bundled fonts. No fixture contains MathML.
+calibre's bundled fonts. The faces of `font_faces` are TrueType fonts of one empty glyph that
+`kfxgen_models.py` makes with fontTools (`_tiny_font`), holding no other font's data. No fixture
+contains MathML.
 
 The 9-book Gutenberg corpus is dumped the same way, outside git:
 `DECKLE_KFXGEN_CORPUS_OUT=gutenberg/models tools/ref/kfxgen_models.sh --corpus gutenberg/*.epub`

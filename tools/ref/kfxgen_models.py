@@ -962,7 +962,269 @@ def _inline_pictures():
     ]
 
 
-_APP0 = b"\xff\xe0\x00\x04\x00\x00"
+def _on(text, words, *flags):
+    """A run over the first `words` in `text`."""
+    return (text.index(words), len(words), frozenset(flags))
+
+
+def _mono(*families):
+    return ("mono", tuple(families))
+
+
+def _size(px):
+    return ("size", px)
+
+
+def _font_faces():
+    """Embedded faces matched to paragraphs, runs and cells (#15, #50), monospace runs
+    (#242) and runs of their own size (#241, #375) past what the Calibre-path `fonts` and
+    `font_sizes` reach."""
+    faces = "Regular, bold, italic, both and none."
+    light = "A bold paragraph with a light word."
+    upright = "An italic paragraph with an upright word."
+    second = "Sans from its second family, bold and italic."
+    code = "Code here, bold code, courier, fira, other, empty."
+    linked = "See the linked code sample here, and there."
+    sizes = "Bigger, main, smaller and sup words."
+    twenty = "At twenty: back to main, same, linked same, lost same, up."
+    serif = ("book serif", "serif")
+    return [
+        _chapter(
+            "Faces",
+            [
+                _para("Faces", heading=True, level=1, px=24.0, bold=True, family=serif),
+                _para(
+                    faces,
+                    [
+                        _on(faces, "bold", "bold"),
+                        _on(faces, "italic", "italic"),
+                        _on(faces, "both", "bold", "italic"),
+                    ],
+                    family=serif,
+                ),
+                _para(light, [_on(light, "light", "not-bold")], bold=True, family=serif),
+                _para(
+                    upright, [_on(upright, "upright", "not-italic")], italic=True, family=serif
+                ),
+                _para(
+                    second,
+                    [_on(second, "bold and italic", "bold", "italic")],
+                    family=("missing family", "book sans", "book serif"),
+                ),
+                _para("Monospace the book doesn't embed.", family=("Courier New", "monospace")),
+                _para(
+                    code,
+                    [
+                        _on(code, "Code", _mono("book mono", "monospace")),
+                        _on(code, "bold code", "bold", _mono("book mono")),
+                        _on(code, "courier", _mono("courier")),
+                        _on(code, "fira", _mono("fira code", "x serif")),
+                        _on(code, "other", _mono("x serif", "y sans")),
+                        _on(code, "empty", _mono()),
+                    ],
+                    family=serif,
+                ),
+                # A link over monospace words, one italic: the run inside takes the link's
+                # family, not the paragraph's (#715). A link set in no families: no style,
+                # and an italic word in it keeps the paragraph's family.
+                _para(
+                    linked,
+                    [
+                        _on(linked, "linked", ("link", "c2.xhtml"), _mono("book mono")),
+                        _on(linked, " code", ("link", "c2.xhtml"), _mono("book mono")),
+                        _on(
+                            linked,
+                            " sample",
+                            ("link", "c2.xhtml"),
+                            _mono("book mono"),
+                            "italic",
+                        ),
+                        (linked.index("there"), 3, frozenset({("link", "c1.xhtml"), _mono()})),
+                        _on(linked, "re.", ("link", "c1.xhtml"), _mono(), "italic"),
+                    ],
+                    family=serif,
+                ),
+                _para(_pic("OEBPS/p.png", "a picture")),
+            ],
+        ),
+        _chapter(
+            "Sizes",
+            [
+                _para("Sizes", keys=["c2.xhtml"], heading=True, level=1, px=24.0, bold=True),
+                _para(
+                    sizes,
+                    [
+                        _on(sizes, "Bigger", _size(24.0)),
+                        _on(sizes, "main", _size(16)),
+                        _on(sizes, "smaller", _size(12.0), "bold"),
+                        _on(sizes, "sup", "super"),
+                    ],
+                ),
+                _para(
+                    twenty,
+                    [
+                        _on(twenty, "back to main", _size(16.0)),
+                        _on(twenty, "same", _size(20.0)),
+                        _on(twenty, "linked same", _size(20.0), ("link", "c1.xhtml")),
+                        _on(twenty, "lost same", _size(20.0), ("link", "missing.xhtml")),
+                        _on(twenty, "up", _size(12.0), "super"),
+                    ],
+                    keys=["c1.xhtml"],
+                    px=20.0,
+                ),
+                _para("Wholly in one sized run.", [(0, 24, frozenset({_size(24.0)}))], px=18.0),
+                # A size of 0 counts no characters: the paragraph is at its own (#375).
+                _para("A run of size 0.", [(0, 16, frozenset({_size(0)}))], px=20.0),
+                # The book's main size is in runs: its paragraph's own is 20px (#375 review).
+                _para(
+                    "The main size is in runs. " * 80,
+                    [(0, 26 * 80, frozenset({_size(16.0)}))],
+                    px=20.0,
+                ),
+            ],
+        ),
+        # The book's heading in runs of one size prints at it, the space between unsized
+        # (QA on #720); in runs of two sizes at its own (#721).
+        _chapter(
+            "One Size",
+            [
+                _para(
+                    "One Size",
+                    [(0, 3, frozenset({_size(40.0)})), (4, 4, frozenset({_size(40.0)}))],
+                    heading=True,
+                    level=1,
+                    px=32.0,
+                    bold=True,
+                ),
+                _para("Body."),
+            ],
+        ),
+        _chapter(
+            "Two Sizes",
+            [
+                _para(
+                    "Two Sizes",
+                    [(0, 3, frozenset({_size(40.0)})), (4, 5, frozenset({_size(20.0)}))],
+                    heading=True,
+                    level=1,
+                    px=32.0,
+                    bold=True,
+                ),
+                _para("Body."),
+            ],
+        ),
+        # A heading of no CSS in one size: a book style of only that size. In two: none, so
+        # kfxgen's heading keeps its size and its runs none (#241).
+        _chapter(
+            "No Style",
+            [_block("No Style", [(0, 8, frozenset({_size(24.0)}))], heading=True), _para("Body.")],
+        ),
+        _chapter(
+            "Unsized Heading",
+            [
+                _block(
+                    "Unsized Heading",
+                    [(0, 7, frozenset({_size(24.0), "bold"})), (8, 7, frozenset({_size(30.0)}))],
+                    heading=True,
+                ),
+                _para("Body."),
+            ],
+        ),
+        _chapter(
+            "Cells",
+            [
+                _para("Cells", heading=True, level=1, px=24.0, bold=True),
+                _table(
+                    [
+                        _row(
+                            [
+                                _cell("Head", header=True, block_style=_style(family=serif)),
+                                _cell(
+                                    "Leaning",
+                                    block_style=_style(italic=True, family=serif),
+                                ),
+                                _cell(
+                                    "Small and big",
+                                    [(10, 3, frozenset({_size(24.0), _mono("book mono")}))],
+                                    block_style=_style(family=serif),
+                                ),
+                                _cell(
+                                    "Head lines",
+                                    header=True,
+                                    block_style=_style(family=serif),
+                                    paragraphs=[
+                                        _block("Head"),
+                                        _block("lines", [(0, 5, frozenset({"italic"}))]),
+                                    ],
+                                ),
+                            ]
+                        )
+                    ]
+                ),
+            ],
+        ),
+    ]
+
+
+def _tiny_font(family, style):
+    """A TrueType font of one empty glyph, made here: a face's bytes only travel through the
+    generator, so the faces of `font_faces` need no glyphs."""
+    from io import BytesIO
+
+    from fontTools.fontBuilder import FontBuilder
+    from fontTools.pens.ttGlyphPen import TTGlyphPen
+
+    fb = FontBuilder(1000, isTTF=True)
+    fb.font.recalcTimestamp = False
+    fb.setupGlyphOrder([".notdef"])
+    fb.setupCharacterMap({})
+    fb.setupGlyf({".notdef": TTGlyphPen(None).glyph()})
+    fb.setupHorizontalMetrics({".notdef": (500, 0)})
+    fb.setupHorizontalHeader(ascent=800, descent=-200)
+    fb.setupNameTable({"familyName": family, "styleName": style})
+    fb.setupOS2()
+    fb.setupPost()
+    fb.font["head"].created = fb.font["head"].modified = 0
+    out = BytesIO()
+    fb.save(out)
+    return out.getvalue()
+
+
+def _font_faces_extras():
+    """`font_faces`'s faces, as `faces_from_rules` makes them: a family of a bold, an italic
+    and, last, a regular face; one of a bold italic and a bold, no regular; a monospace one of
+    a regular and a 600 weight (the bold threshold)."""
+    from kfxgen.font_table import Face, FontTable, emitted_name
+
+    taken = set()
+    faces = []
+    for family, weight, italic, style in [
+        ("book serif", 700, False, "Bold"),
+        ("book serif", 400, True, "Italic"),
+        ("book serif", 400, False, "Regular"),
+        ("book sans", 700, True, "Bold Italic"),
+        ("book sans", 700, False, "Bold"),
+        ("book mono", 400, False, "Regular"),
+        ("book mono", 600, False, "Semibold"),
+    ]:
+        faces.append(
+            Face(
+                css_family=family,
+                weight=weight,
+                italic=italic,
+                data=_tiny_font(family.title(), style),
+                emitted_family=emitted_name(family, weight, italic, taken),
+                location=f"resource/font{len(faces)}",
+            )
+        )
+    return {
+        "font_table": FontTable(faces),
+        "images": {"OEBPS/p.png": _png(600, 400)},
+        "resolved_image_refs": True,
+    }
+
+
+_APP0 =b"\xff\xe0\x00\x04\x00\x00"
 #: The covers of `cover_paths` and `cover_page`, each also a picture in its book's text.
 _COVER = _jpeg(600, 800, _APP0)
 _TALL_COVER = _png(1600, 2560)
@@ -1743,6 +2005,7 @@ ARG_BOOKS = {
     # Pictures among words, linked pictures and paragraphs cut at their picture and empty
     # lines, past what the Calibre-path `floats` and `floats_697` reach.
     "inline_pictures": _inline_pictures(),
+    "font_faces": _font_faces(),
 }
 
 #: The image books' other arguments.
@@ -1755,6 +2018,8 @@ ARG_BOOK_EXTRAS = {
         },
         "resolved_image_refs": True,
     },
+    # Made after kfxgen is importable.
+    "font_faces": _font_faces_extras,
     "box_titles": {"footnote_keys": {"s7.xhtml#cellnote"}},
     "frame_edges": {
         "images": {"OEBPS/p.png": _png(600, 400), "OEBPS/q.png": _png(256, 100)},
@@ -1810,13 +2075,16 @@ def args(kfxgen, out):
 
     for name, chapters in ARG_BOOKS.items():
         model = out / name
+        extras = ARG_BOOK_EXTRAS.get(name, {})
+        if callable(extras):
+            extras = extras()
         os.environ["KFXGEN_DUMP_MODEL"] = str(model)
         kfx = NativeKFXGenerator().generate_full_book(
             title=name,
             author="Fixture Author",
             chapters=chapters,
             approximate_pages=True,
-            **ARG_BOOK_EXTRAS.get(name, {}),
+            **extras,
         )
         del os.environ["KFXGEN_DUMP_MODEL"]
         replay = NativeKFXGenerator().generate_full_book(**model_dump.load(model))
