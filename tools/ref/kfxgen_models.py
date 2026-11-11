@@ -266,7 +266,7 @@ def _block(text, spans=(), keys=(), offsets=None, heading=False, level=None):
 
 
 def _chapter(title, blocks, **extra):
-    text = "\n\n".join(b["text"] for b in blocks)
+    text = "\n\n".join(b["text"] for b in blocks if "text" in b)
     return {"title": title, "text": text, "blocks": blocks, "toc_level": 0, **extra}
 
 
@@ -367,6 +367,99 @@ def _table(rows, keys=(), stray=(), block_keys=None, **extra):
         "anchor_offsets": dict.fromkeys(every, 0),
         "table": table,
         "anchor_keys": every,
+    }
+
+
+def _style(px=16.0, line=1.2, bold=False, italic=False, family=("serif",), lang=None, **more):
+    """A block style as the Calibre path writes one: every key set, None where the CSS has
+    none."""
+    style = {
+        "align": None,
+        "indent": None,
+        "margin_left": None,
+        "margin_right": None,
+        "font_family": list(family),
+        "line_height": line,
+        "bold": bold,
+        "italic": italic,
+        "font_size": px,
+    }
+    if lang:
+        style["bidi"] = {"lang": lang}
+    style.update(more)
+    return style
+
+
+def _para(
+    text,
+    spans=(),
+    keys=(),
+    above=1.0,
+    below=None,
+    heading=False,
+    level=None,
+    scene=None,
+    tight=False,
+    **style,
+):
+    """A Calibre-path paragraph: a block style and the book's margins in ems. `above` is
+    left out for "absent", as the converter leaves it out with no margin of its own; `scene`
+    is a scene break's space above (#230); `tight` a list item's line (#701)."""
+    block = _block(text, spans, keys, dict.fromkeys(keys, 0), heading, level)
+    if scene is not None:
+        block["space_above"] = scene
+    if tight:
+        block.update(in_list=True, tight=True)
+    block["block_style"] = _style(**style)
+    block["writing_mode"] = "horizontal-tb"
+    if above != "absent":
+        block["margin_above"] = above
+    if below is not None:
+        block["margin_below"] = below
+    return block
+
+
+def _box(blocks, keys=(), above=1.0, below=0.0, **look):
+    """A box block (#238): a solid border and a padding unless `look` says otherwise."""
+    box = {
+        "border": {s: ("solid", 0.45, None) for s in ("top", "right", "bottom", "left")},
+        "background": None,
+        "padding": {s: 0.5 for s in ("top", "right", "bottom", "left")},
+        "font_px": 16.0,
+        "margin_left": None,
+        "margin_right": None,
+        "width": None,
+        "width_px": None,
+        "float": None,
+        "centred": False,
+        "bidi": {},
+    }
+    box.update(look)
+    every = list(keys)
+    for b in blocks:
+        every += [k for k in b.get("anchor_keys") or () if k not in every]
+    return {
+        "type": "box",
+        "box": box,
+        "blocks": blocks,
+        "text": "\n\n".join(b["text"] for b in blocks),
+        "anchor_ids": [],
+        "anchor_keys": every,
+        "anchor_offsets": dict.fromkeys(every, 0),
+        "margin_above": above,
+        "margin_below": below,
+        "writing_mode": "horizontal-tb",
+    }
+
+
+def _rule(**look):
+    return {
+        "type": "rule",
+        "rule": {"space_above": 0.5, "space_below": 0.5, **look},
+        "anchor_ids": [],
+        "anchor_keys": [],
+        "anchor_offsets": {},
+        "writing_mode": "horizontal-tb",
     }
 
 
@@ -914,10 +1007,243 @@ ARG_BOOKS = {
             ],
         ),
     ],
+    # Paragraph and heading styles no Calibre-made fixture has: the book's heading aligned,
+    # indented, italic and spaced below; centred, italic, taller lines, a hanging indent, a
+    # scene break with no margin of the book's, monospace text, a language of its own.
+    "block_styles": [
+        _chapter(
+            "Styled",
+            [
+                _para(
+                    "Styled",
+                    keys=["s1.xhtml"],
+                    above=0.67,
+                    below=0.5,
+                    heading=True,
+                    level=1,
+                    px=32.0,
+                    bold=True,
+                    italic=True,
+                    align="center",
+                    margin_left=("5", "$314"),
+                    margin_right=("5", "$314"),
+                    lang="en",
+                ),
+                _para(
+                    "Centred, italic and tall.",
+                    [(9, 6, frozenset({"bold"}))],
+                    below=0.5,
+                    italic=True,
+                    align="center",
+                    line=1.8,
+                ),
+                _para("Lines set closer than Previewer writes.", above="absent", line=0.5),
+                _para("A hanging indent.", above="absent", indent=("-1.5", "$308")),
+                _para("An indent.", above="absent", scene=1.0, indent=("1.5", "$308")),
+                _para("A tight list item.", above=1.0, tight=True),
+                _para("A small scene break.", above="absent", scene=1.0),
+                _para("A wide scene break.", above="absent", scene=2.5),
+                _para(
+                    "Mono with bold.",
+                    [(10, 4, frozenset({"bold"}))],
+                    family=("Courier New", "monospace"),
+                ),
+                _para("A margin of None.", above=None),
+                _para("Right margin.", margin_right=("2", "$308")),
+                _para("En français.", lang="fr"),
+                _para("The main text, plain, to make 16 px and 1.2 the book's own."),
+                _para("More of the main text, so that it stays the most."),
+            ],
+        ),
+        # The title split over a heading and a table's row: the heading's style prints.
+        _chapter(
+            "Two Line",
+            [
+                _para("Two", above=0.5, bold=True, px=24.0, align="left"),
+                _table([_row([_cell("Line")]), _row([_cell("Kept")], order=1)]),
+                _para("Body."),
+            ],
+        ),
+        # kfxgen's heading takes the page's language, here a box's; the box's own, and a
+        # paragraph's that is the box's and one that isn't. Its padding in ems and %, at a
+        # size not the main text's.
+        _chapter(
+            "Untitled page",
+            [
+                _box(
+                    [_para("Boxed German.", lang="de"), _para("Boxed English.", lang="en")],
+                    above=1.0,
+                    below=0.5,
+                    font_px=20.0,
+                    padding={"top": 0.5, "right": ("%", 10.0), "bottom": 0.5, "left": 1.0},
+                    margin_left=6.25,
+                    bidi={"lang": "de"},
+                ),
+                _para("Après la boîte.", lang="fr"),
+            ],
+        ),
+    ],
+    # Two text sizes with as many characters each: the main size is the smaller (`_most`).
+    "main_size_tie": [
+        _chapter("Tie", [_para("Ten chars.", px=20.0), _para("Ten chars!", px=16.0)]),
+    ],
+    # The chapter's title in and around boxes: split over a box's lines, in a box in a box,
+    # a box holding only the title, the title running on in a box, a book heading in a box
+    # near the start; a box's own ids, a box in a box and a table in one, which sets no
+    # language inside the box's; the title over rules; a rule as a storyline's first entry.
+    "box_titles": [
+        _chapter(
+            "Split Title",
+            [
+                _box(
+                    [_para("Split", keys=["b1.xhtml#a"]), _para("Title"), _para("Rest.")],
+                    keys=["b1.xhtml"],
+                ),
+            ],
+        ),
+        _chapter(
+            "Nested",
+            [
+                _box(
+                    [
+                        _box([_para("Nested", keys=["b2.xhtml#n"]), _para("Inner rest.")]),
+                        _para("Outer rest."),
+                    ]
+                ),
+            ],
+        ),
+        _chapter(
+            "Only title",
+            [
+                _box([_para("Only title", below=0.8)], keys=["b3.xhtml"]),
+                _para("After the box."),
+            ],
+        ),
+        _chapter("Remainder", [_box([_para("Remainder."), _para("Second.")])]),
+        # Split over a box's lines: one line in a box in a box, written otherwise than the
+        # title; a paragraph and a table's row; a run a picture stops in a box in a box.
+        _chapter(
+            "Split-Title",
+            [
+                {
+                    **_box(
+                        [
+                            {
+                                **_box([_para("Split Title!", keys=["b5.xhtml#s"])]),
+                                "anchor_keys": [],
+                                "anchor_offsets": {},
+                            },
+                            _para("Rest."),
+                        ]
+                    ),
+                    "anchor_keys": [],
+                    "anchor_offsets": {},
+                }
+            ],
+        ),
+        _chapter(
+            "Split Row",
+            [
+                _box(
+                    [
+                        _para("Split"),
+                        _table([_row([_cell("Row")]), _row([_cell("Kept row")], order=1)]),
+                        _para("After."),
+                    ]
+                )
+            ],
+        ),
+        _chapter(
+            "Split Pic",
+            [
+                _box([_box([_para("Split"), _para(_pic("missing.png", "x"))]), _para("More.")]),
+                _para("Pic"),
+            ],
+        ),
+        _chapter("Pictured box", [_box([_para(_pic("missing.png", "y")), _para("Words.")])]),
+        # A box opening with the book's heading of the title: no heading near the start.
+        _chapter("Boxed Title", [_box([_para("Boxed Title", heading=True), _para("Text.")])]),
+        # A rule among the first blocks: no label over them, the split cut eats it.
+        _chapter("Ruled Two", [_para("Ruled"), _rule(), _para("Two"), _para("Body.")]),
+        _chapter(
+            "Near",
+            [
+                _box(
+                    [
+                        _para("A boxed heading", heading=True, bold=True),
+                        _box([_para("Box in a box.")], background=4292730333, padding=None),
+                        _table(
+                            [
+                                _row(
+                                    [
+                                        _cell(
+                                            "Cell note.",
+                                            keys=["s7.xhtml#cellnote"],
+                                            block_style=_style(
+                                                italic=True,
+                                                family=("monospace",),
+                                                lang="fr",
+                                                align="right",
+                                            ),
+                                        ),
+                                        _cell("", block_style=_style(px=24.0)),
+                                        _cell(
+                                            "",
+                                            block_style=_style(px=24.0),
+                                            paragraphs=[
+                                                {
+                                                    "text": "In a big cell.",
+                                                    "spans": [],
+                                                    "anchor_ids": [],
+                                                    "anchor_keys": [],
+                                                    "anchor_offsets": {},
+                                                    "heading": False,
+                                                }
+                                            ],
+                                        ),
+                                    ]
+                                )
+                            ]
+                        ),
+                    ],
+                    keys=["s7.xhtml#own"],
+                    bidi={"lang": "fr"},
+                ),
+            ],
+            anchor_keys=["s7.xhtml"],
+        ),
+        _chapter(
+            "Later heading",
+            [_para("Intro."), _box([_para("Inside heading", heading=True)])],
+        ),
+        _chapter("Ruled", [_rule(), _para("Ruled", heading=True, bold=True, px=32.0), _rule()]),
+        _chapter(
+            "First rule",
+            [_box([_para("")]), _rule(width=(50.0, "%")), _para("After the rule.")],
+            _omit_title_heading=True,
+        ),
+        _chapter(
+            "Links",
+            [
+                _para(
+                    "To own, split, nested, only, note, line.",
+                    [
+                        (28, 4, _link("s7.xhtml#cellnote", "noteref")),
+                        (34, 4, _link("b5.xhtml#s")),
+                        (3, 3, _link("s7.xhtml#own")),
+                        (8, 5, _link("b1.xhtml#a")),
+                        (15, 6, _link("b2.xhtml#n")),
+                        (23, 4, _link("b3.xhtml")),
+                    ],
+                )
+            ],
+        ),
+    ],
 }
 
 #: The image books' other arguments.
 ARG_BOOK_EXTRAS = {
+    "box_titles": {"footnote_keys": {"s7.xhtml#cellnote"}},
     "image_refs": {
         "images": {
             "OEBPS/images/a.jpg": _jpeg(300, 400, _APP0),
