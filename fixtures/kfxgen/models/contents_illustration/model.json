@@ -1,0 +1,352 @@
+{
+ "schema": 1,
+ "kfxgen_version": "5.24.0",
+ "kfxgen_commit": "8f55440",
+ "args": {
+  "$dict": [
+   [
+    "title",
+    "Contents Illustration Golden"
+   ],
+   [
+    "author",
+    "Golden Author"
+   ],
+   [
+    "chapters",
+    [
+     {
+      "$dict": [
+       [
+        "title",
+        "Contents"
+       ],
+       [
+        "text",
+        "Contents\n\nFirst Chapter"
+       ],
+       [
+        "toc_level",
+        0
+       ],
+       [
+        "page_bidi",
+        null
+       ],
+       [
+        "anchor_keys",
+        [
+         "chapter_1.xhtml"
+        ]
+       ],
+       [
+        "heading_level",
+        2
+       ],
+       [
+        "toc_links",
+        [
+         {
+          "$dict": [
+           [
+            "text",
+            "First Chapter"
+           ],
+           [
+            "target_chapter_idx",
+            1
+           ],
+           [
+            "level",
+            0
+           ]
+          ]
+         }
+        ]
+       ],
+       [
+        "preserved_images",
+        [
+         "\u0000IMG\u0001plate.png\u0001frontispiece\u0002plate\u0000"
+        ]
+       ],
+       [
+        "font_size",
+        0.75
+       ]
+      ]
+     },
+     {
+      "$dict": [
+       [
+        "title",
+        "First Chapter"
+       ],
+       [
+        "text",
+        "First Chapter\n\nBody text of the first chapter.\n\nA second paragraph."
+       ],
+       [
+        "blocks",
+        [
+         {
+          "$dict": [
+           [
+            "text",
+            "First Chapter"
+           ],
+           [
+            "spans",
+            []
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            true
+           ],
+           [
+            "heading_level",
+            1
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": [
+              [
+               "chapter_2.xhtml",
+               0
+              ]
+             ]
+            }
+           ],
+           [
+            "anchor_keys",
+            [
+             "chapter_2.xhtml"
+            ]
+           ],
+           [
+            "_spine_file",
+            1
+           ]
+          ]
+         },
+         {
+          "$dict": [
+           [
+            "text",
+            "Body text of the first chapter."
+           ],
+           [
+            "spans",
+            []
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            false
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": []
+            }
+           ],
+           [
+            "anchor_keys",
+            []
+           ],
+           [
+            "_spine_file",
+            1
+           ]
+          ]
+         },
+         {
+          "$dict": [
+           [
+            "text",
+            "A second paragraph."
+           ],
+           [
+            "spans",
+            []
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            false
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": []
+            }
+           ],
+           [
+            "anchor_keys",
+            []
+           ],
+           [
+            "_spine_file",
+            1
+           ]
+          ]
+         }
+        ]
+       ],
+       [
+        "toc_level",
+        0
+       ]
+      ]
+     }
+    ]
+   ],
+   [
+    "asin",
+    null
+   ],
+   [
+    "cover_image",
+    null
+   ],
+   [
+    "language",
+    "en"
+   ],
+   [
+    "rtl",
+    false
+   ],
+   [
+    "writing_mode",
+    "horizontal-tb"
+   ],
+   [
+    "publisher",
+    "kfxgen"
+   ],
+   [
+    "issue_date",
+    null
+   ],
+   [
+    "authors",
+    [
+     "Golden Author"
+    ]
+   ],
+   [
+    "description",
+    null
+   ],
+   [
+    "images",
+    {
+     "$dict": [
+      [
+       "plate.png",
+       {
+        "$bytes": "66ebf35cb93ec3b1d68a43460f5301cdcbbc2e00d5544c33068f3a74760d8b4e"
+       }
+      ]
+     ]
+    }
+   ],
+   [
+    "font_table",
+    {
+     "$obj": "kfxgen.font_table.FontTable",
+     "state": {
+      "$dict": [
+       [
+        "faces",
+        []
+       ],
+       [
+        "_by_family",
+        {
+         "$dict": []
+        }
+       ]
+      ]
+     }
+    }
+   ],
+   [
+    "resolved_image_refs",
+    true
+   ],
+   [
+    "display_dims",
+    {
+     "$dict": []
+    }
+   ],
+   [
+    "footnote_keys",
+    {
+     "$set": []
+    }
+   ],
+   [
+    "landmarks",
+    []
+   ],
+   [
+    "page_list",
+    []
+   ],
+   [
+    "approximate_pages",
+    true
+   ]
+  ]
+ }
+}
