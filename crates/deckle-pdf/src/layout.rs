@@ -373,7 +373,8 @@ fn lines_of(page: usize, p: &Page) -> (Vec<Line>, Option<f32>) {
     for row in &mut rows {
         row.2.sort_by(|a, b| a.x0.total_cmp(&b.x0));
     }
-    let channel = channel(p, &rows);
+    let marks = marks(p);
+    let channel = channel(p, &rows, &marks);
     let mut out = Vec::new();
     for (row_top, _, row) in rows {
         let mut run: Vec<&Glyph> = Vec::new();
@@ -418,7 +419,8 @@ fn lines_of(page: usize, p: &Page) -> (Vec<Line>, Option<f32>) {
             if let Some(x1) = last_x1 {
                 let gap = g.x0 - x1;
                 let across = channel.is_some_and(|c| x1 <= c && g.x0 >= c);
-                if gap > RUN_GAP_EM * g.size || (across && gap > GUTTER_EM * g.size) {
+                let wide = gap > RUN_GAP_EM * g.size || (across && gap > GUTTER_EM * g.size);
+                if wide && !holds_mark(&marks, x1, g) {
                     flush(&mut run, &mut text, &mut out);
                 } else if pending_space || g.space_before || gap > SPACE_EM * g.size {
                     text.push(' ');
@@ -434,12 +436,36 @@ fn lines_of(page: usize, p: &Page) -> (Vec<Line>, Option<f32>) {
     (out, channel)
 }
 
+/// Small drawings and images the size of a letter: an ORCID or e-mail icon after an author's
+/// name, a checkbox. Text either side of one is the same line.
+fn marks(p: &Page) -> Vec<Rect> {
+    p.images
+        .iter()
+        .chain(&p.paths)
+        .filter(|r| (2.0..=20.0).contains(&r.width()) && (2.0..=20.0).contains(&r.height()))
+        .copied()
+        .collect()
+}
+
+/// Whether the gap from `x1` to glyph `g` holds a mark on `g`'s line, no bigger than its text.
+fn holds_mark(marks: &[Rect], x1: f32, g: &Glyph) -> bool {
+    let most = 2.0 * g.size.max(g.y1 - g.y0);
+    marks.iter().any(|m| {
+        m.x0 >= x1 - 1.0
+            && m.x1 <= g.x0 + 1.0
+            && m.y0 < g.y1
+            && m.y1 > g.y0
+            && m.width() <= most
+            && m.height() <= most
+    })
+}
+
 /// The x of the page's column gutter, found from its rows of glyphs before they are cut into
 /// runs: a position in the middle of the page that most rows with text on both sides of it pass
 /// with a gap wider than a word space. A tight gutter (a journal's 1.3 em) is narrower than
 /// [`RUN_GAP_EM`], and without this each left-column line would be glued to the right-column
 /// line beside it.
-fn channel(p: &Page, rows: &[(f32, f32, Vec<&Glyph>)]) -> Option<f32> {
+fn channel(p: &Page, rows: &[(f32, f32, Vec<&Glyph>)], marks: &[Rect]) -> Option<f32> {
     let (from, to) = (p.width * 0.3, p.width * 0.7);
     if to <= from {
         return None;
@@ -454,7 +480,7 @@ fn channel(p: &Page, rows: &[(f32, f32, Vec<&Glyph>)]) -> Option<f32> {
         let mut reach = first.x1;
         let mut wide: Vec<(f32, f32)> = Vec::new();
         for g in &row[1..] {
-            if g.x0 - reach > GUTTER_EM * g.size {
+            if g.x0 - reach > GUTTER_EM * g.size && !holds_mark(marks, reach, g) {
                 wide.push((reach, g.x0));
             }
             reach = reach.max(g.x1);
@@ -769,21 +795,113 @@ fn reading_order(
     items.sort_by(by_top);
     let mut out = Vec::new();
     let (mut left, mut right): (Vec<Item>, Vec<Item>) = (Vec::new(), Vec::new());
-    for it in items {
-        let r = it.rect();
-        if spans(r) {
-            out.append(&mut left);
-            out.append(&mut right);
-            out.push(it);
-        } else if r.x1 <= gutter {
+    let place = |it: Item, left: &mut Vec<Item>, right: &mut Vec<Item>| {
+        if it.rect().x1 <= gutter {
             left.push(it);
         } else {
             right.push(it);
+        }
+    };
+    let mut spanning: Option<Spanning> = None;
+    for it in items {
+        let r = it.rect();
+        if spans(r) {
+            match &mut spanning {
+                Some(s) => s.extend(it),
+                None => {
+                    out.append(&mut left);
+                    out.append(&mut right);
+                    spanning = Some(Spanning::new(it));
+                }
+            }
+        } else if let Some(s) = spanning.as_mut().filter(|s| s.beside(r).is_some()) {
+            s.pending.push(it);
+        } else {
+            if let Some(s) = spanning.take() {
+                for rest in s.close(&mut out) {
+                    place(rest, &mut left, &mut right);
+                }
+            }
+            place(it, &mut left, &mut right);
+        }
+    }
+    if let Some(s) = spanning.take() {
+        for rest in s.close(&mut out) {
+            place(rest, &mut left, &mut right);
         }
     }
     out.append(&mut left);
     out.append(&mut right);
     (out, 2)
+}
+
+/// A run of items across the gutter (a title, an abstract, a wide figure) and the narrow text
+/// set entirely beside it: a sidebar of dates next to a paper's authors and abstract. The
+/// sidebar is read as a column of its own, before the run if it's on the left, after it if on
+/// the right, instead of line by line between its lines.
+struct Spanning {
+    rect: Rect,
+    items: Vec<Item>,
+    left: Vec<Item>,
+    right: Vec<Item>,
+    /// Beside the run so far, waiting to see whether the run goes on past them.
+    pending: Vec<Item>,
+}
+
+impl Spanning {
+    fn new(it: Item) -> Self {
+        Spanning {
+            rect: it.rect(),
+            items: vec![it],
+            left: Vec::new(),
+            right: Vec::new(),
+            pending: Vec::new(),
+        }
+    }
+
+    /// Left (`true`) or right of the run, clear of it side to side.
+    fn beside(&self, r: Rect) -> Option<bool> {
+        if r.x1 < self.rect.x0 {
+            Some(true)
+        } else if r.x0 > self.rect.x1 {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    /// The run goes on: what waited beside it is its sidebar.
+    fn extend(&mut self, it: Item) {
+        for p in std::mem::take(&mut self.pending) {
+            self.side(p);
+        }
+        self.rect = self.rect.union(&it.rect());
+        self.items.push(it);
+    }
+
+    fn side(&mut self, it: Item) {
+        match self.beside(it.rect()) {
+            Some(true) => self.left.push(it),
+            _ => self.right.push(it),
+        }
+    }
+
+    /// Writes the run and its sidebar. Items that waited beside it but start below its end
+    /// aren't a sidebar; they come back for the columns.
+    fn close(mut self, out: &mut Vec<Item>) -> Vec<Item> {
+        let mut rest = Vec::new();
+        for p in std::mem::take(&mut self.pending) {
+            if p.rect().y0 < self.rect.y1 {
+                self.side(p);
+            } else {
+                rest.push(p);
+            }
+        }
+        out.append(&mut self.left);
+        out.append(&mut self.items);
+        out.append(&mut self.right);
+        rest
+    }
 }
 
 /// The x of an empty vertical channel in the middle of the page with text on both sides: the
@@ -934,6 +1052,9 @@ struct Opening {
     page: usize,
 }
 
+/// A heading is no longer than this many characters.
+const HEADING_CHARS: usize = 150;
+
 /// Lines into paragraphs and headings. A paragraph ends at a wider gap, an indent, a short line
 /// that ends a sentence, or a change of size; it runs on across columns and pages when the
 /// sentence does.
@@ -1008,7 +1129,10 @@ fn paragraphs(flow: &[(usize, Vec<Item>)], body: f32, heights: &[f32]) -> Vec<Bl
                 && text.chars().count() < 100
                 && !ends_sentence(&text)
                 && !text.contains(". ");
-            match level_of(last.size) {
+            // Large type that runs on (an abstract, a paper's list of authors) is a paragraph
+            // set large, not a heading.
+            let level = level_of(last.size).filter(|_| text.chars().count() <= HEADING_CHARS);
+            match level {
                 Some(level) => out.push(Block::Heading {
                     level,
                     text,
@@ -1306,6 +1430,95 @@ mod tests {
             t.contains(&"upper line") && t.contains(&"lower line"),
             "{t:?}"
         );
+    }
+
+    #[test]
+    fn an_icon_after_a_name_keeps_the_line_whole() {
+        let mut g = Vec::new();
+        text_at(&mut g, 72.0, 100.0, "Ada Lovelace");
+        // An ORCID mark (a small drawing) fills a gap wider than RUN_GAP_EM.
+        text_at(
+            &mut g,
+            72.0 + 12.0 * 5.0 + 20.0,
+            100.0,
+            "1,2 & Charles Babbage",
+        );
+        let mut p = page(g);
+        p.paths.push(Rect {
+            x0: 134.0,
+            y0: 101.0,
+            x1: 142.0,
+            y1: 109.0,
+        });
+        let (lines, _) = lines_of(0, &p);
+        let t: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(t, ["Ada Lovelace 1,2 & Charles Babbage"]);
+    }
+
+    #[test]
+    fn a_sidebar_beside_the_abstract_is_read_as_its_own_column() {
+        let mut g = Vec::new();
+        // Under the title: dates in a narrow sidebar beside full-width authors and abstract.
+        text_at(&mut g, 40.0, 100.0, "Received: 1 May");
+        text_at(
+            &mut g,
+            200.0,
+            100.0,
+            "Ada Lovelace, Charles Babbage and Mary Somerville",
+        );
+        text_at(&mut g, 40.0, 112.0, "Accepted: 2 June");
+        text_at(
+            &mut g,
+            200.0,
+            124.0,
+            "An abstract across the page, from the sidebar's edge on",
+        );
+        text_at(&mut g, 40.0, 124.0, "Open access");
+        text_at(
+            &mut g,
+            200.0,
+            136.0,
+            "to the right margin of the page, two lines long.",
+        );
+        // Two columns below, the left one reaching nearly to the middle (x 290).
+        for i in 0..6 {
+            let y = 170.0 + i as f32 * 12.0;
+            let filler = "of the body text in this column";
+            text_at(&mut g, 40.0, y, &format!("Left column line {i} {filler} ."));
+            text_at(&mut g, 310.0, y, &format!("Right column line {i} here"));
+        }
+        let (b, _) = blocks(&[page(g)]);
+        let all = texts(&b).join(" | ");
+        let at = |s: &str| all.find(s).unwrap_or_else(|| panic!("{s} in {all}"));
+        assert!(at("Received") < at("Accepted") && at("Accepted") < at("Open access"));
+        assert!(at("Open access") < at("Ada Lovelace"), "{all}");
+        assert!(at("Ada Lovelace") < at("An abstract"), "{all}");
+        assert!(at("two lines long.") < at("Left column line 0"), "{all}");
+        assert!(
+            at("Left column line 5") < at("Right column line 0"),
+            "{all}"
+        );
+    }
+
+    #[test]
+    fn long_large_type_is_a_paragraph_not_a_heading() {
+        let mut g = Vec::new();
+        styled(&mut g, 72.0, 60.0, "A Title", 20.0, false);
+        let abstract_ = "An abstract set larger than the body, which runs on for a while";
+        for i in 0..3 {
+            styled(&mut g, 72.0, 90.0 + i as f32 * 14.0, abstract_, 12.0, false);
+        }
+        for i in 0..6 {
+            text_at(
+                &mut g,
+                72.0,
+                150.0 + i as f32 * 12.0,
+                "Body text set in the usual size",
+            );
+        }
+        let (b, _) = blocks(&[page(g)]);
+        assert!(matches!(&b[0], Block::Heading { text, .. } if text == "A Title"));
+        assert!(matches!(&b[1], Block::Para { text, .. } if text.starts_with("An abstract")));
     }
 
     #[test]

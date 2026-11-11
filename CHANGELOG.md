@@ -7,6 +7,10 @@
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in
   their sentence instead of breaking it into short paragraphs, and an equation's tall bracket
   no longer shuffles the lines beside it together.
+- **A paper's first page reads in order.** Author names stay on one line past their ORCID
+  icons, a sidebar of dates beside the authors and abstract is read on its own instead of
+  between their lines, and an abstract or author list set in larger type is a paragraph, not a
+  heading.
 - **A shorter README.** A section for each of the app's five tabs (the Cookbook and Puzzles had
   none of their own), shorter tables, and the long parts moved to pages of their own:
   [docs/books.md](docs/books.md), [docs/readers.md](docs/readers.md),
