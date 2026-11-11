@@ -9,6 +9,7 @@
 #     tools/ref/kfxgen_models.sh --corpus gutenberg/*.epub       # a corpus, outside git
 #
 # Needs kfxgen with model_dump.py (KFXGEN, default ../kfxgen-public), its .venv, and calibre.
+# For an exported kfxgen (no .git), set KFXGEN_COMMIT to the commit it was exported from.
 # Calibre runs with its own config folder holding only this kfxgen, so your installed plugins
 # (and the Previewer-based "KFX Output") are neither used nor changed.
 set -euo pipefail
@@ -25,7 +26,9 @@ SOURCES="$ROOT/fixtures/kfxgen/sources"
   echo "kfxgen at $KFXGEN has no plugin/kfxgen/model_dump.py (it is on kfxgen's feat/model-dump)" >&2
   exit 1
 }
-COMMIT="$(git -C "$KFXGEN" rev-parse --short HEAD)"
+# KFXGEN_COMMIT names the commit when KFXGEN is an export with no .git (git archive).
+KFXGEN_COMMIT="${KFXGEN_COMMIT:-$(git -C "$KFXGEN" rev-parse --short HEAD)}"
+export KFXGEN_COMMIT
 WORK="$(mktemp -d -t deckle-kfxgen-XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -65,7 +68,7 @@ if [ "${1:-}" = "--corpus" ]; then
   for epub in "$@"; do
     calibre_model "$(basename "$epub" .epub)" "$epub" "$DECKLE_KFXGEN_CORPUS_OUT"
   done
-  echo "$COMMIT" >"$DECKLE_KFXGEN_CORPUS_OUT/KFXGEN_COMMIT"
+  echo "$KFXGEN_COMMIT" >"$DECKLE_KFXGEN_CORPUS_OUT/KFXGEN_COMMIT"
   exit 0
 fi
 
@@ -96,5 +99,5 @@ LIST
 for epub in "$SOURCES"/*.epub; do
   calibre_model "$(basename "$epub" .epub)" "$epub" "$OUT"
 done
-echo "$COMMIT" >"$OUT/KFXGEN_COMMIT"
+echo "$KFXGEN_COMMIT" >"$OUT/KFXGEN_COMMIT"
 du -sh "$ROOT/fixtures/kfxgen"
