@@ -4,6 +4,9 @@
 //!
 //! What isn't ported yet is [`GenerateError::Unsupported`], so a book needing it fails rather
 //! than coming out different from kfxgen's.
+mod chapters;
+mod chunks;
+mod fragments;
 mod images;
 mod inline;
 mod metadata;
@@ -12,7 +15,9 @@ mod positions;
 mod py;
 mod skeleton;
 mod standard_symbols;
+mod styles;
 mod text;
+mod title;
 
 use deckle_kfx::container::ContainerError;
 use deckle_kfx::fragment::{Fragment, FragmentList};

@@ -15,8 +15,9 @@ use deckle_kfx::fragment::{Fragment, FragmentList};
 use deckle_kfx::ion::Value;
 use regex::Regex;
 
-use super::inline::{Flag, Span};
-use super::text::{Block, Chapter};
+use super::chapters::{Block, Chapter};
+use super::chunks::Chunk;
+use super::inline::{Anchors, Flag, Span};
 use super::{GenerateError, Generator, measure, model_err, py, st, sym};
 use crate::pyvalue::PyValue;
 
@@ -843,4 +844,67 @@ pub(crate) fn picture_entry(
         unreachable!()
     };
     entry
+}
+
+/// `_emit_paragraph` (:5745) for a paragraph of pictures alone: a chunk per picture the book
+/// holds. Returns the ids it could not place because it emitted nothing: only pictures the
+/// book doesn't hold.
+pub(crate) fn emit_picture_paragraph(
+    para: &str,
+    block: &Block,
+    images: &Images,
+    chunks: &mut Vec<Chunk>,
+) -> Result<Vec<String>, GenerateError> {
+    // Pictures among words are cut at picture lines and written in the words (#529,
+    // #565), not ported.
+    if !only_pictures(para) {
+        return Err(Unsupported("pictures among words"));
+    }
+    let pictures = pictures(para, &block.spans, images)?;
+    if pictures.is_empty() {
+        return Ok(block.anchors.keys.clone());
+    }
+    // Ids at its start go on its first picture (#62), then the others, all at 0 (:5847);
+    // a picture has no text for a heading level or space above to go on.
+    let (at_start, rest): (Vec<String>, Vec<String>) = block
+        .anchors
+        .keys
+        .iter()
+        .cloned()
+        .partition(|k| block.anchors.offsets.get(k).is_none_or(|&o| o == 0));
+    let mut anchors = Anchors {
+        keys: at_start,
+        offsets: BTreeMap::new(),
+    };
+    if !rest.is_empty() {
+        anchors.attach(&rest);
+    }
+    for picture in pictures {
+        chunks.push(Chunk {
+            anchors: std::mem::take(&mut anchors),
+            picture: Some(picture),
+            ..Chunk::text(String::new())
+        });
+    }
+    Ok(Vec::new())
+}
+
+/// A contents page's pictures the converter replaced (#117), a chunk each.
+pub(crate) fn push_preserved(
+    tokens: &[String],
+    images: &Images,
+    chunks: &mut Vec<Chunk>,
+) -> Result<(), GenerateError> {
+    for token in tokens {
+        if !py::strip(&IMG_TOKEN.replace_all(token, "")).is_empty() {
+            return Err(Unsupported("words kept from a replaced contents page"));
+        }
+        for picture in pictures(token, &[], images)? {
+            chunks.push(Chunk {
+                picture: Some(picture),
+                ..Chunk::text(String::new())
+            });
+        }
+    }
+    Ok(())
 }

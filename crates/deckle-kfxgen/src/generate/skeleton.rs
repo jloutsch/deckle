@@ -11,6 +11,8 @@ use deckle_kfx::symtab::SymbolTable;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 
+use super::chapters::read_chapters;
+use super::fragments::build_fragment_260;
 use super::images;
 use super::metadata::{BookMetadata, build_fragment_490};
 use super::nav::{NavEntry, book_headings, build_fragment_389};
@@ -18,7 +20,7 @@ use super::positions::{
     build_fragment_264, build_fragment_265, build_fragment_550, build_position_data,
 };
 use super::standard_symbols::YJ_SYMBOLS_MAX_ID;
-use super::text::{build_chapter_content, build_fragment_260, read_chapters};
+use super::text::build_chapter_content;
 use super::{GenerateError, GenerateOutput, Generator, measure, model_err, py, st, sym};
 use crate::pyvalue::{PyValue, truthy};
 

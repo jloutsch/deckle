@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use deckle_kfx::fragment::Fragment;
 use deckle_kfx::ion::{Struct, Value};
 
-use super::text::{Style157, Styles};
+use super::styles::{Style157, Styles};
 use super::{GenerateError, Generator, model_err, py, st, sym};
 use crate::pyvalue::{PyValue, truthy};
 
