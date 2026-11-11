@@ -414,16 +414,16 @@ pub(crate) fn picture_of(m: &regex::Captures, images: &Images) -> Option<Picture
     })
 }
 
-/// `_picture_link` (:1826): the target of the first link covering the token at `at`, in
-/// characters. Under several links' runs kfxgen takes the first run's; one run of two links is
-/// Unsupported when read (`read_spans`), as kfxgen takes those in set order.
+/// `_picture_link` (0bc705d :1835): the link of the first run covering the token at `at`, in
+/// characters, that has one; empty targets are none. Of a run's two, the smallest, as the
+/// container's `link_target` takes it (#759).
 pub(crate) fn picture_link(spans: &[Span], at: i64) -> Option<&String> {
     spans
         .iter()
         .filter(|s| s.start <= at && at < s.start + s.len)
         .find_map(|s| {
             s.flags.iter().find_map(|f| match f {
-                Flag::Link(t) => Some(t),
+                Flag::Link(t) if !t.is_empty() => Some(t),
                 _ => None,
             })
         })

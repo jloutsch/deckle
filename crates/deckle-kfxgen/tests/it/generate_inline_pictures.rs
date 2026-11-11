@@ -71,24 +71,11 @@ fn a_size_in_other_digits_is_unsupported() {
     }
 }
 
-/// One run carrying two links over a picture: kfxgen takes them in set order, which
-/// `PYTHONHASHSEED` changes, so the port refuses the run. Under two links' runs kfxgen takes
-/// the first run's; `inline_pictures` holds those.
+/// Runs carrying two links, over a picture and words, the smaller landing nowhere, on a
+/// noteref, with an empty target: kfxgen 0bc705d takes the smaller (#759), whatever
+/// `PYTHONHASHSEED` is. Under two links' runs kfxgen takes the first run's; `inline_pictures`
+/// holds those.
 #[test]
-fn a_picture_in_one_run_of_two_links_is_unsupported() {
-    let mut model = load_model(&deckle_kfx::fixtures::kfxgen("models/inline_pictures")).unwrap();
-    let chapter = item(entry(&mut model.args, "chapters"), 1);
-    let block = item(entry(chapter, "blocks"), 1);
-    let link = |t: &str| PyValue::Tuple(vec![PyValue::Str("link".into()), PyValue::Str(t.into())]);
-    let PyValue::List(spans) = entry(block, "spans") else {
-        panic!("not a list")
-    };
-    let PyValue::Tuple(span) = &mut spans[0] else {
-        panic!("not a tuple")
-    };
-    span[2] = PyValue::Set(vec![link("s.xhtml#a"), link("l.xhtml#on")]);
-    match generate(&model) {
-        Err(GenerateError::Unsupported(f)) => assert_eq!(f, "a run in two links"),
-        r => panic!("{r:?}"),
-    }
+fn two_links_matches_kfxgen() {
+    matches_kfxgen("two_links");
 }

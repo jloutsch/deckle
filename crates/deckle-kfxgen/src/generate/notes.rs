@@ -3,7 +3,7 @@
 //! `$616: $617` and the note's entry `$615: $281` (`native_generator.py:6786`, :4403, :4474).
 use std::collections::BTreeSet;
 
-use super::inline::{Flag, Span};
+use super::inline::{Flag, Span, link_target};
 use super::{GenerateError, model_err};
 use crate::pyvalue::PyValue;
 
@@ -28,11 +28,10 @@ pub(crate) fn popup_targets<'a>(
     spans
         .into_iter()
         .filter(|sp| sp.flags.contains(&Flag::NoteRef))
-        .flat_map(|sp| &sp.flags)
-        .filter_map(|f| match f {
-            Flag::Link(t) if footnote_keys.contains(t) => Some(t.clone()),
-            _ => None,
-        })
+        // The run's one target, its smallest (#759, 0bc705d :6884).
+        .filter_map(|sp| link_target(&sp.flags))
+        .filter(|t| footnote_keys.contains(*t))
+        .map(str::to_string)
         .collect()
 }
 

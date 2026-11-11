@@ -257,7 +257,7 @@ pub(crate) fn direction_layers(spans: &[Span]) -> Vec<Layer> {
                 )),
             }
         }
-        // An empty target is no link (`if not link_target({f})`, :446).
+        // In target order, `Flags`' own (#759, 0bc705d :442); an empty target is no link.
         for f in plain
             .iter()
             .filter(|f| matches!(f, Flag::Link(t) if !t.is_empty()))

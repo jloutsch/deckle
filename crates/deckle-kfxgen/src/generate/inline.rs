@@ -97,6 +97,16 @@ impl Ord for Px {
 /// A run's flags: a Python frozenset, kept sorted so nothing depends on set order.
 pub(crate) type Flags = BTreeSet<Flag>;
 
+/// `link_target` (inline_style.py:884 at kfxgen 0bc705d): of a run's links, the smallest
+/// target, the first in `Flags`' order (#759). It may be empty, which kfxgen's callers take
+/// as no link.
+pub(crate) fn link_target(flags: &Flags) -> Option<&str> {
+    flags.iter().find_map(|f| match f {
+        Flag::Link(t) => Some(t.as_str()),
+        _ => None,
+    })
+}
+
 /// `run_font_size`: the size a run's size flag carries.
 pub(crate) fn run_font_size(flags: &Flags) -> Option<f64> {
     flags.iter().find_map(|f| match f {
@@ -223,12 +233,9 @@ pub(crate) fn read_spans(v: Option<&PyValue>, at: &str) -> Result<Vec<Span>, Gen
             .iter()
             .map(|f| flag_of(f, at))
             .collect::<Result<_, _>>()?;
-        // `_direction_layers` would take the links in set order, `run_font_size`,
-        // `mono_families` and the run's language the first size, family or language.
+        // `run_font_size`, `mono_families` and the run's language would take the first size,
+        // family or language in set order.
         let count = |kind: fn(&Flag) -> bool| flags.iter().filter(|f| kind(f)).count();
-        if count(|f| matches!(f, Flag::Link(_))) > 1 {
-            return Err(Unsupported("a run in two links"));
-        }
         if count(|f| matches!(f, Flag::Lang(_))) > 1 {
             return Err(Unsupported("a run in two languages"));
         }
@@ -471,15 +478,12 @@ pub(crate) fn build_body_anchors(
     popups: &mut Popups,
 ) -> BTreeMap<String, String> {
     let (key_to_chunk, file_to_chunk) = id_maps(chunks.iter().map(|c| c.anchors));
+    // A run's one target, its smallest (#759); an empty one is none (`if target`, 0bc705d
+    // :6885).
     let targets: BTreeSet<&str> = chunks
         .iter()
         .flat_map(|c| c.spans)
-        .flat_map(|sp| &sp.flags)
-        .filter_map(|f| match f {
-            // An empty target is none (`if target`, :6790).
-            Flag::Link(t) if !t.is_empty() => Some(t.as_str()),
-            _ => None,
-        })
+        .filter_map(|sp| link_target(&sp.flags).filter(|t| !t.is_empty()))
         .collect();
     let mut body_anchor_map = BTreeMap::new();
     if targets.is_empty() {
@@ -713,15 +717,14 @@ pub(crate) fn entry_runs(
                 continue;
             }
         }
-        let anchor = flags.iter().find_map(|f| match f {
-            Flag::Link(t) => body_anchor_map.get(t).cloned(),
-            _ => None,
-        });
+        let anchor = link_target(&flags).and_then(|t| body_anchor_map.get(t).cloned());
         // The link this run is in, its own or one it's layered on, has a target in the book
-        // (#728); an empty target is none (`if t`, :7944).
-        let link_found = [&flags].into_iter().chain(&under).flatten().all(
-            |f| !matches!(f, Flag::Link(t) if !t.is_empty() && !body_anchor_map.contains_key(t)),
-        );
+        // (#728); an empty target is none (`if t`, 0bc705d :8085).
+        let link_found = [&flags]
+            .into_iter()
+            .chain(&under)
+            .filter_map(link_target)
+            .all(|t| t.is_empty() || body_anchor_map.contains_key(t));
         let mut has_emphasis = flags.iter().any(|f| match f {
             Flag::Link(_)
             | Flag::Baseline

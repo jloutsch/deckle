@@ -767,6 +767,58 @@ def _frame_edges():
     ]
 
 
+def _two_links():
+    """Runs carrying two links (#759): a picture and words under one, both landing, and a
+    picture alone under one; the smaller landing nowhere; a target only the larger of two
+    names; a link colour with the other landing
+    nowhere; one run of two links, then one of the larger; noterefs whose smaller target is a
+    footnote and isn't; an empty target with another, and alone, over words and a picture."""
+    pic = _pic("OEBPS/p.png", "p", "w=50%")
+    both = f"Before {pic} after."
+    lost = "The smaller lands nowhere."
+    colour = "A grey link here."
+    order = "Twice then once."
+    note = "A note1 here, a note2 there."
+    empty = f"Empty and a, then {pic} empty alone."
+    grey = ("link-colour", (0xFF999999, 0xFF767676))
+    return [
+        _chapter(
+            "Two links",
+            [
+                _para("Two links", heading=True, level=1),
+                _para(both, [(0, len(both), _link("t.xhtml#b") | _link("t.xhtml#a"))]),
+                _para(pic, [(0, len(pic), _link("t.xhtml#b") | _link("t.xhtml#a"))]),
+                _para(lost, [(4, 7, _link("gone.xhtml#x") | _link("t.xhtml#b"))]),
+                _para("Only the larger.", [(0, 4, _link("t.xhtml#a") | _link("t.xhtml#c"))]),
+                _para(colour, [(2, 9, _link("t.xhtml#a", grey) | _link("zz.xhtml#gone"))]),
+                _para(order, [(0, 6, _link("t.xhtml#a") | _link("t.xhtml#b")), (6, 5, _link("t.xhtml#b"))]),
+                _para(
+                    note,
+                    [
+                        (2, 5, _link("t.xhtml#b", "noteref") | _link("n.xhtml#1")),
+                        (16, 5, _link("t.xhtml#b", "noteref") | _link("z.xhtml#1")),
+                        (22, 5, _link("z.xhtml#1")),
+                    ],
+                ),
+                _para(
+                    empty,
+                    [
+                        (0, 11, _link("") | _link("t.xhtml#a")),
+                        (18, len(pic), _link("")),
+                    ],
+                ),
+                _para(pic, [(0, len(pic), _link(""))]),
+                _para(pic, [(0, len(pic), _link("") | _link("t.xhtml#b"))]),
+                _para("Target a.", keys=["t.xhtml#a"]),
+                _para("Target b.", keys=["t.xhtml#b"]),
+                _para("Target c.", keys=["t.xhtml#c"]),
+                _para("1. The note.", keys=["n.xhtml#1"]),
+                _para("2. The other note.", keys=["z.xhtml#1"]),
+            ],
+        )
+    ]
+
+
 def _inline_pictures():
     """Pictures among words (#529, #565) past what the Calibre-path `floats` and `floats_697`
     reach: every size, given height and vertical-align; a picture the book doesn't hold or
@@ -2340,6 +2392,8 @@ ARG_BOOKS = {
     # Pictures among words, linked pictures and paragraphs cut at their picture and empty
     # lines, past what the Calibre-path `floats` and `floats_697` reach.
     "inline_pictures": _inline_pictures(),
+    # Runs carrying two links, which kfxgen 0bc705d takes in target order (#759).
+    "two_links": _two_links(),
     "font_faces": _font_faces(),
     # An EPUB page list with no landmarks or cover; landmarks with no page list or cover.
     # Their targets are in ARG_BOOK_EXTRAS.
@@ -2419,6 +2473,11 @@ ARG_BOOK_EXTRAS = {
             "OEBPS/q.png": _png(256, 100),
             "OEBPS/eoi.jpg": b"\xff\xd8\xff\xd9",
         },
+        "resolved_image_refs": True,
+    },
+    "two_links": {
+        "images": {"OEBPS/p.png": _png(600, 400)},
+        "footnote_keys": {"n.xhtml#1", "z.xhtml#1"},
         "resolved_image_refs": True,
     },
     # Made after kfxgen is importable.
