@@ -7,17 +7,20 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::chapters::{Block, Chapter, cut_at_empty_line};
-use super::chunks::{Chunk, emit_paragraph, print_book_heading};
+use super::chunks::{Chunk, InCell, Marker, Node, emit_paragraph, print_book_heading};
 use super::fragments::{
     ContentRef, build_fragment_145, build_fragment_259, pack_content_fragments, style_refs,
 };
 use super::images::{self, ImageStyles, Images, Picture};
 use super::inline::{self, Anchors, ChunkLinks};
-use super::styles::{Style157, Styles};
+use super::styles::{Style157, StyleArgs, Styles};
+use super::table_styles::{CellStyle, PartStyle, TableStyle};
 use super::title::{
-    MAX_SPLIT_TITLE_BLOCKS, consume_split_title, label_blocks, opens_with_title, title_runs_in,
+    eat_split_title, heading_near_start, label_blocks, opens_with_title, title_in_table,
+    title_runs_in,
 };
 use super::{GenerateError, Generator, py};
+use super::{table_chunks, tables};
 
 use GenerateError::Unsupported;
 
@@ -31,7 +34,8 @@ const HEADING_FONT_SIZE: f64 = 1.2;
 /// What `_build_chapter_content` returns.
 pub(crate) struct ChapterData {
     pub chunks: Vec<Chunk>,
-    pub chunk_positions: Vec<i64>,
+    /// None for a container's `close`, which takes no position (#219).
+    pub chunk_positions: Vec<Option<i64>>,
     pub chapter_chunk_ranges: Vec<(usize, usize)>,
     pub section_positions: Vec<i64>,
     pub chapter_start_positions: Vec<i64>,
@@ -84,7 +88,6 @@ pub(crate) fn build_chapter_content(
 
         // A body of pictures alone after the title prints no heading of kfxgen's on top of
         // them, nor one under pictures above the book's own heading (#33, #346, :6258).
-        // With no rules and no tables, the title isn't in a table.
         let stripped = py::lstrip(&chapter.text);
         let body_after_title = if opens_with_title(stripped, &title) {
             py::lstrip(py::skip(stripped, py::len(&title)))
@@ -92,21 +95,24 @@ pub(crate) fn build_chapter_content(
             stripped
         };
         let image_only = !toc && images::only_pictures(body_after_title);
-        let title_after_pictures =
-            !toc && images::title_after_pictures(blocks.iter().map(|b| b.text.as_str()), &title);
+        // A table says no (:1161): the texts stop there.
+        let title_after_pictures = !toc
+            && images::title_after_pictures(
+                blocks
+                    .iter()
+                    .map_while(|b| b.table.is_none().then_some(b.text.as_str())),
+                &title,
+            );
         let runs_in = !toc && title_runs_in(blocks, &title);
-        let heading_near_start = !toc
-            && title_spans.is_none()
-            && blocks
-                .iter()
-                .take(MAX_SPLIT_TITLE_BLOCKS)
-                .any(|b| b.heading);
+        let in_table = !toc && title_in_table(blocks, &title);
+        let heading_near_start = !toc && title_spans.is_none() && heading_near_start(blocks);
         let label_over_blocks = !toc && label_blocks(blocks, &title) > 1;
         let omit_heading = chapter.is_cover
             || py::strip(&title).is_empty()
             || image_only
             || title_after_pictures
             || runs_in
+            || in_table
             || heading_near_start
             || label_over_blocks;
         let mut heading_chunk = None;
@@ -126,7 +132,8 @@ pub(crate) fn build_chapter_content(
                 chunks.push(Chunk::text(link.text.clone()));
             }
         } else {
-            let cut_title = !image_only && !runs_in && !heading_near_start && !label_over_blocks;
+            let cut_title =
+                !image_only && !runs_in && !in_table && !heading_near_start && !label_over_blocks;
             let n = py::len(&title);
             let stripped = py::lstrip(&chapter.text);
             let text = if cut_title && opens_with_title(stripped, &title) {
@@ -138,7 +145,9 @@ pub(crate) fn build_chapter_content(
                 let para_iter: Vec<Block> = match &chapter.blocks {
                     Some(blocks) => {
                         let mut iter_blocks = blocks.clone();
-                        if !iter_blocks.is_empty() && cut_title {
+                        // An opening table printing the title is kept whole; one that
+                        // doesn't has none to cut (:6382).
+                        if !iter_blocks.is_empty() && cut_title && iter_blocks[0].table.is_none() {
                             let first_stripped = py::lstrip(&iter_blocks[0].text);
                             if opens_with_title(first_stripped, &title) {
                                 let remainder = py::lstrip(py::skip(first_stripped, n)).to_owned();
@@ -161,13 +170,12 @@ pub(crate) fn build_chapter_content(
                                         print_book_heading(&mut chunks[h], &first, &title);
                                     }
                                 }
-                            } else {
-                                // `_eat_split_title` (:1524) for paragraphs. The heading takes
-                                // the first block's style, which is none.
-                                let eaten = consume_split_title(&iter_blocks, &title);
-                                for b in iter_blocks.drain(..eaten) {
-                                    carried.extend(b.anchors.keys);
-                                }
+                            } else if let Some((rest, keys)) = eat_split_title(&iter_blocks, &title)
+                            {
+                                // Split over blocks or a table's rows (#64, #219). The heading
+                                // takes the first block's style, which is none.
+                                iter_blocks = rest;
+                                carried.extend(keys);
                             }
                         }
                         iter_blocks
@@ -185,6 +193,7 @@ pub(crate) fn build_chapter_content(
                                 space_above: false,
                                 spans: Vec::new(),
                                 anchors: Anchors::default(),
+                                table: None,
                             })
                         })
                         .collect::<Result<_, _>>()?,
@@ -195,25 +204,36 @@ pub(crate) fn build_chapter_content(
                 let mut pending: Vec<String> = Vec::new();
                 for (b_idx, block) in para_iter.iter().enumerate() {
                     let first = chunks.len();
-                    let unplaced = emit_paragraph(block, b_idx == 0, images, &mut chunks)?;
-                    if !pending.is_empty() && chunks.len() > first {
-                        chunks[first].anchors.attach(&pending);
+                    let unplaced = match &block.table {
+                        Some(t) => {
+                            table_chunks::emit_table_chunks(block, t, &mut chunks);
+                            Vec::new()
+                        }
+                        None => emit_paragraph(block, b_idx == 0, images, &mut chunks)?,
+                    };
+                    // `_emitted_content` (:5940): a table of rows with no cells is only
+                    // its markers.
+                    if !pending.is_empty() && chunks[first..].iter().any(Chunk::is_leaf) {
+                        let at = table_chunks::link_target(&chunks, first);
+                        chunks[at].anchors.attach(&pending);
                         pending.clear();
                     }
                     pending.extend(unplaced);
                 }
                 if !pending.is_empty() {
-                    if chunks.len() > start_idx {
-                        chunks.last_mut().unwrap().anchors.attach(&pending);
-                    } else {
-                        carried.extend(pending);
+                    match (start_idx..chunks.len())
+                        .rev()
+                        .find(|&i| chunks[i].is_leaf())
+                    {
+                        Some(last) => chunks[last].anchors.attach(&pending),
+                        None => carried.extend(pending),
                     }
                 }
             } else if let Some(first) = blocks.first() {
                 // Only its title: the blocks' ids still name this chapter (#338), and the
                 // book's heading prints as kfxgen's (:6522).
                 for b in blocks {
-                    carried.extend(b.anchors.keys.iter().cloned());
+                    carried.extend(tables::block_keys(b));
                 }
                 if let Some(h) = heading_chunk
                     && py::strip(&first.text) == title
@@ -226,28 +246,35 @@ pub(crate) fn build_chapter_content(
         // Pictures of a contents page the converter replaced, after it (#117).
         images::push_preserved(&chapter.preserved_images, images, &mut chunks)?;
 
-        // Every chapter has an entry to land on (:6597): a no-break space.
-        if chunks.len() == start_idx {
+        // Every chapter has an entry to land on (:6597): a no-break space. A table's markers
+        // don't count.
+        if !chunks[start_idx..].iter().any(Chunk::is_leaf) {
             chunks.push(Chunk::text("\u{a0}".to_owned()));
         }
         if !carried.is_empty() {
-            // Offsets of the block kfxgen's heading prints, else the chapter's start (:6622).
+            // Offsets of the block kfxgen's heading prints, else the chapter's start (:6622);
+            // a table's first row, not the table (#219).
             let offsets = match heading_chunk {
                 Some(_) => heading_offsets,
                 None => BTreeMap::new(),
             };
-            chunks[start_idx].anchors.attach_at(&carried, &offsets);
+            let at = table_chunks::link_target(&chunks, start_idx);
+            chunks[at].anchors.attach_at(&carried, &offsets);
         }
         chapter_chunk_ranges.push((start_idx, chunks.len()));
     }
 
-    // Each chapter: an outer position, then one per chunk (:6638).
+    // Each chapter: an outer position, then one per chunk but a `close` (:6638).
     let mut chunk_positions = Vec::with_capacity(chunks.len());
     let mut content_pos_id = CONTENT_POS_BASE;
     for &(start, end) in &chapter_chunk_ranges {
         content_pos_id += CONTENT_POS_STEP;
-        for _ in start..end {
-            chunk_positions.push(content_pos_id);
+        for chunk in &chunks[start..end] {
+            if matches!(chunk.marker, Some(Marker::Close)) {
+                chunk_positions.push(None);
+                continue;
+            }
+            chunk_positions.push(Some(content_pos_id));
             content_pos_id += CONTENT_POS_STEP;
         }
     }
@@ -257,9 +284,15 @@ pub(crate) fn build_chapter_content(
     let section_positions = (0..chapters.len() as i64)
         .map(|i| section_base + i * SECTION_POS_STEP)
         .collect();
+    // `_first_leaf_position` (:6713): a contents entry lands on a leaf, never a container.
     let chapter_start_positions: Vec<i64> = chapter_chunk_ranges
         .iter()
-        .map(|&(start, _)| chunk_positions[start])
+        .map(|&(start, end)| {
+            (start..end)
+                .find(|&i| chunks[i].is_leaf())
+                .and_then(|i| chunk_positions[i])
+                .expect("every chapter has an entry to land on")
+        })
         .collect();
 
     // $266: a contents line's target (:6763), then each link target the book declares.
@@ -276,7 +309,8 @@ pub(crate) fn build_chapter_content(
         .map(|(c, &position)| ChunkLinks {
             spans: &c.spans,
             anchors: &c.anchors,
-            position,
+            // Only a `close` has none, and it holds no ids or runs.
+            position: position.unwrap_or_default(),
         })
         .collect();
     let body_anchor_map = inline::build_body_anchors(g, &links, &mut anchor_names);
@@ -288,7 +322,7 @@ pub(crate) fn build_chapter_content(
     let mut next_content_index = 1;
     for &(start, end) in &chapter_chunk_ranges {
         let text_chunks: Vec<usize> = (start..end)
-            .filter(|&i| chunks[i].picture.is_none())
+            .filter(|&i| chunks[i].is_leaf() && chunks[i].picture.is_none())
             .collect();
         let mut refs_by_chunk: Vec<Option<ContentRef>> = vec![None; end - start];
         if !text_chunks.is_empty() {
@@ -359,9 +393,43 @@ pub(crate) fn build_chapter_content(
         let sl_name = format!("l{ch_idx}");
         let fs = chapters[ch_idx].font_size;
         let mut entry_styles = Vec::new();
+        // A row's or row group's own `$157`, for its border (:7556).
+        let mut entry_parts = Vec::new();
         let mut entry_runs = Vec::new();
         for chunk_idx in start..end {
-            if let Some(p) = &chunks[chunk_idx].picture {
+            let chunk = &chunks[chunk_idx];
+            if let Some(marker) = &chunk.marker {
+                // A container's style (:7441); a `close` takes the chapter's, unused.
+                let (style, part) = match marker {
+                    Marker::Open(Node::Table(t)) => {
+                        let table = TableStyle {
+                            border: t.border.clone(),
+                            width: t.width,
+                        };
+                        (
+                            Some(styles.allocate(g, "_tbl", StyleArgs::Table(table))),
+                            None,
+                        )
+                    }
+                    Marker::Open(Node::Cell(cell)) => (
+                        Some(styles.allocate(g, "_td", StyleArgs::Cell(CellStyle::of(cell, fs)))),
+                        None,
+                    ),
+                    Marker::Open(Node::Group(_, Some(border)) | Node::Row(Some(border))) => {
+                        let part = PartStyle {
+                            border: Some(border.clone()),
+                        };
+                        (None, Some(styles.allocate(g, "_tp", StyleArgs::Part(part))))
+                    }
+                    _ => (None, None),
+                };
+                entry_styles.push(style.unwrap_or_else(|| story_names[ch_idx].clone()));
+                entry_parts.push(part);
+                entry_runs.push((None, Vec::new()));
+                continue;
+            }
+            entry_parts.push(None);
+            if let Some(p) = &chunk.picture {
                 let style = image_styles.style_for(p)?;
                 entry_styles.push(style.unwrap_or_else(|| story_names[ch_idx].clone()));
                 entry_runs.push((None, Vec::new()));
@@ -380,7 +448,7 @@ pub(crate) fn build_chapter_content(
                     link = Some((
                         anchor.clone(),
                         toc_link_style_names[ch_idx].clone().unwrap_or_default(),
-                        py::len(&chunks[chunk_idx].text) as i64,
+                        py::len(&chunk.text) as i64,
                     ));
                     if level != 0 {
                         // Indented by depth, 6.25% a level (#238, #313).
@@ -393,17 +461,31 @@ pub(crate) fn build_chapter_content(
                         story_names[ch_idx].clone()
                     }
                 }
-                // `_block_font_size` with no CSS size: the chapter's.
-                _ => styles.allocate(g, "", Style157::body(fs)),
+                // `_block_font_size` with no CSS size: the chapter's. A cell's text takes
+                // its cell's style (:7786); a block in a header cell is bold (#261).
+                _ => match &chunk.in_cell {
+                    Some(InCell::Text(cell)) => {
+                        styles.allocate(g, "_td", StyleArgs::Cell(CellStyle::of(cell, fs)))
+                    }
+                    _ => {
+                        let body = Style157 {
+                            bold: chunk.cell_bold(),
+                            ..Style157::body(fs)
+                        };
+                        styles.allocate(g, "", body)
+                    }
+                },
             };
             entry_styles.push(style);
-            // kfxgen's chapter heading is bold, and so are the runs in it (#366).
+            // kfxgen's chapter heading is bold, and so are the runs in it (#366), as a header
+            // cell's are (#219).
             let runs = inline::entry_runs(
                 g,
                 &mut styles,
                 &mut extra_style_names,
-                &chunks[chunk_idx].spans,
-                heading,
+                &chunk.spans,
+                heading || chunk.cell_bold(),
+                chunk.in_cell.is_some(),
                 &body_anchor_map,
             );
             entry_runs.push((link, runs));
@@ -411,6 +493,7 @@ pub(crate) fn build_chapter_content(
         let fragment = build_fragment_259(
             g,
             &entry_styles,
+            &entry_parts,
             &content_refs_per_chapter[ch_idx],
             &sl_name,
             &chunk_positions[start..end],

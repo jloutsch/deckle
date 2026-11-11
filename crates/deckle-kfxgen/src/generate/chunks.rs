@@ -5,6 +5,8 @@
 use super::chapters::Block;
 use super::images::{self, Images, Picture};
 use super::inline::{self, Anchors, Span};
+use super::table_chunks::{CellInfo, TableOpen};
+use super::tables::Border;
 use super::{GenerateError, py};
 
 use GenerateError::Unsupported;
@@ -12,13 +14,39 @@ use GenerateError::Unsupported;
 /// `_ASCII_SPACE` (:1061): a paragraph's edges are trimmed of these only.
 const ASCII_SPACE: [char; 5] = [' ', '\t', '\n', '\r', '\x0c'];
 
-/// One entry of a storyline: a paragraph of text, or a picture.
+/// One entry of a storyline: a paragraph of text, a picture, or a table container's start
+/// or end.
 pub(crate) struct Chunk {
     pub text: String,
     pub heading_level: Option<i64>,
     pub spans: Vec<Span>,
     pub anchors: Anchors,
     pub picture: Option<Picture>,
+    pub marker: Option<Marker>,
+    /// A text entry in a table cell.
+    pub in_cell: Option<InCell>,
+}
+
+/// A table container's (#219) `open`, which takes a position, or `close`, which takes none.
+pub(crate) enum Marker {
+    Open(Node),
+    Close,
+}
+
+pub(crate) enum Node {
+    Table(TableOpen),
+    /// A row group, "head", "body" or "foot", and its border.
+    Group(&'static str, Option<Border>),
+    Row(Option<Border>),
+    /// A cell holding several blocks, or none.
+    Cell(CellInfo),
+}
+
+pub(crate) enum InCell {
+    /// A cell's own text: the chunk's `cell` (:6201).
+    Text(CellInfo),
+    /// A block in a cell: `in_header_cell` (:6154), bold as a header cell's text is.
+    Paragraph { header_bold: bool },
 }
 
 impl Chunk {
@@ -29,6 +57,30 @@ impl Chunk {
             spans: Vec::new(),
             anchors: Anchors::default(),
             picture: None,
+            marker: None,
+            in_cell: None,
+        }
+    }
+
+    pub(crate) fn marker(marker: Marker) -> Self {
+        Chunk {
+            marker: Some(marker),
+            ..Chunk::text(String::new())
+        }
+    }
+
+    /// A text or picture entry, not a container's marker: what a chapter's start and an id
+    /// can land on.
+    pub(crate) fn is_leaf(&self) -> bool {
+        self.marker.is_none()
+    }
+
+    /// Bold on its own, as a header cell is (:7809).
+    pub(crate) fn cell_bold(&self) -> bool {
+        match &self.in_cell {
+            Some(InCell::Text(c)) => c.header && !c.not_bold,
+            Some(InCell::Paragraph { header_bold }) => *header_bold,
+            None => false,
         }
     }
 }
@@ -65,11 +117,10 @@ pub(crate) fn emit_paragraph(
     // Spans and offsets count from the block's text, not the trimmed paragraph (:5530).
     let (spans, anchors) = inline::place(&block.spans, &block.anchors, py::len(para) as i64);
     chunks.push(Chunk {
-        text: para.to_owned(),
         heading_level: block.heading_level,
         spans,
         anchors,
-        picture: None,
+        ..Chunk::text(para.to_owned())
     });
     Ok(Vec::new())
 }

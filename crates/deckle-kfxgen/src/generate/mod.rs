@@ -16,6 +16,9 @@ mod py;
 mod skeleton;
 mod standard_symbols;
 mod styles;
+mod table_chunks;
+mod table_styles;
+mod tables;
 mod text;
 mod title;
 

@@ -155,6 +155,56 @@ pub(crate) fn decimal(text: &str) -> Decimal {
     }
 }
 
+/// `f"{x:.{precision}g}"`: `precision` significant digits, no trailing zeros, an exponent
+/// below 1e-4 or from 10**precision.
+pub(crate) fn format_g(x: f64, precision: usize) -> String {
+    let p = precision.max(1);
+    let strip = |s: String| {
+        if s.contains('.') {
+            s.trim_end_matches('0').trim_end_matches('.').to_owned()
+        } else {
+            s
+        }
+    };
+    let sci = format!("{:.*e}", p - 1, x);
+    let (mantissa, exp) = sci.split_once('e').unwrap_or((&sci, "0"));
+    let exp: i32 = exp.parse().unwrap_or(0);
+    if exp < -4 || exp >= p as i32 {
+        let sign = if exp < 0 { '-' } else { '+' };
+        format!("{}e{sign}{:02}", strip(mantissa.to_owned()), exp.abs())
+    } else {
+        strip(format!("{:.*}", (p as i32 - 1 - exp) as usize, x))
+    }
+}
+
+/// `Decimal(repr(x)).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP).normalize()`.
+pub(crate) fn quantize_milli(x: f64) -> Decimal {
+    let d = decimal(&format!("{x}"));
+    let mut coefficient = if d.exponent >= -3 {
+        d.coefficient * 10i128.pow((d.exponent + 3) as u32)
+    } else {
+        let div = 10i128.pow((-3 - d.exponent) as u32);
+        let (q, r) = (d.coefficient / div, d.coefficient % div);
+        // Half up: a tie goes away from zero.
+        q + (2 * r.abs() >= div) as i128 * d.coefficient.signum()
+    };
+    if coefficient == 0 {
+        return Decimal {
+            coefficient: 0,
+            exponent: 0,
+        };
+    }
+    let mut exponent = -3;
+    while coefficient % 10 == 0 {
+        coefficient /= 10;
+        exponent += 1;
+    }
+    Decimal {
+        coefficient,
+        exponent,
+    }
+}
+
 /// `Decimal(str(x))`. Rust prints a float's shortest round-trip digits, as `repr` does, but
 /// without an exponent: the same decimal below 1e16, which no style reaches.
 pub(crate) fn decimal_of_float(x: f64) -> Decimal {

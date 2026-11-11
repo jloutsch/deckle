@@ -38,7 +38,7 @@ fn heading_runs_matches_kfxgen() {
 }
 
 #[test]
-#[ignore = "a table, block styles and margins, sized and monospace runs, ruby: Tasks 8 to 12"]
+#[ignore = "block styles and margins (its table cells' too), a table's language, sized and monospace runs, ruby: Tasks 9 to 12"]
 fn links_matches_kfxgen() {
     matches_kfxgen("links");
 }

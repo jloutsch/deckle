@@ -4,5 +4,6 @@
 mod generate_images;
 mod generate_inline;
 mod generate_skeleton;
+mod generate_tables;
 mod load;
 mod oracle;

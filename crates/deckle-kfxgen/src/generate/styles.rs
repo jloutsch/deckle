@@ -4,6 +4,10 @@
 use deckle_kfx::fragment::Fragment;
 use deckle_kfx::ion::{Decimal, Value};
 
+use super::table_styles::{
+    CellStyle, PartStyle, TableStyle, build_cell_style_157, build_part_style_157,
+    build_table_style_157,
+};
 use super::{Generator, measure, py, st, sym};
 
 /// `build_fragment_157`'s arguments that the ported paths set, defaulting as it does. Two
@@ -21,6 +25,8 @@ pub(crate) struct Style157 {
     pub margin_left: Option<String>,
     pub baseline_style: Option<&'static str>,
     pub is_heading: bool,
+    /// A run in a table cell: a span can't carry text-align (#281).
+    pub no_align: bool,
 }
 
 impl Default for Style157 {
@@ -36,6 +42,7 @@ impl Default for Style157 {
             margin_left: None,
             baseline_style: None,
             is_heading: false,
+            no_align: false,
         }
     }
 }
@@ -49,10 +56,25 @@ impl Style157 {
     }
 }
 
+/// The arguments of one of the builders `_allocate_style` calls.
+#[derive(Clone, PartialEq)]
+pub(crate) enum StyleArgs {
+    Text(Style157),
+    Table(TableStyle),
+    Cell(CellStyle),
+    Part(PartStyle),
+}
+
+impl From<Style157> for StyleArgs {
+    fn from(s: Style157) -> Self {
+        StyleArgs::Text(s)
+    }
+}
+
 /// `_allocate_style` (:6941): one `$157` per kind and arguments, named `s<n><kind>`.
 #[derive(Default)]
 pub(crate) struct Styles {
-    pub cache: Vec<(&'static str, Style157, String)>,
+    pub cache: Vec<(&'static str, StyleArgs, String)>,
     counts: Vec<(&'static str, usize)>,
 }
 
@@ -61,8 +83,9 @@ impl Styles {
         &mut self,
         g: &mut Generator,
         kind: &'static str,
-        style: Style157,
+        style: impl Into<StyleArgs>,
     ) -> String {
+        let style = style.into();
         if let Some((_, _, name)) = self
             .cache
             .iter()
@@ -81,15 +104,20 @@ impl Styles {
             }
         };
         let name = format!("s{idx}{kind}");
-        let fragment = build_fragment_157(g, &name, &style);
-        g.push(fragment);
+        let value = match &style {
+            StyleArgs::Text(s) => build_fragment_157(g, &name, s),
+            StyleArgs::Table(s) => build_table_style_157(g, &name, s),
+            StyleArgs::Cell(s) => build_cell_style_157(g, &name, s),
+            StyleArgs::Part(s) => build_part_style_157(g, &name, s),
+        };
+        g.push(Fragment::new("$157", Some(&name), value));
         self.cache.push((kind, style, name.clone()));
         name
     }
 }
 
 /// `build_fragment_157` (:3568), for the arguments [`Style157`] holds.
-fn build_fragment_157(g: &mut Generator, name: &str, style: &Style157) -> Fragment {
+fn build_fragment_157(g: &mut Generator, name: &str, style: &Style157) -> Value {
     g.local(name);
     let margin_left = style.margin_left.as_deref().unwrap_or("0.5");
     let Value::Struct(mut v) = st([
@@ -139,5 +167,8 @@ fn build_fragment_157(g: &mut Generator, name: &str, style: &Style157) -> Fragme
     if let Some(baseline) = style.baseline_style {
         v.insert("$44", sym(baseline));
     }
-    Fragment::new("$157", Some(name), Value::Struct(v))
+    if style.no_align {
+        v.remove("$34");
+    }
+    Value::Struct(v)
 }

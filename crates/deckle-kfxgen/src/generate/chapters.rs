@@ -5,6 +5,7 @@
 
 use super::images;
 use super::inline::{Anchors, Span, TocLink, read_spans};
+use super::tables::{self, Table};
 use super::{GenerateError, model_err, py};
 use crate::pyvalue::{PyValue, truthy};
 
@@ -71,7 +72,7 @@ impl Chapter {
     }
 }
 
-/// A paragraph: a block of type None or "text".
+/// A paragraph, a block of type None or "text", or a table.
 #[derive(Clone)]
 pub(crate) struct Block {
     pub text: String,
@@ -80,6 +81,7 @@ pub(crate) struct Block {
     pub space_above: bool,
     pub spans: Vec<Span>,
     pub anchors: Anchors,
+    pub table: Option<Box<Table>>,
 }
 
 /// The chapters of `generate_full_book`'s `chapters` argument.
@@ -170,7 +172,7 @@ fn read_block(b: &PyValue, at: &str) -> Result<Block, GenerateError> {
     match b.get("type") {
         None | Some(PyValue::None) => {}
         Some(PyValue::Str(t)) if t == "text" => {}
-        Some(PyValue::Str(t)) if t == "table" => return Err(Unsupported("tables")),
+        Some(PyValue::Str(t)) if t == "table" => return tables::read_table_block(b, at),
         Some(PyValue::Str(t)) if t == "rule" => return Err(Unsupported("rules")),
         Some(PyValue::Str(t)) if t == "box" => return Err(Unsupported("boxes")),
         Some(_) => return Err(Unsupported("a block type")),
@@ -206,6 +208,7 @@ fn read_block(b: &PyValue, at: &str) -> Result<Block, GenerateError> {
         space_above: truthy(b.get("space_above")),
         spans: read_spans(b.get("spans"), at)?,
         anchors: Anchors::read(b, at)?,
+        table: None,
     })
 }
 

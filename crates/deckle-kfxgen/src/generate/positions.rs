@@ -27,8 +27,8 @@ pub(crate) struct PositionData {
     pub max_section_pids: i64,
 }
 
-/// `_build_position_data` (:3290) for entries of text and pictures, a picture taking one
-/// position (:3372).
+/// `_build_position_data` (:3290) for entries of text, pictures and table containers: a
+/// picture or a container's `open` takes one position, a `close` none (:3372).
 pub(crate) fn build_position_data(section_names: &[String], data: &ChapterData) -> PositionData {
     let mut entries = Vec::new();
     let mut char_offset = 0;
@@ -41,8 +41,11 @@ pub(crate) fn build_position_data(section_names: &[String], data: &ChapterData) 
         char_offset += 1;
         let mut located = vec![(section, 1)];
         for idx in start..end {
-            let (pid, chunk) = (data.chunk_positions[idx], &data.chunks[idx]);
-            let length = if chunk.picture.is_some() {
+            let chunk = &data.chunks[idx];
+            let Some(pid) = data.chunk_positions[idx] else {
+                continue;
+            };
+            let length = if chunk.picture.is_some() || chunk.marker.is_some() {
                 1
             } else {
                 page_texts.insert(pid, chunk.text.as_str());
@@ -65,7 +68,7 @@ pub(crate) fn build_position_data(section_names: &[String], data: &ChapterData) 
         .enumerate()
         .map(|(ch_idx, (name, &(start, end)))| {
             let mut pids = vec![data.section_positions[ch_idx]];
-            pids.extend_from_slice(&data.chunk_positions[start..end]);
+            pids.extend(data.chunk_positions[start..end].iter().flatten());
             (name.clone(), pids)
         })
         .collect();

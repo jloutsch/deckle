@@ -4,12 +4,13 @@
 use std::collections::BTreeSet;
 
 use deckle_kfx::fragment::Fragment;
-use deckle_kfx::ion::Value;
+use deckle_kfx::ion::{Struct, Value};
 
-use super::chunks::Chunk;
+use super::chunks::{Chunk, Marker, Node};
 use super::images;
 use super::inline::{self, EntryLink, Run};
-use super::{Generator, st, sym};
+use super::table_styles::column_widths_152;
+use super::{Generator, measure, py, st, sym};
 
 /// `MAX_CONTENT_FRAGMENT_SIZE` (:1585).
 const MAX_CONTENT_FRAGMENT_SIZE: usize = 8192;
@@ -61,14 +62,18 @@ pub(crate) fn pack_content_fragments(
     (groups, refs)
 }
 
-/// `build_fragment_259` (:4199): one entry per chunk, text or picture, the first marked
-/// `$790`, a text entry with its link and runs.
+/// `build_fragment_259` (:4199): one entry per chunk, text or picture, the first leaf marked
+/// `$790`, a text entry with its link and runs. A table's `open` starts a container whose
+/// `$146` holds the entries up to its `close` (#219): `$278` table, `$151`/`$454`/`$455` row
+/// group, `$279` row, `$269` cell of several blocks. `parts`: a row's or group's own `$157`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_fragment_259(
     g: &mut Generator,
     styles: &[String],
+    parts: &[Option<String>],
     refs: &[Option<ContentRef>],
     name: &str,
-    positions: &[i64],
+    positions: &[Option<i64>],
     runs: &[(Option<EntryLink>, Vec<Run>)],
     chunks: &[Chunk],
 ) -> Fragment {
@@ -76,44 +81,110 @@ pub(crate) fn build_fragment_259(
     for (content, _) in refs.iter().flatten() {
         g.local(content);
     }
-    let entries = styles
-        .iter()
-        .zip(refs)
-        .zip(positions)
-        .zip(runs)
-        .zip(chunks)
-        .enumerate()
-        .map(|(i, ((((style, r), &position), (link, runs)), chunk))| {
-            let mut entry = match &chunk.picture {
-                Some(p) => images::picture_entry(g, p, position, style),
-                None => {
-                    let Value::Struct(mut entry) = st([
-                        ("$155", Value::Int(position)),
-                        ("$157", sym(style)),
-                        ("$159", sym("$269")),
-                    ]) else {
-                        unreachable!()
-                    };
-                    if let Some((content, index)) = r {
-                        entry.insert(
-                            "$145",
-                            st([("name", sym(content)), ("$403", Value::Int(*index))]),
-                        );
+    let mut root = Vec::new();
+    // Each open container and its entries so far.
+    let mut open: Vec<(Struct, Vec<Value>)> = Vec::new();
+    let mut first_leaf = true;
+    for (i, chunk) in chunks.iter().enumerate() {
+        let style = &styles[i];
+        let node = match &chunk.marker {
+            Some(Marker::Close) => {
+                if let Some((mut entry, kids)) = open.pop() {
+                    entry.insert("$146", Value::List(kids));
+                    match open.last_mut() {
+                        Some((_, siblings)) => siblings.push(Value::Struct(entry)),
+                        None => root.push(Value::Struct(entry)),
                     }
-                    entry
                 }
+                continue;
+            }
+            Some(Marker::Open(node)) => Some(node),
+            None => None,
+        };
+        let position = positions[i].expect("only a close takes no position");
+        if let Some(node) = node {
+            let Value::Struct(mut entry) = st([
+                ("$155", Value::Int(position)),
+                ("$159", sym(node_type(node))),
+            ]) else {
+                unreachable!()
             };
-            if i == 0 {
-                entry.insert("$790", Value::Int(1));
+            match node {
+                Node::Table(t) => {
+                    g.local(style);
+                    entry.insert("$157", sym(style));
+                    entry.insert("$150", Value::Bool(false));
+                    for key in ["$456", "$457"] {
+                        entry.insert(key, measure(py::decimal("0.9"), "$318"));
+                    }
+                    if let Some(widths) = column_widths_152(t.column_widths.as_ref()) {
+                        entry.insert("$152", widths);
+                    }
+                    if t.zoom {
+                        // The table viewer's zoom button, on every table of 2+ columns (#272).
+                        entry.insert("$629", Value::List(vec![sym("$581"), sym("$326")]));
+                        entry.insert("$630", sym("$632"));
+                    }
+                }
+                Node::Cell(_) => {
+                    g.local(style);
+                    entry.insert("$157", sym(style));
+                }
+                Node::Group(..) | Node::Row(_) => {
+                    if let Some(part) = &parts[i] {
+                        entry.insert("$157", sym(part));
+                    }
+                }
             }
-            if chunk.picture.is_none() {
-                inline::write_runs(g, &mut entry, link.as_ref(), runs);
+            open.push((entry, Vec::new()));
+            continue;
+        }
+        let mut entry = match &chunk.picture {
+            Some(p) => images::picture_entry(g, p, position, style),
+            None => {
+                let Value::Struct(mut entry) = st([
+                    ("$155", Value::Int(position)),
+                    ("$157", sym(style)),
+                    ("$159", sym("$269")),
+                ]) else {
+                    unreachable!()
+                };
+                if let Some((content, index)) = &refs[i] {
+                    entry.insert(
+                        "$145",
+                        st([("name", sym(content)), ("$403", Value::Int(*index))]),
+                    );
+                }
+                entry
             }
-            Value::Struct(entry)
-        })
-        .collect();
-    let value = st([("$176", sym(name)), ("$146", Value::List(entries))]);
+        };
+        if first_leaf {
+            entry.insert("$790", Value::Int(1));
+            first_leaf = false;
+        }
+        if chunk.picture.is_none() {
+            let (link, runs) = &runs[i];
+            inline::write_runs(g, &mut entry, link.as_ref(), runs);
+        }
+        match open.last_mut() {
+            Some((_, siblings)) => siblings.push(Value::Struct(entry)),
+            None => root.push(Value::Struct(entry)),
+        }
+    }
+    let value = st([("$176", sym(name)), ("$146", Value::List(root))]);
     Fragment::new("$259", Some(name), value)
+}
+
+/// `_TABLE_NODE_TYPES` (:702).
+fn node_type(node: &Node) -> &'static str {
+    match node {
+        Node::Table(_) => "$278",
+        Node::Group("head", _) => "$151",
+        Node::Group("foot", _) => "$455",
+        Node::Group(..) => "$454",
+        Node::Row(_) => "$279",
+        Node::Cell(_) => "$269",
+    }
 }
 
 /// `build_fragment_260` (:4500).

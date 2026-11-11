@@ -22,6 +22,7 @@ use super::positions::{
 use super::standard_symbols::YJ_SYMBOLS_MAX_ID;
 use super::text::build_chapter_content;
 use super::{GenerateError, GenerateOutput, Generator, measure, model_err, py, st, sym};
+use super::{table_chunks, tables};
 use crate::pyvalue::{PyValue, truthy};
 
 use GenerateError::Unsupported;
@@ -148,9 +149,10 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
     };
 
     let mut g = Generator::new();
-    // yj_table 1: a table with rowspan makes it 3 (`_table_feature_version`), and tables
-    // aren't ported.
-    let f = build_fragment_585(&mut g, 1);
+    let mut chapters = read_chapters(chapters_arg)?;
+    let table_version =
+        tables::feature_version(chapters.iter().flat_map(|c| c.blocks.iter().flatten()));
+    let f = build_fragment_585(&mut g, table_version);
     g.push(f);
     let mut images = images::build_resources(&mut g, args)?;
     let f = build_fragment_490(
@@ -174,7 +176,6 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
             "args.chapters: generate_full_book requires a non-empty list",
         ));
     }
-    let mut chapters = read_chapters(chapters_arg)?;
     if images.cover {
         images::add_cover_page(&mut chapters, &images);
     }
@@ -304,6 +305,9 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
     ]);
     g.push(Fragment::root("$419", value));
     g.push(build_fragment_270(&container_id));
+    if data.chunks.iter().any(table_chunks::has_zoom_button) {
+        declare_table_viewer(&mut g);
+    }
     declare_content_features(&mut g, pos.max_section_pids);
 
     // Only the local symbols a fragment uses, in the table's order (:5192).
@@ -377,6 +381,21 @@ fn build_fragment_585(g: &mut Generator, table_version: i64) -> Fragment {
         feature("SDK.Marker", "CanonicalFormat", 1),
     ];
     Fragment::root("$585", st([("$590", Value::List(features))]))
+}
+
+/// `_declare_table_viewer` (:2718): `yj_table_viewer` after `yj_table`, once a table with the
+/// zoom button is written (#254, #272).
+fn declare_table_viewer(g: &mut Generator) {
+    g.local("yj_table_viewer");
+    if let Some(features) = g
+        .fragments
+        .get_single_mut(&"$585".into())
+        .and_then(|f| f.value.as_struct_mut())
+        .and_then(|s| s.get_mut("$590"))
+        .and_then(Value::as_list_mut)
+    {
+        features.insert(1, feature("com.amazon.yjconversion", "yj_table_viewer", 1));
+    }
 }
 
 /// `_declare_content_features` (:2256): reflow-section-size from the largest section, then

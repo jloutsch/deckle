@@ -20,7 +20,7 @@ pub(crate) fn book_headings(data: &ChapterData) -> Vec<(i64, i64)> {
     data.chunks
         .iter()
         .zip(&data.chunk_positions)
-        .filter_map(|(chunk, &position)| chunk.heading_level.map(|level| (position, level)))
+        .filter_map(|(chunk, &position)| Some((position?, chunk.heading_level?)))
         .collect()
 }
 

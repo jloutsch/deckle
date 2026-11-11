@@ -505,8 +505,8 @@ fn link_layers(spans: &[Span]) -> Vec<(i64, i64, Flags, Vec<Flags>)> {
         .collect()
 }
 
-/// `_emphasis_style` (:7245) with no font, size, typography or cell: a run's `$157`.
-fn emphasis_style(flags: &Flags, blk_bold: bool, blk_italic: bool) -> Style157 {
+/// `_emphasis_style` (:7245) with no font, size or typography: a run's `$157`.
+fn emphasis_style(flags: &Flags, blk_bold: bool, blk_italic: bool, in_cell: bool) -> Style157 {
     let has = |f: Flag| flags.contains(&f);
     let bold = has(Flag::Bold) || (blk_bold && !has(Flag::NotBold));
     let italic = has(Flag::Italic) || (blk_italic && !has(Flag::NotItalic));
@@ -517,6 +517,7 @@ fn emphasis_style(flags: &Flags, blk_bold: bool, blk_italic: bool) -> Style157 {
         upright: blk_italic && !italic,
         underline: has(Flag::Underline),
         strike: has(Flag::Strike),
+        no_align: in_cell,
         ..Style157::default()
     };
     // Superscript wins if a run is marked both (#52, #123). kfxgen's
@@ -545,13 +546,15 @@ pub(crate) struct Run {
 
 /// The runs of a chunk's entry (:7851–8037): each layered span's style, and its link's
 /// anchor when the book declares the target. A run that is only a found link has no style.
-/// `blk_bold`: the entry's own text is bold (a chapter heading).
+/// `blk_bold`: the entry's own text is bold (a chapter heading, a header cell). `in_cell`: it
+/// is in a table cell.
 pub(crate) fn entry_runs(
     g: &mut Generator,
     styles: &mut Styles,
     extra_style_names: &mut Vec<String>,
     spans: &[Span],
     blk_bold: bool,
+    in_cell: bool,
     body_anchor_map: &BTreeMap<String, String>,
 ) -> Vec<Run> {
     let mut runs = Vec::new();
@@ -581,7 +584,7 @@ pub(crate) fn entry_runs(
             .iter()
             .any(|f| !matches!(f, Flag::Link(_) | Flag::Baseline));
         let style = (has_emphasis || anchor.is_none()).then(|| {
-            let name = styles.allocate(g, "_em", emphasis_style(&flags, run_b, run_i));
+            let name = styles.allocate(g, "_em", emphasis_style(&flags, run_b, run_i, in_cell));
             if !extra_style_names.contains(&name) {
                 extra_style_names.push(name.clone());
             }
