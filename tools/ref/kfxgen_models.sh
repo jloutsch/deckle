@@ -9,7 +9,7 @@
 #     tools/ref/kfxgen_models.sh --corpus gutenberg/*.epub       # a corpus, outside git
 #
 # Needs a kfxgen repo (KFXGEN, default ../kfxgen-public; only read) with its .venv, and calibre.
-# KFXGEN_REF is the kfxgen commit to take (default 4b81651, the one the port targets). It is
+# KFXGEN_REF is the kfxgen commit to take (default 0bc705d, the one the port targets). It is
 # exported with git archive, and the dump hook (tools/ref/kfxgen_hook) is put into the export.
 # Nothing is written in the kfxgen repo. Calibre runs with its own config folder holding only
 # that export, so your installed plugins (and the Previewer-based "KFX Output") are neither
@@ -18,7 +18,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 KFXGEN="$(cd "${KFXGEN:-$ROOT/../kfxgen-public}" && pwd)"
-KFXGEN_REF="${KFXGEN_REF:-4b81651}"
+KFXGEN_REF="${KFXGEN_REF:-0bc705d}"
 PY="${KFXGEN_PYTHON:-$KFXGEN/.venv/bin/python}"
 EBOOK_CONVERT="${EBOOK_CONVERT:-ebook-convert}"
 CALIBRE_CUSTOMIZE="${CALIBRE_CUSTOMIZE:-calibre-customize}"

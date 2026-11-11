@@ -25,7 +25,7 @@ CALIBRE_FONTS = Path("/Applications/calibre.app/Contents/Resources/resources/fon
 def shim(kfxgen, out):
     sys.path[:0] = [str(kfxgen / "plugin"), str(kfxgen)]
     from kfxgen import converter, model_dump
-    from kfxgen.native_generator import NativeKFXGenerator
+    from kfxgen_hook.generate_from_model import generate
     from tests._helpers import MINIMAL_PNG, NullLog, jpeg_of
     from tests.fixtures.epub_builder import EpubBuilder
     from tests.fixtures.golden.inputs import GOLDEN_INPUTS
@@ -107,7 +107,7 @@ def shim(kfxgen, out):
             kfx = work / f"{name}.kfx"
             converter.convert_oeb_to_kfx(EpubAsOeb(builder(work)), str(kfx), opts=None, log=NullLog())
             del os.environ["KFXGEN_DUMP_MODEL"]
-            replay = NativeKFXGenerator().generate_full_book(**model_dump.load(model))
+            replay = generate(**model_dump.load(model))
             if replay != kfx.read_bytes():
                 sys.exit(f"{name}: the replayed model makes different bytes")
             (model / "expected.kfx").write_bytes(replay)
@@ -2508,7 +2508,7 @@ ARG_BOOK_EXTRAS = {
 def args(kfxgen, out):
     sys.path[:0] = [str(kfxgen / "plugin"), str(kfxgen)]
     from kfxgen import model_dump
-    from kfxgen.native_generator import NativeKFXGenerator
+    from kfxgen_hook.generate_from_model import generate
 
     for name, chapters in ARG_BOOKS.items():
         model = out / name
@@ -2516,14 +2516,14 @@ def args(kfxgen, out):
         if callable(extras):
             extras = extras()
         os.environ["KFXGEN_DUMP_MODEL"] = str(model)
-        kfx = NativeKFXGenerator().generate_full_book(
+        kfx = generate(
             title=name,
             author="Fixture Author",
             chapters=chapters,
             **{"approximate_pages": True, **extras},
         )
         del os.environ["KFXGEN_DUMP_MODEL"]
-        replay = NativeKFXGenerator().generate_full_book(**model_dump.load(model))
+        replay = generate(**model_dump.load(model))
         if replay != kfx:
             sys.exit(f"{name}: the replayed model makes different bytes")
         (model / "expected.kfx").write_bytes(replay)

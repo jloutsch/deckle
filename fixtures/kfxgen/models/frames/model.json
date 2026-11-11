@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "kfxgen_version": "5.24.0",
- "kfxgen_commit": "4b81651",
+ "kfxgen_commit": "0bc705d",
  "args": {
   "$dict": [
    [
@@ -989,6 +989,10 @@
                 {
                  "$dict": []
                 }
+               ],
+               [
+                "picture_align",
+                "center"
                ],
                [
                 "margin_above",
