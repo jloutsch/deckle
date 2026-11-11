@@ -8,6 +8,7 @@ use std::collections::BTreeSet;
 use super::chapters::Block;
 use super::images;
 use super::inline::{Anchors, Span, read_spans};
+use super::table_styles::padding_values;
 use super::{GenerateError, model_err, py};
 use crate::pyvalue::{PyValue, truthy};
 
@@ -213,6 +214,18 @@ pub(crate) fn read_table_block(b: &PyValue, at: &str) -> Result<Block, GenerateE
             model_err(format!("{at_t}.width: a number"))
         })?,
     };
+    // kfxgen's `quantize` raises on a side it can't write in 28 digits (:2071).
+    for (j, row) in table.rows.iter().enumerate() {
+        for (k, cell) in row.cells.iter().enumerate() {
+            if let Some(p) = &cell.padding
+                && padding_values(p, table.width).is_none()
+            {
+                return Err(model_err(format!(
+                    "{at_t}.rows[{j}].cells[{k}].padding: a side kfxgen can write in 28 digits"
+                )));
+            }
+        }
+    }
     Ok(Block {
         text,
         heading: false,

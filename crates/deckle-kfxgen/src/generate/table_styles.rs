@@ -255,7 +255,11 @@ pub(crate) fn column_widths_152(widths: Option<&ColumnWidths>) -> Option<Value> 
 
 /// `_padding_values` (:2071): top and bottom in lh, em / 1.2; left and right in %, em x 3.125
 /// over the table's width; a percentage p is p x 32 / 100 em and p %.
-fn padding_values(padding: &Padding, table_width: Option<f64>) -> Vec<(&'static str, Value)> {
+/// None where kfxgen's `quantize` raises (`py::quantize_milli`).
+pub(crate) fn padding_values(
+    padding: &Padding,
+    table_width: Option<f64>,
+) -> Option<Vec<(&'static str, Value)>> {
     let frac = table_width.filter(|&w| w != 0.0).map_or(1.0, |w| w / 100.0);
     let mut out = Vec::new();
     for (side, value) in padding {
@@ -275,11 +279,11 @@ fn padding_values(padding: &Padding, table_width: Option<f64>) -> Vec<(&'static 
         let v = if matches!(side.as_str(), "top" | "bottom") {
             g_measure(em / 1.2, "$310")
         } else {
-            measure(py::quantize_milli(pct), "$314")
+            measure(py::quantize_milli(pct)?, "$314")
         };
         out.push((key, v));
     }
-    out
+    Some(out)
 }
 
 fn decimal(text: &str) -> Decimal {
@@ -360,7 +364,9 @@ pub(crate) fn build_cell_style_157(g: &mut Generator, name: &str, s: &CellStyle)
         for key in ["$52", "$53", "$54", "$55"] {
             v.remove(key);
         }
-        for (key, value) in padding_values(padding, s.table_width) {
+        let values = padding_values(padding, s.table_width)
+            .expect("checked when the table was read (tables::read_table_block)");
+        for (key, value) in values {
             v.insert(key, value);
         }
     }

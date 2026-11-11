@@ -751,6 +751,11 @@ ARG_BOOKS = {
                                     },
                                 ),
                                 _cell("Wide", colspan=2),
+                                # Tiny negative sides: Python's quantize gives -0 and -0.001.
+                                _cell(
+                                    "Negative",
+                                    padding={"right": -0.00005, "left": -0.00016},
+                                ),
                                 _cell(
                                     "Per cent",
                                     padding={

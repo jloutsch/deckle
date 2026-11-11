@@ -177,32 +177,50 @@ pub(crate) fn format_g(x: f64, precision: usize) -> String {
     }
 }
 
-/// `Decimal(repr(x)).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP).normalize()`.
-pub(crate) fn quantize_milli(x: f64) -> Decimal {
-    let d = decimal(&format!("{x}"));
-    let mut coefficient = if d.exponent >= -3 {
-        d.coefficient * 10i128.pow((d.exponent + 3) as u32)
+/// `Decimal(repr(x)).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP).normalize()`, or
+/// None where that raises `InvalidOperation`: a result of more than the context's 28 digits,
+/// or no number at all. A negative that rounds to nothing is Python's -0, which kfxlib
+/// writes as it writes 0 (`serialize_decimal_value`: an empty decimal).
+pub(crate) fn quantize_milli(x: f64) -> Option<Decimal> {
+    if !x.is_finite() {
+        return None;
+    }
+    // Rust prints the shortest round-trip digits, as `repr` does, with no exponent.
+    let text = format!("{}", x.abs());
+    let (int, frac) = text.split_once('.').unwrap_or((&text, ""));
+    let digits = format!("{int}{:0<3}", &frac[..frac.len().min(3)]);
+    let digits = digits.trim_start_matches('0');
+    // Past what an i128 holds is past 28 digits too.
+    let mut coefficient: i128 = if digits.is_empty() {
+        0
     } else {
-        let div = 10i128.pow((-3 - d.exponent) as u32);
-        let (q, r) = (d.coefficient / div, d.coefficient % div);
-        // Half up: a tie goes away from zero.
-        q + (2 * r.abs() >= div) as i128 * d.coefficient.signum()
+        digits.parse().ok()?
     };
+    // Half up: a tie goes away from zero.
+    if frac.as_bytes().get(3).is_some_and(|&d| d >= b'5') {
+        coefficient += 1;
+    }
+    if coefficient >= 10i128.pow(28) {
+        return None;
+    }
     if coefficient == 0 {
-        return Decimal {
+        return Some(Decimal {
             coefficient: 0,
             exponent: 0,
-        };
+        });
     }
     let mut exponent = -3;
     while coefficient % 10 == 0 {
         coefficient /= 10;
         exponent += 1;
     }
-    Decimal {
+    if x < 0.0 {
+        coefficient = -coefficient;
+    }
+    Some(Decimal {
         coefficient,
         exponent,
-    }
+    })
 }
 
 /// `Decimal(str(x))`. Rust prints a float's shortest round-trip digits, as `repr` does, but
