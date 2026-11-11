@@ -5,12 +5,13 @@
 
 use std::collections::BTreeSet;
 
-use super::block_styles::{BlockStyle, number, read_bidi, read_block_style};
+use super::block_styles::{BlockStyle, number, read_block_style};
 use super::chapters::Block;
 use super::images;
 use super::inline::{Anchors, Span, read_spans};
 use super::inline_pictures::cut_after_picture_lines;
 use super::table_styles::padding_values;
+use super::writing::Bidi;
 use super::{GenerateError, model_err, py};
 use crate::pyvalue::{PyValue, truthy};
 
@@ -41,7 +42,7 @@ pub(crate) struct Table {
     pub column_widths: Option<ColumnWidths>,
     pub width: Option<f64>,
     /// `bidi`: `{}` sets none inside it, where None takes the container's (#246).
-    pub bidi: Option<Option<String>>,
+    pub bidi: Option<Bidi>,
 }
 
 #[derive(Clone)]
@@ -50,6 +51,9 @@ pub(crate) struct Row {
     pub group: &'static str,
     pub border: Option<Border>,
     pub group_border: Option<Border>,
+    /// Its own direction and its group's (#605).
+    pub bidi: Option<Bidi>,
+    pub group_bidi: Option<Bidi>,
     pub anchor_keys: Vec<String>,
     pub cells: Vec<Cell>,
     /// Where the row sat in the source (:872), else its index.
@@ -169,11 +173,7 @@ pub(crate) fn read_table_block(b: &PyValue, at: &str) -> Result<Block, GenerateE
         .get("table")
         .ok_or_else(|| model_err(format!("{at}.table: a dict")))?;
     let at_t = format!("{at}.table");
-    let bidi = read_bidi(t.get("bidi"), &at_t)?;
-    // A table's language is written on its style (#246), not ported.
-    if matches!(bidi, Some(Some(_))) {
-        return Err(Unsupported("text direction"));
-    }
+    let bidi = Bidi::read(t.get("bidi"), &format!("{at_t}.bidi"))?;
     if truthy(t.get("horizontal")) {
         return Err(Unsupported("vertical text"));
     }
@@ -233,11 +233,6 @@ pub(crate) fn read_table_block(b: &PyValue, at: &str) -> Result<Block, GenerateE
 }
 
 fn read_row(r: &PyValue, at: &str) -> Result<Row, GenerateError> {
-    // Even `{}`, which sets none inside it, as a table's does.
-    let set = |key: &str| r.get(key).is_some_and(|v| !matches!(v, PyValue::None));
-    if set("bidi") || set("group_bidi") {
-        return Err(Unsupported("text direction"));
-    }
     let group = match r.get("group").and_then(PyValue::as_str) {
         Some("head") => "head",
         Some("body") => "body",
@@ -256,6 +251,8 @@ fn read_row(r: &PyValue, at: &str) -> Result<Row, GenerateError> {
         group,
         border: read_border(r.get("border"), &format!("{at}.border"))?,
         group_border: read_border(r.get("group_border"), &format!("{at}.group_border"))?,
+        bidi: Bidi::read(r.get("bidi"), &format!("{at}.bidi"))?,
+        group_bidi: Bidi::read(r.get("group_bidi"), &format!("{at}.group_bidi"))?,
         anchor_keys: read_keys(r, at)?,
         cells,
         source_order: opt(r.get("source_order"), PyValue::as_int, || {

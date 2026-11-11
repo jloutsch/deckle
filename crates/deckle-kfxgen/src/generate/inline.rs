@@ -10,7 +10,8 @@ use deckle_kfx::ion::{Struct, Value};
 use super::block_styles::{Sizes, number};
 use super::fonts::FontTable;
 use super::notes::Popups;
-use super::styles::{Style157, Styles};
+use super::styles::{Style157, StyleArgs, Styles};
+use super::writing::{Bidi, direction_layers, read_bidi_flag};
 use super::{GenerateError, Generator, model_err, py, st, sym};
 use crate::pyvalue::{PyValue, truthy};
 
@@ -42,6 +43,10 @@ pub(crate) enum Flag {
     Mono(Vec<String>),
     /// `make_size_flag` (#241): a size of its own, in CSS px.
     Size(Px),
+    /// `make_bidi_flag` (#710): an inline element's own direction, as (serial, depth, keys).
+    Bidi(i64, i64, Bidi),
+    /// An inline element's language when it sets no direction (#710).
+    Lang(String),
 }
 
 /// A size in CSS px, ordered by `total_cmp` so a run's flags can be a set; read with no sign
@@ -118,7 +123,11 @@ fn flag_of(f: &PyValue, at: &str) -> Result<Flag, GenerateError> {
             (Some("link"), PyValue::Str(target)) => Flag::Link(target.clone()),
             (Some("ruby"), _) => return Err(Unsupported("ruby")),
             (Some("tcy"), _) => return Err(Unsupported("tate-chu-yoko")),
-            (Some("bidi" | "lang"), _) => return Err(Unsupported("text direction")),
+            (Some("bidi"), v) => read_bidi_flag(v, &format!("{at}.spans"))?,
+            (Some("lang"), PyValue::Str(lang)) => Flag::Lang(lang.clone()),
+            (Some("lang"), _) => {
+                return Err(model_err(format!("{at}.spans: a language, a string")));
+            }
             (Some("mono"), families) => Flag::Mono(
                 families
                     .as_list()
@@ -191,11 +200,14 @@ pub(crate) fn read_spans(v: Option<&PyValue>, at: &str) -> Result<Vec<Span>, Gen
             .iter()
             .map(|f| flag_of(f, at))
             .collect::<Result<_, _>>()?;
-        // `_direction_layers` would take the links in set order, and `run_font_size` and
-        // `mono_families` the first size or family.
+        // `_direction_layers` would take the links in set order, `run_font_size`,
+        // `mono_families` and the run's language the first size, family or language.
         let count = |kind: fn(&Flag) -> bool| flags.iter().filter(|f| kind(f)).count();
         if count(|f| matches!(f, Flag::Link(_))) > 1 {
             return Err(Unsupported("a run in two links"));
+        }
+        if count(|f| matches!(f, Flag::Lang(_))) > 1 {
+            return Err(Unsupported("a run in two languages"));
         }
         if count(|f| matches!(f, Flag::Size(_))) > 1 || count(|f| matches!(f, Flag::Mono(_))) > 1 {
             return Err(Unsupported("a run of two sizes or two monospace families"));
@@ -498,68 +510,6 @@ pub(crate) fn build_toc_anchor(
     Ok(name)
 }
 
-/// `_direction_layers` (:402) for runs with no direction element: each link one run over its
-/// whole text, carrying the flags common to it, and the runs inside it layered on it with
-/// what it doesn't carry. `(start, length, flags, under)`, outer runs first.
-fn link_layers(spans: &[Span]) -> Vec<(i64, i64, Flags, Vec<Flags>)> {
-    // [start, end, the link flag]; adjacent runs of one link are one layer.
-    let mut links: Vec<(i64, i64, &Flag)> = Vec::new();
-    for sp in spans {
-        for f in sp.flags.iter().filter(|f| matches!(f, Flag::Link(_))) {
-            match links.last_mut() {
-                Some(last) if last.2 == f && last.1 == sp.start => last.1 = sp.start + sp.len,
-                _ => links.push((sp.start, sp.start + sp.len, f)),
-            }
-        }
-    }
-    if links.is_empty() {
-        return spans
-            .iter()
-            .map(|sp| (sp.start, sp.len, sp.flags.clone(), Vec::new()))
-            .collect();
-    }
-    // Levels in quarters: links at 0.5, a run 0.75 above the layers it's in. Every link is
-    // at one level, so none carries less for another above it.
-    let carried: Vec<Flags> = links
-        .iter()
-        .map(|&(a, b, _)| {
-            let mut inside = spans
-                .iter()
-                .filter(|sp| a <= sp.start && sp.start + sp.len <= b);
-            let first = inside.next().map(|sp| sp.flags.clone()).unwrap_or_default();
-            inside.fold(first, |acc, sp| &acc & &sp.flags)
-        })
-        .collect();
-    let mut out: Vec<(i64, i64, Flags, Vec<Flags>, i64)> = links
-        .iter()
-        .zip(&carried)
-        .map(|(&(a, b, _), c)| (a, b - a, c.clone(), Vec::new(), 2))
-        .collect();
-    for sp in spans {
-        let inside: Vec<&Flags> = links
-            .iter()
-            .zip(&carried)
-            .filter(|((a, b, _), _)| *a <= sp.start && sp.start + sp.len <= *b)
-            .map(|(_, c)| c)
-            .collect();
-        let rest: Flags = sp
-            .flags
-            .iter()
-            .filter(|f| !inside.iter().any(|c| c.contains(f)))
-            .cloned()
-            .collect();
-        if !rest.is_empty() {
-            let level = if inside.is_empty() { 3 } else { 5 };
-            let under = inside.into_iter().cloned().collect();
-            out.push((sp.start, sp.len, rest, under, level));
-        }
-    }
-    out.sort_by_key(|x| (x.0, x.4));
-    out.into_iter()
-        .map(|(s, n, f, u, _)| (s, n, f, u))
-        .collect()
-}
-
 /// `_emphasis_style` (:7245) with no typography: a run's `$157`, from its weight and slant
 /// and those it starts from (`run_b`, `run_i`), its family (#50) and its own size (#241).
 fn emphasis_style(
@@ -646,9 +596,10 @@ pub(crate) fn entry_runs(
     popups: &Popups,
 ) -> Vec<Run> {
     let mut runs = Vec::new();
-    for (start, len, flags, under) in link_layers(spans) {
+    for mut layer in direction_layers(spans) {
         // A run layered on others starts from their weight, slant and font (#715).
         let (mut run_b, mut run_i, mut run_fam) = (base.bold, base.italic, base.family);
+        let under = std::mem::take(&mut layer.under);
         for u in &under {
             if u.contains(&Flag::Bold) {
                 run_b = true;
@@ -664,7 +615,11 @@ pub(crate) fn entry_runs(
                 run_fam = mono;
             }
         }
-        if flags.is_empty() {
+        // A language alone is a flag of the run's (#710's P01); its keys are written as they
+        // are, not against the paragraph's (:7912).
+        let bidi = layer.bidi_keys();
+        let (start, len, flags) = (layer.start, layer.len, layer.flags);
+        if flags.is_empty() && bidi.is_empty() {
             continue;
         }
         let anchor = flags.iter().find_map(|f| match f {
@@ -672,26 +627,39 @@ pub(crate) fn entry_runs(
             _ => None,
         });
         let mut has_emphasis = flags.iter().any(|f| match f {
-            Flag::Link(_) | Flag::Baseline | Flag::NoteRef | Flag::Size(_) => false,
+            Flag::Link(_)
+            | Flag::Baseline
+            | Flag::NoteRef
+            | Flag::Size(_)
+            | Flag::Bidi(..)
+            | Flag::Lang(_) => false,
             Flag::Mono(families) => !families.is_empty(),
             _ => true,
         });
         let run_px = run_font_size(&flags);
         if base.sized && run_px.is_some_and(|px| sizes.rem(Some(px)) != base.blk_fs) {
             has_emphasis = true;
-        } else if flags.iter().all(|f| matches!(f, Flag::Size(_))) {
+        } else if bidi.is_empty()
+            && !flags.is_empty()
+            && flags.iter().all(|f| matches!(f, Flag::Size(_)))
+        {
             // Only a size, and the paragraph's: no run, as a paragraph wholly in a sized
             // span has none (#375). kfxgen also asks for no anchor, which only a link has.
             continue;
         }
-        let style = (has_emphasis || anchor.is_none()).then(|| {
-            let style = emphasis_style(&g.fonts, sizes, &flags, (run_b, run_i), run_fam, base);
-            let name = styles.allocate(g, "_em", style);
-            if !extra_style_names.contains(&name) {
-                extra_style_names.push(name.clone());
-            }
-            name
-        });
+        let style = if !bidi.is_empty() && !has_emphasis {
+            // Only its direction: a style of those keys alone (#710).
+            Some(styles.allocate_in(g, "_dir", StyleArgs::Direction, &bidi))
+        } else {
+            (has_emphasis || anchor.is_none()).then(|| {
+                let style = emphasis_style(&g.fonts, sizes, &flags, (run_b, run_i), run_fam, base);
+                let name = styles.allocate_in(g, "_em", style, &bidi);
+                if !extra_style_names.contains(&name) {
+                    extra_style_names.push(name.clone());
+                }
+                name
+            })
+        };
         runs.push(Run {
             start,
             len,

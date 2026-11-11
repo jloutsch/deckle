@@ -7,7 +7,7 @@ use std::borrow::Borrow;
 
 use deckle_kfx::ion::Value;
 
-use super::block_styles::{keep_space, number, read_bidi};
+use super::block_styles::{keep_space, number};
 use super::chapters::{Block, read_block};
 use super::chunks::{Chunk, Marker, Node, emit_paragraph};
 use super::frames;
@@ -18,6 +18,7 @@ use super::table_chunks::{emit_table_chunks, link_target};
 use super::table_styles::{apply_border, border_style_symbol, padding_values, side_keys};
 use super::tables::{self, Border, Padding, read_border, read_padding, read_sides};
 use super::title::opens_with_title;
+use super::writing::Bidi;
 use super::{GenerateError, Generator, model_err, py, st, sym};
 use crate::pyvalue::{PyValue, truthy};
 
@@ -153,8 +154,8 @@ pub(crate) struct BoxSpec {
     /// In % of the page.
     pub margin_left: Option<f64>,
     pub margin_right: Option<f64>,
-    /// `bidi`: None when absent; `Some(None)` for `{}`.
-    pub bidi: Option<Option<String>>,
+    /// `bidi`: None when absent; `{}` sets none inside it.
+    pub bidi: Option<Bidi>,
     /// A wrapper's width around a picture, in % of the page, and in CSS px when it is a
     /// length (#382).
     pub width: Option<f64>,
@@ -198,7 +199,7 @@ pub(crate) fn read_box(b: &PyValue, at: &str) -> Result<BoxBlock, GenerateError>
         font_px: opt(d, "font_px", &at_box, "a number", number)?,
         margin_left: opt(d, "margin_left", &at_box, "a number", number)?,
         margin_right: opt(d, "margin_right", &at_box, "a number", number)?,
-        bidi: read_bidi(d.get("bidi"), &at_box)?,
+        bidi: Bidi::read(d.get("bidi"), &format!("{at_box}.bidi"))?,
         width: opt(d, "width", &at_box, "a number", number)?,
         width_px: opt(d, "width_px", &at_box, "a number", number)?,
         float: opt(d, "float", &at_box, "a string", |v| {

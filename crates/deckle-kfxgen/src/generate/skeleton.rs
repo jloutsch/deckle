@@ -101,17 +101,12 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
         .ok_or_else(|| model_err("args.chapters: a list"))?
         .len();
 
-    if truthy(args.get("rtl")) {
-        return Err(Unsupported("right-to-left page order"));
-    }
+    let rtl = truthy(args.get("rtl"));
     if writing_mode == Some("vertical-rl") {
         return Err(Unsupported("vertical text"));
     }
     let base_language = language.replace('_', "-");
     let base_language = base_language.split('-').next().unwrap_or("").to_lowercase();
-    if REFLOW_LANGUAGES.contains(&base_language.as_str()) {
-        return Err(Unsupported("a right-to-left language"));
-    }
 
     // The container id and ASIN come from the book's identity (:4638).
     let seed = [
@@ -207,7 +202,7 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
         section_names.push(name);
     }
     let pos = build_position_data(&section_names, &data);
-    let f = build_fragment_538(&mut g, &section_names);
+    let f = build_fragment_538(&mut g, &section_names, rtl);
     g.push(f);
 
     // The cover's page, and a chapter its caller leaves out, are in no contents (:4988).
@@ -318,6 +313,11 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
     if data.chunks.iter().any(table_chunks::has_zoom_button) {
         declare_table_viewer(&mut g);
     }
+    if REFLOW_LANGUAGES.contains(&base_language.as_str()) {
+        // As Kindle Previewer 4.0.3 declares an Arabic, Persian or Hebrew book, by its
+        // language, whatever its text (#246).
+        declare_feature(&mut g, &format!("{base_language}-reflow-language"));
+    }
     declare_content_features(&mut g, pos.max_section_pids);
 
     // Only the local symbols a fragment uses, in the table's order (:5192).
@@ -408,6 +408,20 @@ fn declare_table_viewer(g: &mut Generator) {
     }
 }
 
+/// `_declare_feature` (:2365): `name` 1.0 appended to `$585`.
+fn declare_feature(g: &mut Generator, name: &str) {
+    g.local(name);
+    if let Some(features) = g
+        .fragments
+        .get_single_mut(&"$585".into())
+        .and_then(|f| f.value.as_struct_mut())
+        .and_then(|s| s.get_mut("$590"))
+        .and_then(Value::as_list_mut)
+    {
+        features.push(feature("com.amazon.yjconversion", name, 1));
+    }
+}
+
 /// `_declare_content_features` (:2256): reflow-section-size from the largest section, then
 /// what the pictures need.
 fn declare_content_features(g: &mut Generator, max_section_pids: i64) {
@@ -464,15 +478,16 @@ fn reading_order(section_names: &[String]) -> Value {
     ])])
 }
 
-/// `build_fragment_538` (:3011) for a horizontal, left-to-right book. Its `max_id` is set once
+/// `build_fragment_538` (:3011) for a horizontal book. Its `max_id` is set once
 /// the book's symbols are known.
-fn build_fragment_538(g: &mut Generator, section_names: &[String]) -> Fragment {
+fn build_fragment_538(g: &mut Generator, section_names: &[String], rtl: bool) -> Fragment {
     for name in section_names {
         g.local(name);
     }
     let value = st([
         ("$560", sym("$557")),
-        ("$192", sym("$376")),
+        // Page direction: right to left when the spine says so (#246).
+        ("$192", sym(if rtl { "$375" } else { "$376" })),
         (
             "$16",
             measure(

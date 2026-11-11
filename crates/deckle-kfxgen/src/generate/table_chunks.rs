@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 use super::chapters::Block;
 use super::chunks::{Chunk, InCell, Marker, Node};
 use super::tables::{Border, Cell, ColumnWidths, Padding, Table, dedupe};
+use super::writing::Bidi;
 
 /// What a cell's `$157` is made from (:6063).
 #[derive(Clone)]
@@ -30,7 +31,7 @@ pub(crate) struct TableOpen {
     pub border: Option<Border>,
     pub column_widths: Option<ColumnWidths>,
     pub width: Option<f64>,
-    pub bidi: Option<Option<String>>,
+    pub bidi: Option<Bidi>,
 }
 
 /// `_table_has_zoom` (:2101): every table of 2 or more columns (#272).
@@ -96,6 +97,7 @@ pub(crate) fn emit_table_chunks(block: &Block, t: &Table, chunks: &mut Vec<Chunk
             chunks.push(Chunk::marker(Marker::Open(Node::Group(
                 row.group,
                 row.group_border.clone(),
+                row.group_bidi.clone(),
             ))));
         }
         let leading = if last_row.is_none() { &own[..] } else { &[] };
@@ -108,7 +110,10 @@ pub(crate) fn emit_table_chunks(block: &Block, t: &Table, chunks: &mut Vec<Chunk
         );
         carried.clear();
         last_row = Some(chunks.len());
-        let mut open = Chunk::marker(Marker::Open(Node::Row(row.border.clone())));
+        let mut open = Chunk::marker(Marker::Open(Node::Row(
+            row.border.clone(),
+            row.bidi.clone(),
+        )));
         open.anchors.attach(&keys);
         chunks.push(open);
         for cell in &row.cells {
@@ -219,7 +224,7 @@ pub(crate) fn link_target(chunks: &[Chunk], index: usize) -> usize {
         if depth == 0 {
             break;
         }
-        if matches!(c.marker, Some(Marker::Open(Node::Row(_)))) {
+        if matches!(c.marker, Some(Marker::Open(Node::Row(..)))) {
             return i;
         }
     }

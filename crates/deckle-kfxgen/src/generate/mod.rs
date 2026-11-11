@@ -29,6 +29,7 @@ mod table_styles;
 mod tables;
 mod text;
 mod title;
+mod writing;
 
 use deckle_kfx::container::ContainerError;
 use deckle_kfx::fragment::{Fragment, FragmentList};

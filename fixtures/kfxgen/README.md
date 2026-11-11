@@ -85,6 +85,7 @@ the KFX `ebook-convert` wrote.
 | `vertical` | kfxgen `test_books/vertical_247/s746k.epub` | vertical-rl Japanese, rtl spine, ruby |
 | `ruby_tcy` | kfxgen `test_books/tcy_emphasis_748/s748k.epub` | tate-chu-yoko, emphasis marks, vertical |
 | `rtl` | synthetic | Hebrew, `page-progression-direction="rtl"`, `dir="rtl"`, Latin and digits inside |
+| `directions` | synthetic | direction and language in an English book (#246, #605, #710, #714): `dir`, `<bdi>`, `<bdo>`, `dir="auto"`, CSS `direction` and `unicode-bidi` on runs, nested, in bold, in and around links, under a language; `lang` alone on runs, over italic, over a whole sized paragraph; paragraphs right to left, `text-align: start`, `plaintext`; tables, row groups, rows and cells of their own direction and language; boxes of their own; a rebuilt contents page; a chapter of a table alone under kfxgen's heading |
 | `page_list` | kfxgen `test_books/landmarks_pages/l579-main.epub` | the EPUB's page-list, landmarks |
 | `links` | kfxgen `test_books/link_runs_726/s726k.epub` | links and link runs, ruby |
 | `frames` | synthetic, shaped as kfxgen `test_books/figures` and `floats` less a linked picture and a picture among words | figures 40% wide, centred at 60%, 300px and 12em wide, floated, shaded; pictures with no size, in px and high in a sized box; floats opening a paragraph, with ids; a float in a sized box |

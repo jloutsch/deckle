@@ -12,6 +12,7 @@ use super::inline_pictures;
 use super::styles::LINE_EM;
 use super::table_chunks::{CellInfo, TableOpen};
 use super::tables::Border;
+use super::writing::Bidi;
 use super::{GenerateError, frames, py};
 
 /// `_ASCII_SPACE` (:1061): a paragraph's edges are trimmed of these only.
@@ -48,9 +49,9 @@ pub(crate) enum Marker {
 
 pub(crate) enum Node {
     Table(TableOpen),
-    /// A row group, "head", "body" or "foot", and its border.
-    Group(&'static str, Option<Border>),
-    Row(Option<Border>),
+    /// A row group, "head", "body" or "foot", its border and its direction (#605).
+    Group(&'static str, Option<Border>, Option<Bidi>),
+    Row(Option<Border>, Option<Bidi>),
     /// A cell holding several blocks, or none.
     Cell(CellInfo),
     /// A box (#238), or a frame (#382, #565).

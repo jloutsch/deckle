@@ -151,7 +151,7 @@ pub(crate) fn build_fragment_259(
                         entry.insert("$157", sym(part));
                     }
                 }
-                Node::Group(..) | Node::Row(_) | Node::Box(_) => {
+                Node::Group(..) | Node::Row(..) | Node::Box(_) => {
                     if let Some(part) = &parts[i] {
                         entry.insert("$157", sym(part));
                     }
@@ -226,10 +226,10 @@ pub(crate) fn build_fragment_259(
 fn node_type(node: &Node) -> &'static str {
     match node {
         Node::Table(_) => "$278",
-        Node::Group("head", _) => "$151",
-        Node::Group("foot", _) => "$455",
+        Node::Group("head", ..) => "$151",
+        Node::Group("foot", ..) => "$455",
         Node::Group(..) => "$454",
-        Node::Row(_) => "$279",
+        Node::Row(..) => "$279",
         Node::Cell(_) | Node::Link(_) => "$269",
         // A frame is Previewer's plain container (:7485, #382, #565).
         Node::Box(b) if frames::is_frame(&b.spec) => "$269",

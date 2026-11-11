@@ -10,6 +10,7 @@ use super::table_styles::{
     CellStyle, PartStyle, TableStyle, align_symbol, build_cell_style_157, build_part_style_157,
     build_table_style_157,
 };
+use super::writing::{BidiKeys, bidi_value};
 use super::{Generator, measure, py, st, sym};
 
 /// `_LINE_EM` (:1055): one line of space, in ems.
@@ -88,6 +89,8 @@ pub(crate) enum StyleArgs {
     Part(PartStyle),
     Box(BoxStyle),
     Rule(RuleStyle),
+    /// A run's direction keys alone (#710).
+    Direction,
 }
 
 impl From<Style157> for StyleArgs {
@@ -96,10 +99,11 @@ impl From<Style157> for StyleArgs {
     }
 }
 
-/// `_allocate_style` (:6941): one `$157` per kind, arguments and language, named `s<n><kind>`.
+/// `_allocate_style` (:6941): one `$157` per kind, arguments and direction keys, named
+/// `s<n><kind>`.
 #[derive(Default)]
 pub(crate) struct Styles {
-    pub cache: Vec<(&'static str, StyleArgs, Option<String>, String)>,
+    pub cache: Vec<(&'static str, StyleArgs, BidiKeys, String)>,
     counts: Vec<(&'static str, usize)>,
 }
 
@@ -110,22 +114,22 @@ impl Styles {
         kind: &'static str,
         style: impl Into<StyleArgs>,
     ) -> String {
-        self.allocate_in(g, kind, style, None)
+        self.allocate_in(g, kind, style, &[])
     }
 
-    /// With the language `_bidi_diff` (:6927) gives it, written last as `$10`.
+    /// With the direction and language `_bidi_diff` (:6927) gives it, written last.
     pub(crate) fn allocate_in(
         &mut self,
         g: &mut Generator,
         kind: &'static str,
         style: impl Into<StyleArgs>,
-        lang: Option<&str>,
+        bidi: &[(&'static str, String)],
     ) -> String {
         let style = style.into();
         if let Some((.., name)) = self
             .cache
             .iter()
-            .find(|(k, s, l, _)| *k == kind && *s == style && l.as_deref() == lang)
+            .find(|(k, s, b, _)| *k == kind && *s == style && b[..] == *bidi)
         {
             return name.clone();
         }
@@ -147,13 +151,19 @@ impl Styles {
             StyleArgs::Part(s) => build_part_style_157(g, &name, s),
             StyleArgs::Box(s) => build_box_style_157(g, &name, s),
             StyleArgs::Rule(s) => build_rule_style_157(g, &name, s),
+            // `build_direction_style_157` (:2321).
+            StyleArgs::Direction => {
+                g.local(&name);
+                st([("$173", sym(&name))])
+            }
         };
-        if let (Some(lang), Value::Struct(v)) = (lang, &mut value) {
-            v.insert("$10", Value::string(lang));
+        if let Value::Struct(v) = &mut value {
+            for (key, text) in bidi {
+                v.insert(*key, bidi_value(key, text));
+            }
         }
         g.push(Fragment::new("$157", Some(&name), value));
-        self.cache
-            .push((kind, style, lang.map(str::to_owned), name.clone()));
+        self.cache.push((kind, style, bidi.to_vec(), name.clone()));
         name
     }
 }

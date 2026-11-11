@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use deckle_kfx::fragment::Fragment;
 
 use super::block_styles::{
-    self, Containers, HeadingStyle, Sizes, heading_attrs, heading_style, text_entry_style,
+    BlockStyle, Containers, HeadingStyle, Sizes, heading_attrs, heading_style, text_entry_style,
 };
 use super::boxes::{self, drop_edge_rules, emit_box_chunks, rule_chunk, unboxed};
 use super::chapters::{Block, Chapter};
@@ -27,6 +27,7 @@ use super::title::{
     eat_split_title, heading_near_start, label_blocks, opens_with_title, title_in_table,
     title_runs_in,
 };
+use super::writing;
 use super::{GenerateError, Generator, py};
 
 use GenerateError::Unsupported;
@@ -126,18 +127,22 @@ pub(crate) fn build_chapter_content(
             || heading_near_start
             || label_over_blocks;
         let mut heading_chunk = None;
+        // The page's direction and language, for kfxgen's lines with no block of the book's
+        // to take them from: its heading, a rebuilt contents page's lines (#714, :6307).
+        let page_bidi = chapter.page_bidi.clone().filter(|b| b.set).or_else(|| {
+            writing::page_bidi(blocks.iter().flat_map(|b| {
+                let boxed = b.boxed.as_ref().and_then(|x| x.spec.bidi.as_ref());
+                let table = b.table.as_ref().and_then(|t| t.bidi.as_ref());
+                [b.style.as_ref().and_then(|s| s.bidi.as_ref()), boxed, table]
+            }))
+        });
         if !omit_heading {
             heading_chunk = Some(chunks.len());
-            // The page's language, for kfxgen's heading (#714).
-            let page_bidi = block_styles::page_bidi(blocks.iter().map(|b| {
-                block_styles::lang(b.style.as_ref())
-                    .or_else(|| b.boxed.as_ref()?.spec.bidi.as_ref()?.as_deref())
-            }));
             chunks.push(Chunk {
                 heading_level: chapter.heading_level,
                 spans: title_spans.unwrap_or_default(),
                 heading: HeadingStyle {
-                    page_bidi,
+                    page_bidi: page_bidi.clone(),
                     ..HeadingStyle::default()
                 },
                 ..Chunk::text(title.clone())
@@ -147,7 +152,13 @@ pub(crate) fn build_chapter_content(
         if toc {
             for link in &chapter.toc_links {
                 toc_link_chunks.insert(chunks.len(), (link.target, link.level));
-                chunks.push(Chunk::text(link.text.clone()));
+                chunks.push(Chunk {
+                    style: page_bidi.clone().map(|bidi| BlockStyle {
+                        bidi: Some(bidi),
+                        ..BlockStyle::default()
+                    }),
+                    ..Chunk::text(link.text.clone())
+                });
             }
         } else {
             let cut_title = !chapter.omit_title_heading
@@ -464,8 +475,8 @@ pub(crate) fn build_chapter_content(
         let mut open = Containers::default();
         for chunk_idx in start..end {
             let chunk = &chunks[chunk_idx];
-            let around = open.around().map(str::to_owned);
-            let around = around.as_deref();
+            let around = open.around().cloned();
+            let around = around.as_ref();
             if let Some(marker) = &chunk.marker {
                 let (style, part) =
                     open.marker_styles(g, &mut styles, &sizes, chunk, marker, fs)?;
@@ -514,16 +525,19 @@ pub(crate) fn build_chapter_content(
                         toc_link_style_names[ch_idx].clone().unwrap_or_default(),
                         py::len(&chunk.text) as i64,
                     ));
-                    if level != 0 {
+                    // The page's direction and language (#714).
+                    let bidi = writing::bidi_diff(
+                        chunk.style.as_ref().and_then(|b| b.bidi.as_ref()),
+                        around,
+                    );
+                    if level != 0 || !bidi.is_empty() {
                         // Indented by depth, 6.25% a level (#238, #313).
                         let indent = Style157 {
-                            margin_left: Some((
-                                py::format_g(6.25 * level as f64, 6),
-                                "$314".into(),
-                            )),
+                            margin_left: (level != 0)
+                                .then(|| (py::format_g(6.25 * level as f64, 6), "$314".into())),
                             ..Style157::body(fs)
                         };
-                        styles.allocate(g, "", indent)
+                        styles.allocate_in(g, "", indent, &bidi)
                     } else {
                         story_names[ch_idx].clone()
                     }

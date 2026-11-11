@@ -79,14 +79,15 @@ impl CellStyle {
 }
 
 /// A table container's `$157` (:7441), and a row's or group's own for its border (:7556):
-/// (the entry's style, its part style). `bs`, `font_size`, `lang`: a cell's.
+/// (the entry's style, its part style). `bs`, `font_size`: a cell's; `bidi`: the container's
+/// `_bidi_diff`.
 pub(crate) fn marker_styles(
     g: &mut Generator,
     styles: &mut Styles,
     marker: &Marker,
     bs: Option<&BlockStyle>,
     font_size: f64,
-    lang: Option<&str>,
+    bidi: &[(&'static str, String)],
 ) -> (Option<String>, Option<String>) {
     match marker {
         Marker::Open(Node::Table(t)) => {
@@ -94,21 +95,23 @@ pub(crate) fn marker_styles(
                 border: t.border.clone(),
                 width: t.width,
             };
-            (
-                Some(styles.allocate(g, "_tbl", StyleArgs::Table(table))),
-                None,
-            )
+            let name = styles.allocate_in(g, "_tbl", StyleArgs::Table(table), bidi);
+            (Some(name), None)
         }
         Marker::Open(Node::Cell(cell)) => {
             let cell = CellStyle::of(&g.fonts, cell, bs, font_size);
-            let name = styles.allocate_in(g, "_td", StyleArgs::Cell(cell), lang);
+            let name = styles.allocate_in(g, "_td", StyleArgs::Cell(cell), bidi);
             (Some(name), None)
         }
-        Marker::Open(Node::Group(_, Some(border)) | Node::Row(Some(border))) => {
+        // A row's or group's own border (#264) or direction (#605).
+        Marker::Open(Node::Group(_, border, _) | Node::Row(border, _))
+            if border.is_some() || !bidi.is_empty() =>
+        {
             let part = PartStyle {
-                border: Some(border.clone()),
+                border: border.clone(),
             };
-            (None, Some(styles.allocate(g, "_tp", StyleArgs::Part(part))))
+            let name = styles.allocate_in(g, "_tp", StyleArgs::Part(part), bidi);
+            (None, Some(name))
         }
         _ => (None, None),
     }

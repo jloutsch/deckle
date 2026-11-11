@@ -2,13 +2,14 @@
 //! A paragraph's own style, the `block_style` the converter reads from the book's CSS, and the
 //! `$157` `_build_chapter_content` (`native_generator.py:5396`) makes of it: sizes against
 //! the book's main text size (#241), line heights against its main line (#463), the book's
-//! alignment, indent, margins, weight and language (:7735), and the book's heading printing
+//! alignment, indent, margins, weight, direction and language (:7735), and the book's heading printing
 //! as kfxgen's (#490, :7646).
 use super::boxes::BoxStyle;
 use super::chunks::{Chunk, InCell, Marker, Node};
 use super::inline::run_font_size;
 use super::styles::{Style157, StyleArgs, Styles};
 use super::table_styles::{self, CellStyle};
+use super::writing::{Bidi, bidi_diff};
 use super::{GenerateError, Generator, model_err, py};
 use crate::pyvalue::PyValue;
 
@@ -31,8 +32,8 @@ pub(crate) struct BlockStyle {
     pub italic: bool,
     /// In CSS px.
     pub font_size: Option<f64>,
-    /// `bidi`: None when absent; `Some(None)` for a dict with no language.
-    pub bidi: Option<Option<String>>,
+    /// `bidi`: its direction and language (#246).
+    pub bidi: Option<Bidi>,
 }
 
 pub(crate) fn number(v: &PyValue) -> Option<f64> {
@@ -41,27 +42,6 @@ pub(crate) fn number(v: &PyValue) -> Option<f64> {
         PyValue::Float(f) => Some(*f),
         _ => None,
     }
-}
-
-/// A `bidi` dict (#246): its language. Direction is Task 12's.
-pub(crate) fn read_bidi(
-    v: Option<&PyValue>,
-    at: &str,
-) -> Result<Option<Option<String>>, GenerateError> {
-    let pairs = match v {
-        None | Some(PyValue::None) => return Ok(None),
-        Some(PyValue::Dict(pairs)) => pairs,
-        Some(_) => return Err(model_err(format!("{at}.bidi: a dict"))),
-    };
-    let mut lang = None;
-    for (k, v) in pairs {
-        match (k.as_str(), v) {
-            (Some("lang"), PyValue::Str(s)) => lang = Some(s.clone()),
-            (Some("lang"), _) => return Err(model_err(format!("{at}.bidi.lang: a string"))),
-            _ => return Err(Unsupported("text direction")),
-        }
-    }
-    Ok(Some(lang))
 }
 
 /// A block's `block_style`; None for none or `{}`, which kfxgen reads alike (`or {}`).
@@ -105,7 +85,7 @@ pub(crate) fn read_block_style(
                 ));
             }
             "bidi" => {
-                bs.bidi = read_bidi(Some(v), &at)?;
+                bs.bidi = Bidi::read(Some(v), &format!("{at}.bidi"))?;
                 continue;
             }
             // The others are read for their truth: a false one is none.
@@ -149,16 +129,6 @@ fn read_length(v: &PyValue) -> Option<Length> {
     let m = m.as_str()?;
     py::checked_decimal(m)?;
     Some((m.to_owned(), u.as_str()?.to_owned()))
-}
-
-/// `_bidi_diff` (:6927) for a language: written where it differs from the container's.
-pub(crate) fn bidi_diff<'a>(own: Option<&'a str>, around: Option<&str>) -> Option<&'a str> {
-    own.filter(|&lang| !lang.is_empty() && Some(lang) != around)
-}
-
-/// A block style's language.
-pub(crate) fn lang(bs: Option<&BlockStyle>) -> Option<&str> {
-    bs?.bidi.as_ref()?.as_deref()
 }
 
 /// Characters by size or line height: a Python `Counter`, its counts summed in an i128 where
@@ -284,7 +254,7 @@ pub(crate) fn text_entry_style(
     chunk: &Chunk,
     chapter_fs: f64,
     open_sizes: &[Option<f64>],
-    around: Option<&str>,
+    around: Option<&Bidi>,
 ) -> String {
     let bs = chunk.style.as_ref();
     let mut attrs = Style157::body(sizes.block_font_size(chapter_fs, chunk));
@@ -312,13 +282,13 @@ pub(crate) fn text_entry_style(
         .family(bs.map_or(&[], |b| &b.family), blk_bold, blk_italic);
     attrs.bold = blk_bold;
     attrs.italic = blk_italic;
-    let lang = bidi_diff(lang(bs), around);
+    let bidi = bidi_diff(bs.and_then(|b| b.bidi.as_ref()), around);
     match &chunk.in_cell {
         Some(InCell::Text(cell)) => {
             let cell = CellStyle::of(&g.fonts, cell, bs, attrs.font_size);
-            styles.allocate_in(g, "_td", StyleArgs::Cell(cell), lang)
+            styles.allocate_in(g, "_td", StyleArgs::Cell(cell), &bidi)
         }
-        _ => styles.allocate_in(g, "", attrs, lang),
+        _ => styles.allocate_in(g, "", attrs, &bidi),
     }
 }
 
@@ -342,14 +312,14 @@ pub(crate) fn heading_style(
     sizes: &Sizes,
     chunk: &Chunk,
     attrs: &Style157,
-    around: Option<&str>,
+    around: Option<&Bidi>,
 ) -> Option<String> {
     let book = chunk.heading.book_style.as_ref();
     let own = match book {
-        Some(b) => lang(Some(b)),
-        None => chunk.heading.page_bidi.as_deref(),
+        Some(b) => b.bidi.as_ref(),
+        None => chunk.heading.page_bidi.as_ref(),
     };
-    let lang = bidi_diff(own, around);
+    let bidi = bidi_diff(own, around);
     let mut attrs = attrs.clone();
     if let Some(book) = book {
         attrs.bold = book.bold;
@@ -370,10 +340,10 @@ pub(crate) fn heading_style(
             attrs.space_above = Some(above / size_px);
             attrs.margin_top = None;
         }
-    } else if attrs.space_below.is_none() && lang.is_none() {
+    } else if attrs.space_below.is_none() && bidi.is_empty() {
         return None;
     }
-    Some(styles.allocate_in(g, "_h", attrs, lang))
+    Some(styles.allocate_in(g, "_h", attrs, &bidi))
 }
 
 /// What `_print_book_heading` (:1477) and the chapter's page put on kfxgen's heading.
@@ -383,8 +353,8 @@ pub(crate) struct HeadingStyle {
     pub book_style: Option<BlockStyle>,
     pub space_above_px: Option<f64>,
     pub space_below_px: Option<f64>,
-    /// The page's language, from its first block that has one (#714).
-    pub page_bidi: Option<String>,
+    /// The page's direction and language, from its first block that has them (#714).
+    pub page_bidi: Option<Bidi>,
 }
 
 /// `_keep_space_above` and `_keep_space_below` (:1502, :1514): the book's heading's space,
@@ -408,29 +378,22 @@ pub(crate) fn keep_space(
     }
 }
 
-/// `page_bidi` (`inline_style.py:442`): the language of the first block that has one; a
-/// dict with no language is `{}`, which is false.
-pub(crate) fn page_bidi<'a>(langs: impl IntoIterator<Item = Option<&'a str>>) -> Option<String> {
-    langs.into_iter().flatten().next().map(str::to_owned)
-}
-
 /// The containers open around the entry being written (:7376): each one's size when it is a
-/// cell (#681), and its language (#246).
+/// cell (#681), and its direction and language (#246).
 #[derive(Default)]
 pub(crate) struct Containers {
     pub sizes: Vec<Option<f64>>,
-    langs: Vec<Option<String>>,
+    bidis: Vec<Option<Bidi>>,
 }
 
 impl Containers {
-    /// The language of the container around, None outside one.
-    pub(crate) fn around(&self) -> Option<&str> {
-        self.langs.last()?.as_deref()
+    /// The direction and language of the container around, None outside one.
+    pub(crate) fn around(&self) -> Option<&Bidi> {
+        self.bidis.last()?.as_ref()
     }
 
     /// A container's `open` or `close` (:7398): (the entry's style, its own `$157`, a row's,
-    /// group's or box's). A table's or row's language isn't ported: a table's is none or
-    /// `{}`, a row's None.
+    /// group's or box's).
     pub(crate) fn marker_styles(
         &mut self,
         g: &mut Generator,
@@ -444,7 +407,7 @@ impl Containers {
             Marker::Open(node) => node,
             Marker::Close => {
                 self.sizes.pop();
-                self.langs.pop();
+                self.bidis.pop();
                 return Ok((None, None));
             }
         };
@@ -452,12 +415,12 @@ impl Containers {
             Node::Table(t) => t.bidi.clone(),
             Node::Cell(_) => chunk.style.as_ref().and_then(|b| b.bidi.clone()),
             Node::Box(b) => b.spec.bidi.clone(),
-            Node::Group(..) | Node::Row(_) | Node::Link(_) => None,
+            Node::Group(_, _, bidi) | Node::Row(_, bidi) => bidi.clone(),
+            Node::Link(_) => None,
         };
-        let around = self.around().map(str::to_owned);
-        let lang = bidi_diff(own.as_ref().and_then(|o| o.as_deref()), around.as_deref());
-        let lang = lang.map(str::to_owned);
-        self.langs.push(own.unwrap_or(around));
+        let around = self.around().cloned();
+        let bidi = bidi_diff(own.as_ref(), around.as_ref());
+        self.bidis.push(own.or(around));
         let cell_size =
             matches!(node, Node::Cell(_)).then(|| sizes.block_font_size(chapter_fs, chunk));
         self.sizes.push(cell_size);
@@ -473,7 +436,7 @@ impl Containers {
             Node::Box(b) => {
                 let style = BoxStyle::of(b, sizes.rem(b.spec.font_px));
                 style.check()?;
-                let name = styles.allocate_in(g, "_box", StyleArgs::Box(style), lang.as_deref());
+                let name = styles.allocate_in(g, "_box", StyleArgs::Box(style), &bidi);
                 (None, Some(name))
             }
             _ => table_styles::marker_styles(
@@ -482,7 +445,7 @@ impl Containers {
                 marker,
                 chunk.style.as_ref(),
                 cell_size.unwrap_or(chapter_fs),
-                lang.as_deref(),
+                &bidi,
             ),
         })
     }

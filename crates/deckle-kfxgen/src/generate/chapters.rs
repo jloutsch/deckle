@@ -8,16 +8,16 @@ use super::boxes::{BoxBlock, RuleStyle, read_box, read_rule};
 use super::images;
 use super::inline::{Anchors, Span, TocLink, read_spans};
 use super::tables::{self, Table};
+use super::writing::Bidi;
 use super::{GenerateError, model_err};
 use crate::pyvalue::{PyValue, truthy};
 
 use GenerateError::Unsupported;
 
 /// Chapter keys whose value, when true, takes kfxgen down a path not ported yet.
-const CHAPTER_UNPORTED: [(&str, &str); 3] = [
+const CHAPTER_UNPORTED: [(&str, &str); 2] = [
     ("sub_entries", "contents entries inside a chapter"),
     ("_is_cover", "a cover chapter in the arguments"),
-    ("page_bidi", "text direction"),
 ];
 
 /// Block keys whose value, when true, takes kfxgen down a path not ported yet.
@@ -51,6 +51,8 @@ pub(crate) struct Chapter {
     pub omit_from_toc: bool,
     /// `_chapter_writing_mode` (:942): its first block's that carries one.
     pub writing_mode: Option<String>,
+    /// The converter's: a rebuilt contents page's direction and language (#714).
+    pub page_bidi: Option<Bidi>,
 }
 
 impl Chapter {
@@ -70,6 +72,7 @@ impl Chapter {
             omit_title_heading: false,
             omit_from_toc: true,
             writing_mode: None,
+            page_bidi: None,
         }
     }
 }
@@ -224,6 +227,7 @@ fn read_chapter(ch: &PyValue, at: &str) -> Result<Chapter, GenerateError> {
         omit_title_heading: truthy(ch.get("_omit_title_heading")),
         omit_from_toc: truthy(ch.get("_omit_from_toc")),
         writing_mode,
+        page_bidi: Bidi::read(ch.get("page_bidi"), &format!("{at}.page_bidi"))?,
     })
 }
 

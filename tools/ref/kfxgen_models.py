@@ -123,8 +123,9 @@ def shim(kfxgen, out):
             print(f"shim {name}: {len(replay)} bytes")
 
 
-def _epub(path, title, lang, chapters, css="", rtl=False, extra=()):
-    """A small EPUB 3 with an NCX: chapters are (id, title, body_xhtml_inner)."""
+def _epub(path, title, lang, chapters, css="", rtl=False, extra=(), bare=()):
+    """A small EPUB 3 with an NCX: chapters are (id, title, body_xhtml_inner), each opening
+    with its title as an <h1> unless its id is in `bare`."""
     items, spine, nav, ncx = [], [], [], []
     for i, (cid, ctitle, body) in enumerate(chapters, 1):
         items.append(f'<item id="{cid}" href="{cid}.xhtml" media-type="application/xhtml+xml"/>')
@@ -188,7 +189,7 @@ def _epub(path, title, lang, chapters, css="", rtl=False, extra=()):
                 '<?xml version="1.0" encoding="utf-8"?>'
                 f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{lang}" lang="{lang}"{dir_attr}>'
                 f'<head><title>{ctitle}</title><link rel="stylesheet" href="style.css"/></head>'
-                f"<body><h1>{ctitle}</h1>{body}</body></html>",
+                f"<body>{'' if cid in bare else f'<h1>{ctitle}</h1>'}{body}</body></html>",
             )
         for href, _, data in extra:
             write(f"OEBPS/{href}", data)
@@ -252,6 +253,66 @@ def synth(out):
             ("c2", "פרק ב", "<p>פסקה שנייה.</p>"),
         ],
         rtl=True,
+    )
+    # Direction and language inside a left-to-right book (#246, #605, #710, #714).
+    _epub(
+        out / "directions.epub",
+        "Directions",
+        "en",
+        [
+            (
+                "c0",
+                "Contents",
+                '<ul><li><a href="c1.xhtml">Runs</a></li><li><a href="c2.xhtml">Paragraphs'
+                '</a></li><li><a href="c3.xhtml">Tables and boxes</a></li></ul>',
+            ),
+            (
+                "c1",
+                "Runs",
+                '<p>Plain words, then <span dir="rtl">שלום עולם</span> in a run, and '
+                "<bdi>עברית</bdi> isolated.</p>"
+                '<p><b>Bold <span dir="rtl">מודגש</span> around</b> it.</p>'
+                '<p>A <span lang="fr">mot français</span> and <span lang="de">ein '
+                "<i>deutsches</i> Wort</span>.</p>"
+                '<p><a href="c2.xhtml#t">A link <span dir="rtl">קישור</span> holding</a> a '
+                "direction.</p>"
+                '<p><a href="c2.xhtml#t"><span dir="rtl">רק כיוון</span></a> a link of a '
+                "direction alone.</p>"
+                '<p><bdo dir="rtl">override</bdo> and <span dir="ltr">nested <span dir="rtl">'
+                'פנימי <span lang="he">x</span></span> out</span>.</p>'
+                '<p><span class="emb">embedded</span>, <span dir="auto">אוטומטי</span>, '
+                '<span dir="rtl" class="big">גדול</span>, <i lang="fr">en italique</i>.</p>'
+                '<p><span lang="fr"><span dir="rtl">מילה</span></span>, <span dir="rtl"><b>א'
+                "</b> ב</span>.</p>"
+                '<p><span lang="fr" class="big">Tout en grand.</span></p>',
+            ),
+            (
+                "c2",
+                "Paragraphs",
+                '<p dir="rtl">פסקה מימין לשמאל with <span dir="ltr">left to right</span>.</p>'
+                '<p dir="rtl" lang="he" class="start">יישור להתחלה.</p>'
+                '<p lang="fr">Un paragraphe en français.</p>'
+                '<p class="plain">A plaintext paragraph.</p>'
+                '<p id="t">The target.</p>',
+            ),
+            (
+                "c3",
+                "Tables and boxes",
+                '<table dir="rtl" lang="he"><thead lang="en"><tr><th>Head</th><th>Two</th></tr>'
+                '</thead><tbody><tr dir="ltr"><td>cell</td><td lang="fr">cellule</td></tr>'
+                "<tr><td>שורה</td><td>two</td></tr></tbody></table>"
+                '<table><tr><td dir="rtl">תא</td><td>plain</td></tr></table>'
+                '<div class="box" lang="fr"><p>Dans une boîte.</p><p lang="en">English in '
+                'it.</p></div><div class="box" dir="rtl"><p>בתיבה.</p></div>',
+            ),
+            ("c4", "A table alone", '<table dir="rtl"><tr><td>טבלה</td></tr></table>'),
+        ],
+        bare=("c4",),
+        css="span.emb { direction: rtl; unicode-bidi: embed; }\n"
+        "span.big { font-size: 1.5em; }\n"
+        "p.start { text-align: start; }\n"
+        "p.plain { unicode-bidi: plaintext; }\n"
+        "div.box { border: 1px solid black; padding: 0.5em; }",
     )
     # Shaped as kfxgen's test_books/figures (#382) and floats (#243, #565), less what isn't
     # ported (a linked picture, a picture among words).
@@ -321,7 +382,7 @@ def synth(out):
         "img.fl { float: left; width: 30%; } img.fr { float: right; width: 25%; }",
         extra=[("p.png", "image/png", _png_image(600, 400))],
     )
-    for name in ("lists", "fonts", "rtl", "frames"):
+    for name in ("lists", "fonts", "rtl", "directions", "frames"):
         print(out / f"{name}.epub")
 
 

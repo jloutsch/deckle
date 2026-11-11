@@ -81,3 +81,16 @@ landmark of another kind that lands, where kfxgen raises `KeyError` (`build_frag
 `native_generator.py:3198`). kfxgen raises on a key that isn't a string (`"#" not in key`) and
 on an entry it can't unpack, but writes a book for a label of another type, which it writes as
 that Ion type, and for an entry whose kind or label isn't a string but whose key lands nowhere.
+
+## Directions and languages of another shape
+
+The converter writes a `bidi` dict of `lang`, `unicode_bidi` and `direction` strings and a
+`set_here` tuple of those names (`_bidi`, `converter.py:690`), and an inline element's
+direction flag as `("bidi", (serial, depth, ((key, value), ...)))` of the same keys
+(`make_bidi_flag`, `inline_style.py:429`). The port reads exactly those; anything else is a
+`GenerateError::Model` naming the dict or the runs. So is a direction or unicode-bidi that
+`_BIDI_SYMBOLS` (`native_generator.py:72`) doesn't have, even where kfxgen would not write it:
+kfxgen raises `KeyError` only on one it writes, and writes a book for one `_bidi_diff` leaves
+out. kfxgen also writes a book for a key it doesn't read, which it ignores, and for a value of
+another type that `_bidi_diff` leaves out. A run carrying two languages alone is
+`GenerateError::Unsupported`: kfxgen would write the first in set order.
