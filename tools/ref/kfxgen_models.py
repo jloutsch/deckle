@@ -641,8 +641,8 @@ def _inline_pictures():
     can't measure; runs and ids moved round them; a linked picture alone, at a location and
     with ids, and a linked float among words, cut into entries; floats of each size, a side
     that isn't left or right; a paragraph cut after its picture lines and at its empty lines,
-    with spacers, ids in its blank lines and a run over the cut; a chapter opening on a scene
-    break, one at 0.75 and one of plain text."""
+    with spacers, ids in its blank lines and a run over the cut; pictures under two links'
+    runs; a chapter opening on a scene break, one at 0.75 and one of plain text."""
     p, q = "OEBPS/p.png", "OEBPS/q.png"
     pic = _pic
 
@@ -917,6 +917,26 @@ def _inline_pictures():
                     + words("Then", linked_float, "linked", pic(p, "f", "w=10%", "right"), "end."),
                     [(len(pic(p, "lead", "w=20%", "left")) + 5, len(linked_float),
                       _link("s.xhtml#a"))],
+                ),
+            ],
+        ),
+        _chapter(
+            "Two links",
+            [
+                # A picture under two links' runs: kfxgen takes the first run's (:1826).
+                _para(linked, [(0, len(linked), _link("s.xhtml#a")),
+                               (0, len(linked), _link("l.xhtml#on"))]),
+                _para(linked, [(0, len(linked), _link("l.xhtml#on")),
+                               (0, len(linked), _link("s.xhtml#a"))]),
+                _para(
+                    words("Words", linked_float, "more."),
+                    [(6, len(linked_float), _link("s.xhtml#a")),
+                     (0, 6 + len(linked_float), _link("l.xhtml#on"))],
+                ),
+                _para(
+                    words("Words", pic(q, "q"), "more."),
+                    [(6, len(pic(q, "q")), _link("s.xhtml#a")),
+                     (6, len(pic(q, "q")), _link("l.xhtml#on"))],
                 ),
             ],
         ),

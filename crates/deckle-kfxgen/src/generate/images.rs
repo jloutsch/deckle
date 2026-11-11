@@ -415,7 +415,8 @@ pub(crate) fn picture_of(m: &regex::Captures, images: &Images) -> Option<Picture
 }
 
 /// `_picture_link` (:1826): the target of the first link covering the token at `at`, in
-/// characters.
+/// characters. Under several links' runs kfxgen takes the first run's; one run of two links is
+/// Unsupported when read (`read_spans`), as kfxgen takes those in set order.
 pub(crate) fn picture_link(spans: &[Span], at: i64) -> Option<&String> {
     spans
         .iter()
