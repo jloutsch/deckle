@@ -25,7 +25,7 @@ def shim(kfxgen, out):
     sys.path[:0] = [str(kfxgen / "plugin"), str(kfxgen)]
     from kfxgen import converter, model_dump
     from kfxgen.native_generator import NativeKFXGenerator
-    from tests._helpers import NullLog
+    from tests._helpers import MINIMAL_PNG, NullLog, jpeg_of
     from tests.fixtures.epub_builder import EpubBuilder
     from tests.fixtures.golden.inputs import GOLDEN_INPUTS
     from tests.fixtures.oeb_shim import EpubAsOeb
@@ -58,7 +58,45 @@ def shim(kfxgen, out):
             .build(d, "empty_chapter")
         )
 
-    inputs = list(GOLDEN_INPUTS) + [("unicode_text", unicode_text), ("empty_chapter", empty_chapter)]
+    def image_only_chapter(d):
+        # A page of a picture alone; a heading and a picture, which kfxgen prints with no
+        # heading of its own; a picture above the book's own heading.
+        def page(title, body):
+            return (
+                '<?xml version="1.0" encoding="utf-8"?>\n'
+                '<html xmlns="http://www.w3.org/1999/xhtml">'
+                f"<head><title>{title}</title></head><body>{body}</body></html>"
+            ).encode("utf-8")
+
+        return (
+            EpubBuilder()
+            .set_metadata(title="Image Only Chapter", author="Fixture Author")
+            .add_chapter("Opening", "Opening words.")
+            .add_chapter("Plate", page("Plate", '<p><img src="plate.jpg" alt="a plate"/></p>'))
+            .add_chapter(
+                "Map", page("Map", '<h1>Map</h1><p><img src="map.png" alt="the map"/></p>')
+            )
+            .add_chapter(
+                "Art",
+                page("Art", '<p><img src="art.jpg" alt="art"/></p><h1>Art</h1><p>After it.</p>'),
+            )
+            .add_manifest_item(
+                item_id="plate", href="plate.jpg", media_type="image/jpeg", data=jpeg_of(640, 480)
+            )
+            .add_manifest_item(
+                item_id="map", href="map.png", media_type="image/png", data=MINIMAL_PNG
+            )
+            .add_manifest_item(
+                item_id="art", href="art.jpg", media_type="image/jpeg", data=jpeg_of(200, 100)
+            )
+            .build(d, "image_only_chapter")
+        )
+
+    inputs = list(GOLDEN_INPUTS) + [
+        ("unicode_text", unicode_text),
+        ("empty_chapter", empty_chapter),
+        ("image_only_chapter", image_only_chapter),
+    ]
     with tempfile.TemporaryDirectory() as tmp:
         for name, builder in inputs:
             work = Path(tmp) / name
@@ -236,6 +274,31 @@ def _link(target, *flags):
     return frozenset({("link", target), *flags})
 
 
+def _pic(href, alt, *more):
+    """A picture's token (kfxgen `_img_tokens.py`): href, alt, then size and float."""
+    return "\x00IMG\x01" + href + "\x01" + alt.replace(" ", "\x02") + "".join(
+        "\x01" + m for m in more
+    ) + "\x00"
+
+
+def _jpeg(width, height, before=b""):
+    """A JPEG's markers as far as kfxgen reads them: SOI, `before`, a SOF0 of width x height."""
+    sof = b"\xff\xc0\x00\x11\x08" + height.to_bytes(2, "big") + width.to_bytes(2, "big")
+    return b"\xff\xd8" + before + sof + b"\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xd9"
+
+
+def _png(width, height):
+    """A PNG's signature and IHDR, which hold its size."""
+    size = width.to_bytes(4, "big") + height.to_bytes(4, "big")
+    return b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + size + b"\x08\x02\x00\x00\x00"
+
+
+_APP0 = b"\xff\xe0\x00\x04\x00\x00"
+#: The covers of `cover_paths` and `cover_page`, each also a picture in its book's text.
+_COVER = _jpeg(600, 800, _APP0)
+_TALL_COVER = _png(1600, 2560)
+
+
 #: Run flags the shim can't make (it applies no CSS), on blocks with no CSS, which a
 #: Calibre-path book always has: each book given as `generate_full_book`'s chapters.
 ARG_BOOKS = {
@@ -388,6 +451,157 @@ ARG_BOOKS = {
             ],
         )
     ],
+    # Pictures found by exact, query, decoded, basename and absolute hrefs and not found;
+    # every size hint and float; a picture block's ids, its heading level and space above;
+    # ids of a picture the book doesn't hold, waiting for the next block, the chapter's
+    # last entry, or its start; JPEGs whose size kfxgen reads and can't, over 1920 px, with
+    # a restart marker.
+    "image_refs": [
+        _chapter(
+            "Pictures",
+            [
+                _block("Pictures", heading=True, level=1),
+                _block(
+                    _pic("OEBPS/images/a.jpg", "first"),
+                    keys=["c1.xhtml#fig", "c1.xhtml#late"],
+                    offsets={"c1.xhtml#fig": 0, "c1.xhtml#late": 7},
+                ),
+                _block("Words between."),
+                {
+                    **_block(
+                        " ".join(
+                            [
+                                _pic("OEBPS/images/a.jpg?v=1#frag", "query", "w=50%"),
+                                " ",
+                                _pic("../a.jpg", "up", "w=200px"),
+                                _pic("OEBPS/other/a.jpg", "other", "h=50%"),
+                                _pic("/abs/shown.jpg", "shown", "w=2em"),
+                                _pic("OEBPS/%C3%A9.png", "accent", "h=100px"),
+                                _pic("OEBPS/big.jpg", "big", "w=0%"),
+                                _pic("OEBPS/eoi.jpg", "eoi", "w=12pt"),
+                                _pic("OEBPS/short.jpg", "short", "w=150%"),
+                                _pic("OEBPS/my pic.png", "spaced"),
+                            ]
+                        ),
+                        heading=True,
+                        level=2,
+                    ),
+                    "space_above": 2.0,
+                },
+                _block(_pic("missing/a.jpg", "lost"), keys=["c1.xhtml#lost"]),
+                _block("After the lost picture."),
+                _block(
+                    _pic("OEBPS/images/a.jpg", "left one", "", "left")
+                    + _pic("OEBPS/other/a.jpg", "right one", "w=50%", "right")
+                    + _pic("OEBPS/images/a.jpg", "left again", "", "left")
+                    + _pic("OEBPS/é.png", "tall left", "h=50%", "left")
+                ),
+                _block(
+                    "\n".join(
+                        _pic(f"OEBPS/{name}", name)
+                        for name in ("badlen.jpg", "trunc.jpg", "nonff.jpg", "end.jpg", "tiny.png")
+                    )
+                ),
+                _block(_pic("missing/b.jpg", "lost at the end"), keys=["c1.xhtml#end"]),
+            ],
+        ),
+        _chapter("Ghost", [_block(_pic("nowhere.jpg", "ghost"), keys=["c2.xhtml#ghost"])]),
+        _chapter(
+            "Links",
+            [
+                _block(
+                    "fig late lost end ghost",
+                    [
+                        (0, 3, _link("c1.xhtml#fig")),
+                        (4, 4, _link("c1.xhtml#late")),
+                        (9, 4, _link("c1.xhtml#lost")),
+                        (14, 3, _link("c1.xhtml#end")),
+                        (18, 5, _link("c2.xhtml#ghost")),
+                    ],
+                )
+            ],
+        ),
+    ],
+    # With unresolved hrefs (`resolved_image_refs` false) a picture is found by its name.
+    "image_refs_unresolved": [
+        _chapter("Loose", [_block("Loose", heading=True, level=1), _block(_pic("images/x.jpg", "x"))])
+    ],
+    # The cover: its picture opening the first chapter moves that block's ids to the next
+    # and isn't printed twice; used again later in the book; a contents page's targets move
+    # one on for the cover's page.
+    "cover_paths": [
+        _chapter(
+            "Start",
+            [
+                _block(""),
+                _block(_pic("cover.jpg", "cover"), keys=["c1.xhtml#cover"]),
+                _block("Welcome to the book.", keys=["c1.xhtml"], offsets={"c1.xhtml": 0}),
+            ],
+        ),
+        _chapter(
+            "Gallery",
+            [
+                _block("Gallery", heading=True, level=1),
+                _block(_pic("cover.jpg", "again")),
+                _block(_pic("OEBPS/plate.png", "plate")),
+            ],
+        ),
+        {
+            "title": "Contents",
+            "text": "Contents",
+            "toc_level": 0,
+            "toc_links": [
+                {"text": "Start", "target_chapter_idx": 0, "level": 0},
+                {"text": "Gallery", "target_chapter_idx": 1, "level": 0},
+            ],
+        },
+        _chapter("Links", [_block("Back to the cover.", [(12, 5, _link("c1.xhtml#cover"))])]),
+    ],
+    # A first page holding only the cover's picture stays, as Kindle Previewer prints it; a
+    # PNG cover over 1920 px.
+    "cover_page": [
+        _chapter("Cover", [_block(_pic("cover.png", "cover"))]),
+        _chapter("One", [_block("One"), _block("The first chapter.")]),
+    ],
+}
+
+#: The image books' other arguments.
+ARG_BOOK_EXTRAS = {
+    "image_refs": {
+        "images": {
+            "OEBPS/images/a.jpg": _jpeg(300, 400, _APP0),
+            "OEBPS/other/a.jpg": _jpeg(600, 100, _APP0),
+            "OEBPS/shown.jpg": _jpeg(300, 400),
+            "OEBPS/é.png": _png(256, 100),
+            "OEBPS/my%20pic.png": _png(1024, 10),
+            # Padding, a stuffed byte and a restart marker before its SOF0.
+            "OEBPS/big.jpg": _jpeg(2400, 100, b"\xff\xff\xe1\x00\x04\x00\x00\xff\x00\xff\xd3"),
+            "OEBPS/eoi.jpg": b"\xff\xd8\xff\xd9",
+            "OEBPS/short.jpg": b"\xff\xd8\xff\xc0\x00\x11",
+            "OEBPS/badlen.jpg": b"\xff\xd8\xff\xe1\x00\x01\x00\x00",
+            "OEBPS/trunc.jpg": b"\xff\xd8\xff\xe1\x00",
+            "OEBPS/nonff.jpg": b"\xff\xd8" + _APP0 + b"\x12\x34",
+            "OEBPS/end.jpg": b"\xff\xd8" + _APP0,
+            "OEBPS/tiny.png": b"\x89PNG\r\n\x1a\n\x00\x00\x00\x00",
+            "OEBPS/anim.gif": b"GIF89a\x01\x00\x01\x00",
+            "OEBPS/empty.jpg": b"",
+            "OEBPS/unused.jpg": _jpeg(10, 10),
+        },
+        "display_dims": {"OEBPS/shown.jpg": (128.5, 50.0)},
+        "resolved_image_refs": True,
+    },
+    "image_refs_unresolved": {"images": {"OEBPS/images/x.jpg": _jpeg(100, 100)}},
+    "cover_paths": {
+        "cover_image": _COVER,
+        "images": {"cover.jpg": _COVER, "OEBPS/plate.png": _png(1024, 512)},
+        "display_dims": {"cover.jpg": (300, 400)},
+        "resolved_image_refs": True,
+    },
+    "cover_page": {
+        "cover_image": _TALL_COVER,
+        "images": {"cover.png": _TALL_COVER},
+        "resolved_image_refs": True,
+    },
 }
 
 
@@ -400,7 +614,11 @@ def args(kfxgen, out):
         model = out / name
         os.environ["KFXGEN_DUMP_MODEL"] = str(model)
         kfx = NativeKFXGenerator().generate_full_book(
-            title=name, author="Fixture Author", chapters=chapters, approximate_pages=True
+            title=name,
+            author="Fixture Author",
+            chapters=chapters,
+            approximate_pages=True,
+            **ARG_BOOK_EXTRAS.get(name, {}),
         )
         del os.environ["KFXGEN_DUMP_MODEL"]
         replay = NativeKFXGenerator().generate_full_book(**model_dump.load(model))

@@ -42,7 +42,7 @@ fn arg<'a>(doc: &'a mut serde_json::Value, key: &str) -> &'a mut serde_json::Val
 #[test]
 fn every_fixture_model_loads() {
     let dirs = model_dirs();
-    assert_eq!(dirs.len(), 31);
+    assert_eq!(dirs.len(), 36);
     for dir in dirs {
         let m = load_model(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
         assert_eq!(m.kfxgen_version, "5.24.0");

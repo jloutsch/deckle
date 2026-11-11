@@ -41,16 +41,23 @@ from kfxgen's `tests/fixtures/golden/inputs.py` under their own names (`minimal`
 |---|---|
 | `unicode_text` | `é` composed and decomposed, `漢字`, `😀`, `𝔘`, then an italic span after them |
 | `empty_chapter` | chapter 2 of 3 with no body text |
+| `image_only_chapter` | a page of a picture alone; a heading and a picture, printed with no heading of kfxgen's; a picture above the book's own heading |
 
 **Argument path** (`kfxgen_models.py args`): books written as `generate_full_book`'s chapters,
 for run flags the shim can't make (it applies no CSS) on blocks with no CSS (a Calibre-path
-block always has some). The books are `ARG_BOOKS` in that script.
+block always has some), and for picture arguments no EPUB gives (sizes, floats, unresolved
+hrefs, unreadable JPEGs). The books are `ARG_BOOKS` in that script, their other arguments
+`ARG_BOOK_EXTRAS`.
 
 | Fixture | What it holds |
 |---|---|
 | `inline_runs` | a heading's italic and not-bold words; `url:`, unfound, other-capitals and whole-file link targets; a link over a bold word beside more of it; super, sub, text-top, text-bottom, baseline, underline, line-through; ids inside, at and past a paragraph's end |
 | `nested_contents` | a rebuilt contents page at 0.75 with lines at depths 1 and 2 and targets past either end; a heading-only chapter whose ids land in kfxgen's heading; a title over two blocks; a 0.75 chapter with runs and links |
 | `heading_runs` | the book's heading with words after its title: its bold and italic runs and ids in kfxgen's heading, links to them |
+| `image_refs` | pictures found by exact, query, decoded, basename and absolute hrefs, and not found; every size hint; floats; display sizes; a basename shared by two pictures; ids of a picture block, and of a picture the book doesn't hold; JPEGs whose size kfxgen reads and can't, over 1920 px, with a restart marker; a GIF, empty and unused pictures |
+| `image_refs_unresolved` | an unresolved href (`resolved_image_refs` false) found by its file name |
+| `cover_paths` | a cover opening the first chapter, left out there, its ids moved on; the cover's picture used later in the text; a contents page's targets after the cover's page |
+| `cover_page` | a PNG cover over 1920 px whose first page holds only its picture, which stays |
 
 **Calibre path** (`ebook-convert` with kfxgen, CSS applied): the source is
 `sources/<name>.epub`. For each, the script also checks that replaying the model gives exactly
