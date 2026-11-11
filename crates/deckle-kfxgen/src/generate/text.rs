@@ -22,6 +22,7 @@ use super::inline::{self, ChunkLinks, RunBase, TocLink};
 use super::inline_picture_entries::{self, InlineStyles};
 use super::nav;
 use super::notes::{self, Popups};
+use super::page_scale::em_percent;
 use super::styles::{Style157, StyleArgs, Styles};
 use super::table_chunks;
 use super::title::{
@@ -568,10 +569,13 @@ pub(crate) fn build_chapter_content(
                         around,
                     );
                     if level != 0 || !bidi.is_empty() {
-                        // Indented by depth, 6.25% a level (#238, #313).
+                        // Indented by depth, 2em a level: 6.25%, 5% in a vertical book (#238,
+                        // #313; #754, 0bc705d :7864).
                         let indent = Style157 {
-                            margin_left: (level != 0)
-                                .then(|| (py::format_g(6.25 * level as f64, 6), "$314".into())),
+                            margin_left: (level != 0).then(|| {
+                                let pct = 2.0 * em_percent() * level as f64;
+                                (py::format_g(pct, 6), "$314".into())
+                            }),
                             ..Style157::body(fs)
                         };
                         styles.allocate_in(g, "", indent, &bidi)

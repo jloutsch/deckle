@@ -8,6 +8,7 @@ use deckle_kfx::ion::{Decimal, Struct, Value};
 use super::block_styles::BlockStyle;
 use super::chunks::{Marker, Node};
 use super::fonts::FontTable;
+use super::page_scale::{em_percent, page_pt};
 use super::styles::{StyleArgs, Styles, g6};
 use super::table_chunks::CellInfo;
 use super::tables::{Border, ColumnWidths, Pad, Padding};
@@ -251,7 +252,8 @@ pub(crate) fn column_widths_152(widths: Option<&ColumnWidths>) -> Option<Value> 
 }
 
 /// `_padding_values` (:2071): top and bottom in lh, em / 1.2; left and right in %, em x 3.125
-/// over the table's width; a percentage p is p x 32 / 100 em and p %.
+/// (2.5 in a vertical book, #754, 0bc705d :2094) over the table's width; a percentage p is
+/// p x 32 (40) / 100 em and p %.
 /// None where kfxgen's `quantize` raises (`py::quantize_milli`).
 pub(crate) fn padding_values(
     padding: &Padding,
@@ -261,8 +263,8 @@ pub(crate) fn padding_values(
     let mut out = Vec::new();
     for (side, value) in padding {
         let (em, pct) = match *value {
-            Pad::Pct(n) => (n * 32.0 / 100.0, n / frac),
-            Pad::Em(v) => (v, v * 3.125 / frac),
+            Pad::Pct(n) => (n * (page_pt() / 12.0) / 100.0, n / frac),
+            Pad::Em(v) => (v, v * em_percent() / frac),
         };
         if em == 0.0 {
             continue;
@@ -327,11 +329,13 @@ pub(crate) fn build_cell_style_157(g: &mut Generator, name: &str, s: &CellStyle)
     g.local(name);
     let lh = |v: &str| measure(decimal(v), "$310");
     let pct = |v: &str| measure(decimal(v), "$314");
+    // 1px (0.45pt) at the sides, as a share of the page (#754, 0bc705d :4057).
+    let side = py::format_g(py::round(0.45 / page_pt() * 100.0, 3), 6);
     let Value::Struct(mut v) = st([
         ("$52", lh("0.03125")),
-        ("$53", pct("0.117")),
+        ("$53", pct(&side)),
         ("$54", lh("0.03125")),
-        ("$55", pct("0.117")),
+        ("$55", pct(&side)),
         ("$173", sym(name)),
     ]) else {
         unreachable!()

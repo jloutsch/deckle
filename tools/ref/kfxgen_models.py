@@ -2464,9 +2464,31 @@ ARG_BOOKS = {
     "typography_runs": _typography_runs(),
 }
 
+# A vertical book (#754): percentages against Previewer's 480pt page, a 640px column, in
+# frames, pictures among words, floats, cell and box padding, cell sides and contents levels.
+ARG_BOOKS["vertical_page"] = [
+    *ARG_BOOKS["frame_edges"],
+    *ARG_BOOKS["inline_pictures"],
+    *ARG_BOOKS["table_parts"],
+    *ARG_BOOKS["box_titles"],
+    *ARG_BOOKS["nested_contents"],
+]
+
 #: The image books' other arguments.
 ARG_BOOK_EXTRAS = {
     "tcy_notes": {"language": "ja", "rtl": True, "writing_mode": "vertical-rl"},
+    "vertical_page": {
+        "language": "ja",
+        "rtl": True,
+        "writing_mode": "vertical-rl",
+        "images": {
+            "OEBPS/p.png": _png(600, 400),
+            "OEBPS/q.png": _png(256, 100),
+            "OEBPS/eoi.jpg": b"\xff\xd8\xff\xd9",
+        },
+        "footnote_keys": {"s7.xhtml#cellnote"},
+        "resolved_image_refs": True,
+    },
     "inline_pictures": {
         "images": {
             "OEBPS/p.png": _png(600, 400),

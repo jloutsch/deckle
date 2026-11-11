@@ -10,6 +10,7 @@ use regex::{Captures, Regex};
 
 use super::chunks::{AmongWords, Chunk};
 use super::images::{Dims, Images, SIZE_HINT};
+use super::page_scale::{column_px, page_pt};
 use super::writing;
 use super::{GenerateError, Generator, measure, model_err, py, st, sym};
 
@@ -154,7 +155,8 @@ fn or_one(x: f64) -> f64 {
     if x == 0.0 { 1.0 } else { x }
 }
 
-/// `_inline_float_style` (:279): a float's `$56` as a % of the 512 px column (#565).
+/// `_inline_float_style` (:279): a float's `$56` as a % of the column (#565), 640px in a
+/// vertical book (#754, 0bc705d :285).
 fn float_key(
     side: &str,
     m: Option<&Captures>,
@@ -165,7 +167,7 @@ fn float_key(
     let Some(m) = m else {
         return Ok(StyleKey::Float(
             side,
-            Some(g5(width / 512.0 * 100.0)?),
+            Some(g5(width / column_px() * 100.0)?),
             false,
             false,
             None,
@@ -183,15 +185,15 @@ fn float_key(
                 "pt" => 4.0 / 3.0,
                 _ => 0.6,
             };
-        h * width / height / 512.0 * 100.0
+        h * width / height / column_px() * 100.0
     } else {
         match unit.as_str() {
             "%" => number,
             "em" => {
                 fill = true;
-                number * 16.0 / 512.0 * 100.0
+                number * 16.0 / column_px() * 100.0
             }
-            u => number * if u == "pt" { 4.0 / 3.0 } else { 1.0 } / 512.0 * 100.0,
+            u => number * if u == "pt" { 4.0 / 3.0 } else { 1.0 } / column_px() * 100.0,
         }
     };
     Ok(StyleKey::Float(side, Some(g5(pct)?), fill, true, None))
@@ -231,14 +233,14 @@ fn inline_key(
             "%" => format!("{}%", g5(number)?),
             u => {
                 let pt = number * if u == "px" { 0.45 } else { 1.0 };
-                format!("{}%", g5(pt / 384.0 * 100.0)?)
+                format!("{}%", g5(pt / page_pt() * 100.0)?)
             }
         });
     }
     if pct_h.is_none() && axis == Some("w") {
         match unit.as_str() {
             "em" => (w_em, fill) = (number, true),
-            "%" => w_em = number / 100.0 * 512.0 / scale,
+            "%" => w_em = number / 100.0 * column_px() / scale,
             u => w_em = number * if u == "px" { 0.45 } else { 1.0 } / 12.0 / or_one(font_size),
         }
         h_em = w_em * height / width;

@@ -18,6 +18,7 @@ use super::images;
 use super::metadata::{BookMetadata, build_fragment_490};
 use super::nav::{NavEntry, book_headings, build_fragment_389};
 use super::notes;
+use super::page_scale::{self, HORIZONTAL_PT, VERTICAL_PT};
 use super::pages;
 use super::positions::{
     build_fragment_264, build_fragment_265, build_fragment_550, build_position_data,
@@ -102,6 +103,9 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
 
     let rtl = truthy(args.get("rtl"));
     let vertical = writing_mode == Some("vertical-rl");
+    // Percentages against Previewer's page, as kfxgen's `convert` sets it from the book's
+    // writing mode (#754, 0bc705d converter.py:9567).
+    let _page = page_scale::page_width(if vertical { VERTICAL_PT } else { HORIZONTAL_PT });
     let base_language = language.replace('_', "-");
     let base_language = base_language.split('-').next().unwrap_or("").to_lowercase();
 

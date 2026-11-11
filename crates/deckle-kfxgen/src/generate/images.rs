@@ -17,6 +17,7 @@ use regex::Regex;
 use super::chapters::{Block, Chapter};
 use super::chunks::Chunk;
 use super::inline::{Flag, Span};
+use super::page_scale::column_px;
 use super::{GenerateError, Generator, measure, model_err, py, st, sym};
 use crate::pyvalue::PyValue;
 
@@ -36,8 +37,6 @@ pub(crate) const COVER_RESOURCE: &str = "cover_img";
 const COVER_LOCATION: &str = "resource/cover_img";
 /// The name the cover's page asks for its picture by (:4839).
 const COVER_BASENAME: &str = "__kfxgen_cover__";
-/// `_IMAGE_COLUMN_PX` (:64).
-pub(crate) const IMAGE_COLUMN_PX: f64 = 512.0;
 
 /// A resource's `$164` and `$417` names.
 type Pair = (String, String);
@@ -513,7 +512,8 @@ fn leading_cover<'a>(texts: impl IntoIterator<Item = &'a str>, images: &Images) 
     None
 }
 
-/// `_parse_size_hint` (:645): ('w' or 'h', percent), or None to size by pixels.
+/// `_parse_size_hint` (:645): ('w' or 'h', percent), or None to size by pixels. Its column is
+/// `column_px()`, as kfxgen 0bc705d passes it (:7132).
 fn parse_size_hint(hint: &str) -> Result<Option<(char, f64)>, GenerateError> {
     let Some(m) = SIZE_HINT.captures(hint) else {
         return Ok(None);
@@ -532,7 +532,7 @@ fn parse_size_hint(hint: &str) -> Result<Option<(char, f64)>, GenerateError> {
                 "pt" => 4.0 / 3.0,
                 _ => 1.0,
             };
-            number * per_unit / IMAGE_COLUMN_PX * 100.0
+            number * per_unit / column_px() * 100.0
         }
     };
     if pct <= 0.0 {
@@ -614,14 +614,14 @@ impl ImageStyles {
     }
 
     /// `_image_size_key` (:7029): the markup's size, else the picture's own width against
-    /// the column, `min(100, px / 512 * 100)` (#467).
+    /// the column, `min(100, px / 512 * 100)` (#467), px / 640 in a vertical book (#754).
     fn size_key(&self, p: &Picture) -> Result<SizeKey, GenerateError> {
         if let Some(hint) = parse_size_hint(p.size.as_deref().unwrap_or(""))? {
             return Ok(hint);
         }
         let w = self.resource_dims.get(&p.resource).and_then(|d| d.0);
         Ok(match w {
-            Some(w) if w != 0.0 => ('w', py::round((w / IMAGE_COLUMN_PX * 100.0).min(100.0), 3)),
+            Some(w) if w != 0.0 => ('w', py::round((w / column_px() * 100.0).min(100.0), 3)),
             _ => ('w', 100.0),
         })
     }

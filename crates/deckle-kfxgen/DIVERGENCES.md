@@ -23,6 +23,17 @@ environment for the size of a raised or lowered run (`superscript_metrics`,
 0.75 (:691, :695), so its output depends only on the model. With either variable set, kfxgen's
 book differs from the port's in those runs' `$16`.
 
+## The page width percentages are measured against
+
+kfxgen 0bc705d measures a percentage against Kindle Previewer's page: 384pt in a horizontal
+book, 480pt in a vertical one (`page_scale.py`, #754). The width is a context variable, not an
+argument: `convert` sets it around `generate_full_book`, 480pt when the book's writing mode is
+vertical-rl (`converter.py:9567`), and `generate_full_book` called on its own measures against
+384pt. The port sets it from the `writing_mode` argument the same way (`page_scale.rs`), so a
+model `convert` made comes out the same. A vertical-rl model generated outside `page_width`,
+as kfxgen's own unit tests do, is measured against 480pt by the port and 384pt by kfxgen.
+Deckle's fixture tools replay every model inside `page_width`, as `convert` would.
+
 ## Block lengths deckle-kfx's decimal can't hold
 
 A paragraph's indent and side margins come from the model as text, `(magnitude, unit)`, and

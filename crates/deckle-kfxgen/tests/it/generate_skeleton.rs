@@ -96,3 +96,10 @@ fn every_model_matches_kfxgen_or_is_unsupported() {
         }
     }
 }
+
+/// A vertical book (#754): percentages against Previewer's 480pt page in frames, pictures
+/// among words, floats, padding, cell sides and contents levels.
+#[test]
+fn vertical_page_matches_kfxgen() {
+    matches_kfxgen("vertical_page");
+}

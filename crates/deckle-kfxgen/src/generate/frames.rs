@@ -11,8 +11,9 @@ use regex::Captures;
 use super::boxes::{BoxOpen, BoxSpec};
 use super::chapters::Block;
 use super::chunks::{ASCII_SPACE, Chunk, Marker, Node, emit_float_wrapped, space_to_write};
-use super::images::{IMAGE_COLUMN_PX, IMG_TOKEN, Images, SIZE_HINT, picture_link};
+use super::images::{IMG_TOKEN, Images, SIZE_HINT, picture_link};
 use super::inline::{Anchors, Span};
+use super::page_scale::column_px;
 use super::styles::LINE_EM;
 use super::{GenerateError, py};
 
@@ -75,7 +76,7 @@ fn size_in_box(
     let px = m[2].parse::<f64>().unwrap() * per_unit;
     let pct = match truthy(width_px) {
         Some(box_px) => px / box_px * 100.0,
-        None => px / IMAGE_COLUMN_PX * 100.0 / width * 100.0,
+        None => px / column_px() * 100.0 / width * 100.0,
     };
     Ok(format!("w={pct:.3}%"))
 }
