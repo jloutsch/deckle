@@ -2006,6 +2006,42 @@ ARG_BOOKS = {
     # lines, past what the Calibre-path `floats` and `floats_697` reach.
     "inline_pictures": _inline_pictures(),
     "font_faces": _font_faces(),
+    # An EPUB page list with no landmarks or cover; landmarks with no page list or cover.
+    # Their targets are in ARG_BOOK_EXTRAS.
+    "page_list_alone": [
+        _chapter(
+            "One",
+            [
+                _block("Opening words.", keys=["c1.xhtml"]),
+                _block(
+                    "The first page starts here and the second there.",
+                    keys=["c1.xhtml#p1", "c1.xhtml#p2"],
+                    offsets={"c1.xhtml#p1": 0, "c1.xhtml#p2": 31},
+                ),
+            ],
+        ),
+        _chapter(
+            "Two",
+            [
+                _block("Two words.", keys=["c2.xhtml#top", "c2.xhtml#p3"], offsets={"c2.xhtml#p3": 4}),
+                _block("Again.", keys=["c2.xhtml#p3", "c3.xhtml"], offsets={"c2.xhtml#p3": 2, "c3.xhtml": 3}),
+            ],
+        ),
+    ],
+    "landmarks_alone": [
+        _chapter("Front", [_block("Front words.", keys=["f.xhtml"])]),
+        _chapter(
+            "Parts",
+            [_block("Parts listed here.", keys=["toc.xhtml#list"], offsets={"toc.xhtml#list": 9})],
+        ),
+        _chapter(
+            "Body",
+            [
+                _block("Body starts.", keys=["b.xhtml#s"]),
+                _block("More body.", keys=["b2.xhtml"], offsets={"b2.xhtml": 5}),
+            ],
+        ),
+    ],
 }
 
 #: The image books' other arguments.
@@ -2020,6 +2056,40 @@ ARG_BOOK_EXTRAS = {
     },
     # Made after kfxgen is importable.
     "font_faces": _font_faces_extras,
+    # Pages at ids with and without offsets, a whole file by its first id and by an id of
+    # its own, an id declared twice (the first counts), and ones that land nowhere: another
+    # file, an id in other capitals.
+    "page_list_alone": {
+        "page_list": [
+            ("i", "c1.xhtml#p1"),
+            ("ii", "c1.xhtml#p2"),
+            ("x", "gone.xhtml#p"),
+            ("iii", "C1.XHTML#P2"),
+            ("3", "c2.xhtml#p3"),
+            ("4", "c2.xhtml"),
+            ("5", "c1.xhtml"),
+            ("6", "c3.xhtml"),
+            ("y", "gone.xhtml"),
+        ],
+    },
+    # Landmarks that land nowhere, of a kind kfxgen doesn't know, at a file, at an id with an
+    # offset, a second start after the first that lands (#609); a page list that lands
+    # nowhere, with no approximate pages.
+    "landmarks_alone": {
+        "landmarks": [
+            ("start", "Gone", "gone.xhtml#x"),
+            ("other", "Skip", "gone.xhtml"),
+            ("toc", "Contents", "toc.xhtml"),
+            ("toc", "Missing", "toc.xhtml#nothere"),
+            ("start", "Start", "b.xhtml#s"),
+            ("toc", "List", "toc.xhtml#list"),
+            ("start", "Again", "f.xhtml"),
+            ("toc", "Case", "TOC.XHTML#LIST"),
+            ("toc", "More", "b2.xhtml"),
+        ],
+        "page_list": [("1", "gone.xhtml#p")],
+        "approximate_pages": False,
+    },
     "box_titles": {"footnote_keys": {"s7.xhtml#cellnote"}},
     "frame_edges": {
         "images": {"OEBPS/p.png": _png(600, 400), "OEBPS/q.png": _png(256, 100)},
@@ -2083,8 +2153,7 @@ def args(kfxgen, out):
             title=name,
             author="Fixture Author",
             chapters=chapters,
-            approximate_pages=True,
-            **extras,
+            **{"approximate_pages": True, **extras},
         )
         del os.environ["KFXGEN_DUMP_MODEL"]
         replay = NativeKFXGenerator().generate_full_book(**model_dump.load(model))
