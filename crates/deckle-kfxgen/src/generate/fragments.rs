@@ -7,6 +7,7 @@ use deckle_kfx::fragment::Fragment;
 use deckle_kfx::ion::{Struct, Value};
 
 use super::chunks::{Chunk, Marker, Node};
+use super::frames;
 use super::images;
 use super::inline::{self, EntryLink, Run};
 use super::notes::Popups;
@@ -210,6 +211,8 @@ fn node_type(node: &Node) -> &'static str {
         Node::Group(..) => "$454",
         Node::Row(_) => "$279",
         Node::Cell(_) => "$269",
+        // A frame is Previewer's plain container (:7485, #382, #565).
+        Node::Box(b) if frames::is_frame(&b.spec) => "$269",
         Node::Box(_) => "$270",
     }
 }

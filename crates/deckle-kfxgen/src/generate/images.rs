@@ -30,7 +30,7 @@ pub(crate) static IMG_TOKEN: LazyLock<Regex> = LazyLock::new(|| Regex::new(TOKEN
 static WHOLE_TOKEN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(&format!(r"\A(?:{TOKEN})\z")).unwrap());
 /// `_SIZE_HINT_RE` (:59), its `$` also before a final line break, as Python's is.
-static SIZE_HINT: LazyLock<Regex> =
+pub(crate) static SIZE_HINT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\A([wh])=(\d+(?:\.\d+)?)(%|px|em|pt)?\n?\z").unwrap());
 
 pub(crate) const COVER_RESOURCE: &str = "cover_img";
@@ -38,7 +38,7 @@ const COVER_LOCATION: &str = "resource/cover_img";
 /// The name the cover's page asks for its picture by (:4839).
 const COVER_BASENAME: &str = "__kfxgen_cover__";
 /// `_IMAGE_COLUMN_PX` (:64).
-const IMAGE_COLUMN_PX: f64 = 512.0;
+pub(crate) const IMAGE_COLUMN_PX: f64 = 512.0;
 
 /// A resource's `$164` and `$417` names.
 type Pair = (String, String);
@@ -374,7 +374,7 @@ pub(crate) struct Picture {
     pub resource: String,
     alt: String,
     /// The markup's own size (`w=98%`, `h=50%`, `w=200px`).
-    size: Option<String>,
+    pub size: Option<String>,
     /// `left` or `right` (#243).
     float: Option<String>,
 }
@@ -402,13 +402,7 @@ pub(crate) fn pictures(
         let Some((resource, _)) = images.resource(&m[1]) else {
             continue;
         };
-        // `_picture_link` (:1826), in characters.
-        let at = py::len(&text[..whole.start()]) as i64;
-        if spans.iter().any(|s| {
-            s.start <= at
-                && at < s.start + s.len
-                && s.flags.iter().any(|f| matches!(f, Flag::Link(_)))
-        }) {
+        if picture_link(spans, py::len(&text[..whole.start()]) as i64) {
             return Err(Unsupported("a linked picture"));
         }
         let field = |i: usize| m.get(i).map(|g| g.as_str()).filter(|s| !s.is_empty());
@@ -420,6 +414,13 @@ pub(crate) fn pictures(
         });
     }
     Ok(out)
+}
+
+/// `_picture_link` (:1826): whether a link covers the token at `at`, in characters.
+pub(crate) fn picture_link(spans: &[Span], at: i64) -> bool {
+    spans.iter().any(|s| {
+        s.start <= at && at < s.start + s.len && s.flags.iter().any(|f| matches!(f, Flag::Link(_)))
+    })
 }
 
 /// `_same_words` (:1143).

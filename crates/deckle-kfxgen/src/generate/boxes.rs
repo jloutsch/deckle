@@ -10,6 +10,7 @@ use deckle_kfx::ion::Value;
 use super::block_styles::{keep_space, number, read_bidi};
 use super::chapters::{Block, read_block};
 use super::chunks::{Chunk, Marker, Node, emit_paragraph};
+use super::frames;
 use super::images::{IMG_TOKEN, Images};
 use super::inline;
 use super::styles::{LINE_EM, g6};
@@ -142,7 +143,7 @@ pub(crate) fn read_rule(b: &PyValue, at: &str) -> Result<RuleStyle, GenerateErro
 }
 
 /// A box block's `box`: what its `$157` is made from.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Default, PartialEq)]
 pub(crate) struct BoxSpec {
     pub border: Option<Border>,
     pub background: Option<i64>,
@@ -154,6 +155,15 @@ pub(crate) struct BoxSpec {
     pub margin_right: Option<f64>,
     /// `bidi`: None when absent; `Some(None)` for `{}`.
     pub bidi: Option<Option<String>>,
+    /// A wrapper's width around a picture, in % of the page, and in CSS px when it is a
+    /// length (#382).
+    pub width: Option<f64>,
+    pub width_px: Option<f64>,
+    /// Its float side (#382), "left" or anything else, which kfxgen writes as right.
+    pub float: Option<String>,
+    pub centred: bool,
+    /// The frame round a paragraph's floated pictures (#565): kfxgen's own, never the model's.
+    pub float_wrapper: bool,
 }
 
 /// A box block (#238): its look and the blocks in it.
@@ -172,18 +182,13 @@ pub(crate) fn read_box(b: &PyValue, at: &str) -> Result<BoxBlock, GenerateError>
         Some(d @ PyValue::Dict(_)) => d,
         _ => return Err(model_err(format!("{at_box}: a dict"))),
     };
-    // A sized, floated, centred or horizontal box is a wrapper Previewer writes otherwise
-    // (#382, #247), not ported.
-    for key in [
-        "width",
-        "width_px",
-        "float",
-        "centred",
-        "horizontal",
-        "float_wrapper",
-    ] {
+    // A horizontal block in vertical text (#247), not ported; a floated paragraph's frame
+    // is kfxgen's own (:5673), which the converter never writes.
+    for key in ["horizontal", "float_wrapper"] {
         if truthy(d.get(key)) {
-            return Err(Unsupported("a sized, floated or centred box"));
+            return Err(Unsupported(
+                "a horizontal box, or a box marked as a float's frame",
+            ));
         }
     }
     let spec = BoxSpec {
@@ -194,6 +199,13 @@ pub(crate) fn read_box(b: &PyValue, at: &str) -> Result<BoxBlock, GenerateError>
         margin_left: opt(d, "margin_left", &at_box, "a number", number)?,
         margin_right: opt(d, "margin_right", &at_box, "a number", number)?,
         bidi: read_bidi(d.get("bidi"), &at_box)?,
+        width: opt(d, "width", &at_box, "a number", number)?,
+        width_px: opt(d, "width_px", &at_box, "a number", number)?,
+        float: opt(d, "float", &at_box, "a string", |v| {
+            v.as_str().map(str::to_owned)
+        })?,
+        centred: truthy(d.get("centred")),
+        float_wrapper: false,
     };
     let blocks = b
         .get("blocks")
@@ -276,8 +288,8 @@ pub(crate) fn emit_box_chunks(
         .cloned()
         .collect();
     if !b.opened {
-        chunks.push(Chunk::marker(Marker::Open(Node::Box(BoxOpen::of(
-            block, b,
+        chunks.push(Chunk::marker(Marker::Open(Node::Box(Box::new(
+            BoxOpen::of(block, b),
         )))));
     }
     let mut pending = own;
@@ -293,7 +305,9 @@ pub(crate) fn emit_box_chunks(
             // `_emit_paragraph` reads the text a rule block has none of.
             return Err(Unsupported("a rule in a box"));
         } else {
-            emit_paragraph(kid, false, images, chunks)?
+            let unplaced = emit_paragraph(kid, false, images, chunks)?;
+            frames::size_pictures_in_box(&b.spec, &mut chunks[first..])?;
+            unplaced
         };
         if !pending.is_empty() && chunks[first..].iter().any(Chunk::is_content) {
             let at = link_target(chunks, first);
@@ -328,6 +342,9 @@ pub(crate) struct BoxStyle {
     pub margin_right: Option<f64>,
     pub space_above: f64,
     pub space_below: f64,
+    pub width: Option<f64>,
+    pub float_side: Option<String>,
+    pub centred: bool,
 }
 
 impl BoxStyle {
@@ -353,6 +370,9 @@ impl BoxStyle {
             margin_right: open.spec.margin_right,
             space_above: open.space_above * own,
             space_below: open.space_below * own,
+            width: open.spec.width,
+            float_side: open.spec.float.clone(),
+            centred: open.spec.centred,
         }
     }
 }
@@ -384,6 +404,17 @@ pub(crate) fn build_box_style_157(g: &mut Generator, name: &str, s: &BoxStyle) -
         if em != 0.0 {
             v.insert(key, g6(em / LINE_EM, "$310"));
         }
+    }
+    // A wrapper's width, float and centring, as Previewer writes a sized wrapper round a
+    // picture (#382).
+    if let Some(width) = s.width.filter(|&w| w != 0.0) {
+        v.insert("$56", g6(width, "$314"));
+    }
+    if let Some(side) = s.float_side.as_deref().filter(|s| !s.is_empty()) {
+        v.insert("$140", sym(if side == "left" { "$59" } else { "$61" }));
+    }
+    if s.centred {
+        v.insert("$580", sym("$320"));
     }
     Value::Struct(v)
 }
@@ -546,7 +577,7 @@ pub(crate) fn box_heading(
     let bx = block.boxed.as_deref().expect("a box block");
     chunks.insert(
         heading,
-        Chunk::marker(Marker::Open(Node::Box(BoxOpen::of(block, bx)))),
+        Chunk::marker(Marker::Open(Node::Box(Box::new(BoxOpen::of(block, bx))))),
     );
     if close {
         chunks.push(Chunk::marker(Marker::Close));

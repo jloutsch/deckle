@@ -32,3 +32,13 @@ holds an i128 coefficient (38 digits) and an i32 exponent. A magnitude past thos
 digits or `1.5e-2147483648`, is a `GenerateError::Model` naming the length, where kfxgen writes
 a book. No CSS length reaches them. "inf" and "NaN" are model errors too, but there kfxgen
 raises as well (`abs()` of a str when it serializes them).
+
+## A box's width and float of another type
+
+The converter writes a box's `width` and `width_px` as numbers or None and its `float` as
+"left", "right" or None (`converter.py:6782`). kfxgen reads whatever the model holds: a truthy
+`float` that isn't "left" is written as right (`build_box_style_157`,
+`native_generator.py:3897`), and `width_px` is only divided by when a picture in the box has a
+length for a width (`_size_in_box`, :236). The port reads `width` and `width_px` as numbers and
+`float` as a string, and anything else is a `GenerateError::Model` naming the key, where kfxgen
+can write a book.

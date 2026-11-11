@@ -10,10 +10,10 @@ use super::inline::{self, Anchors, Span};
 use super::styles::LINE_EM;
 use super::table_chunks::{CellInfo, TableOpen};
 use super::tables::Border;
-use super::{GenerateError, py};
+use super::{GenerateError, frames, py};
 
 /// `_ASCII_SPACE` (:1061): a paragraph's edges are trimmed of these only.
-const ASCII_SPACE: [char; 5] = [' ', '\t', '\n', '\r', '\x0c'];
+pub(crate) const ASCII_SPACE: [char; 5] = [' ', '\t', '\n', '\r', '\x0c'];
 
 /// One entry of a storyline: a paragraph of text, a picture, a rule, or a table's or box's
 /// container's start or end.
@@ -49,8 +49,8 @@ pub(crate) enum Node {
     Row(Option<Border>),
     /// A cell holding several blocks, or none.
     Cell(CellInfo),
-    /// A box (#238).
-    Box(BoxOpen),
+    /// A box (#238), or a frame (#382, #565).
+    Box(Box<BoxOpen>),
 }
 
 pub(crate) enum InCell {
@@ -124,7 +124,7 @@ pub(crate) fn print_book_heading(heading: &mut Chunk, block: &Block, title: &str
 
 /// `_space_to_write` (:1080): a scene break's space above, or None to keep kfxgen's own when
 /// that is as much: a line above an unindented paragraph, none above an indented one.
-fn space_to_write(block: &Block, space_above: f64) -> Option<f64> {
+pub(crate) fn space_to_write(block: &Block, space_above: f64) -> Option<f64> {
     if space_above == 0.0 {
         return None;
     }
@@ -133,10 +133,25 @@ fn space_to_write(block: &Block, space_above: f64) -> Option<f64> {
     (space_above > own + 0.01).then_some(space_above)
 }
 
-/// `_emit_paragraph` (:5745) for a paragraph of text alone, one chunk, or of pictures alone,
-/// a chunk per picture the book holds. Returns the ids it could not place because it emitted
-/// nothing: only pictures the book doesn't hold.
+/// `_emit_paragraph` (:5745) for a paragraph of text alone, one chunk, of pictures alone, a
+/// chunk per picture the book holds, or opening with floated pictures, a frame round them and
+/// its words (#565). Returns the ids it could not place because it emitted nothing: only
+/// pictures the book doesn't hold.
 pub(crate) fn emit_paragraph(
+    block: &Block,
+    first_in_chapter: bool,
+    images: &Images,
+    chunks: &mut Vec<Chunk>,
+) -> Result<Vec<String>, GenerateError> {
+    if frames::floats_among_words(block) {
+        return frames::emit_floated_paragraph(block, first_in_chapter, images, chunks);
+    }
+    emit_float_wrapped(block, first_in_chapter, images, chunks)
+}
+
+/// `_emit_paragraph` of a block kfxgen marks `float_wrapped`, or one with no float among words:
+/// no frame of its own.
+pub(crate) fn emit_float_wrapped(
     block: &Block,
     first_in_chapter: bool,
     images: &Images,

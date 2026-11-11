@@ -9,6 +9,7 @@ mod boxes;
 mod chapters;
 mod chunks;
 mod fragments;
+mod frames;
 mod images;
 mod inline;
 mod metadata;
