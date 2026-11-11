@@ -13,7 +13,7 @@ use super::block_styles::{
 };
 use super::boxes::{self, drop_edge_rules, emit_box_chunks, rule_chunk, unboxed};
 use super::chapters::{Block, Chapter};
-use super::chunks::{Chunk, Marker, Node, emit_paragraph, print_book_heading};
+use super::chunks::{Chunk, InCell, Marker, Node, emit_paragraph, print_book_heading};
 use super::fragments::{
     ContentRef, build_fragment_145, build_fragment_259, pack_content_fragments, style_refs,
 };
@@ -519,6 +519,13 @@ pub(crate) fn build_chapter_content(
                 entry_runs.push((None, Vec::new()));
                 continue;
             }
+            // A cell written as one chunk: its fill is the background of its own text (#740).
+            let cell_fill = if let Some(InCell::Text(cell)) = &chunk.in_cell {
+                styles.fills.push(cell.background);
+                true
+            } else {
+                false
+            };
             let heading = heading_chunks.contains(&chunk_idx);
             let mut link = None;
             let style = match (
@@ -596,6 +603,9 @@ pub(crate) fn build_chapter_content(
                 &mut readings,
             );
             entry_runs.push((link, runs));
+            if cell_fill {
+                styles.fills.pop();
+            }
         }
         let fragment = build_fragment_259(
             g,

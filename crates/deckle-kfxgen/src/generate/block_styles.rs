@@ -408,9 +408,16 @@ impl Containers {
             Marker::Close => {
                 self.sizes.pop();
                 self.bidis.pop();
+                styles.fills.pop();
                 return Ok((None, None));
             }
         };
+        // A box's or cell's fill (#383, :7422).
+        styles.fills.push(match node {
+            Node::Box(b) => b.spec.background,
+            Node::Cell(cell) => cell.background,
+            _ => None,
+        });
         let own = match node {
             Node::Table(t) => t.bidi.clone(),
             Node::Cell(_) => chunk.style.as_ref().and_then(|b| b.bidi.clone()),

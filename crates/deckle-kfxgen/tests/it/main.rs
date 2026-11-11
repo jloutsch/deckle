@@ -10,6 +10,7 @@ mod generate_inline_pictures;
 mod generate_pages;
 mod generate_skeleton;
 mod generate_tables;
+mod generate_typography;
 mod generate_writing;
 mod load;
 mod oracle;

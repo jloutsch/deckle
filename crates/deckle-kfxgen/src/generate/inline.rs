@@ -11,6 +11,7 @@ use super::block_styles::{Sizes, number};
 use super::fonts::FontTable;
 use super::notes::Popups;
 use super::styles::{Style157, StyleArgs, Styles};
+use super::typography::read_link_colour;
 use super::writing::{
     Bidi, direction_layers, read_bidi_flag, read_ruby_flag, read_tcy_flag, without_ruby_or_tcy,
 };
@@ -58,6 +59,8 @@ pub(crate) enum Flag {
     /// `make_tcy_flag` (#247): characters set across a vertical line, as (serial, text), on
     /// the one placeholder character they take.
     Tcy(i64, String),
+    /// `LINK_COLOUR_FLAG` (#728): a link's own colour, or None, and its colour as text.
+    LinkColour(Option<i64>, i64),
 }
 
 /// A size in CSS px, ordered by `total_cmp` so a run's flags can be a set; read with no sign
@@ -150,7 +153,7 @@ fn flag_of(f: &PyValue, at: &str) -> Result<Flag, GenerateError> {
                     .ok_or_else(|| model_err(format!("{at}.spans: a run's size, a number")))?;
                 Flag::Size(Px(if px == 0.0 { 0.0 } else { px }))
             }
-            (Some("link-colour"), _) => return Err(Unsupported("link colours")),
+            (Some("link-colour"), v) => read_link_colour(v, &format!("{at}.spans"))?,
             (Some("picture"), _) => return Err(Unsupported("images")),
             (Some("orientation"), PyValue::Str(v)) => Flag::Orientation(v.clone()),
             (Some("emphasis-marks"), PyValue::Str(v)) => Flag::EmphasisMarks(v.clone()),
@@ -235,6 +238,9 @@ pub(crate) fn read_spans(v: Option<&PyValue>, at: &str) -> Result<Vec<Span>, Gen
             return Err(Unsupported(
                 "a run of two orientations or two emphasis marks",
             ));
+        }
+        if count(|f| matches!(f, Flag::LinkColour(..))) > 1 {
+            return Err(Unsupported("a run of two link colours"));
         }
         if count(|f| matches!(f, Flag::Size(_))) > 1 || count(|f| matches!(f, Flag::Mono(_))) > 1 {
             return Err(Unsupported("a run of two sizes or two monospace families"));
@@ -546,6 +552,7 @@ fn emphasis_style(
     (blk_bold, blk_italic): (bool, bool),
     families: &[String],
     base: &RunBase,
+    link_found: bool,
 ) -> Style157 {
     let has = |f: Flag| flags.contains(&f);
     let bold = has(Flag::Bold) || (blk_bold && !has(Flag::NotBold));
@@ -576,6 +583,10 @@ fn emphasis_style(
         match f {
             Flag::Orientation(v) => style.text_orientation = Some(v.clone()),
             Flag::EmphasisMarks(v) => style.text_emphasis = Some(v.clone()),
+            // A link whose target isn't found is written as text: its colour as the
+            // text's (QA on #732, P732b).
+            Flag::LinkColour(link, _) if link_found => style.link_colour = *link,
+            Flag::LinkColour(_, text) if style.colour.is_none() => style.colour = Some(*text),
             _ => {}
         }
     }
@@ -676,6 +687,13 @@ pub(crate) fn entry_runs(
             Flag::Link(t) => body_anchor_map.get(t).cloned(),
             _ => None,
         });
+        // The link this run is in, its own or one it's layered on, has a target in the book
+        // (#728).
+        let link_found = [&flags]
+            .into_iter()
+            .chain(&under)
+            .flatten()
+            .all(|f| !matches!(f, Flag::Link(t) if !body_anchor_map.contains_key(t)));
         let mut has_emphasis = flags.iter().any(|f| match f {
             Flag::Link(_)
             | Flag::Baseline
@@ -683,6 +701,7 @@ pub(crate) fn entry_runs(
             | Flag::Size(_)
             | Flag::Bidi(..)
             | Flag::Lang(_) => false,
+            Flag::LinkColour(link, _) => link.is_some() || !link_found,
             Flag::Mono(families) => !families.is_empty(),
             _ => true,
         });
@@ -702,7 +721,15 @@ pub(crate) fn entry_runs(
             Some(styles.allocate_in(g, "_dir", StyleArgs::Direction, &bidi))
         } else {
             (has_emphasis || anchor.is_none()).then(|| {
-                let style = emphasis_style(&g.fonts, sizes, &flags, (run_b, run_i), run_fam, base);
+                let style = emphasis_style(
+                    &g.fonts,
+                    sizes,
+                    &flags,
+                    (run_b, run_i),
+                    run_fam,
+                    base,
+                    link_found,
+                );
                 let name = styles.allocate_in(g, "_em", style, &bidi);
                 if !extra_style_names.contains(&name) {
                     extra_style_names.push(name.clone());

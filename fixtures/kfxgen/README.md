@@ -70,6 +70,7 @@ hrefs, unreadable JPEGs). The books are `ARG_BOOKS` in that script, their other 
 | `page_list_alone` | an EPUB page list (#578) with no landmarks or cover: pages at ids with and without offsets, at a whole file by its first id and by an id of its own, at an id declared twice; pages at another file and at an id in other capitals, which land nowhere |
 | `landmarks_alone` | contents and start landmarks (#579) with no page list or cover: at a file, at an id with an offset, a second start after the first that lands (#609); landmarks that land nowhere, one of a kind kfxgen doesn't know; a page list that lands nowhere, with no approximate pages |
 | `tcy_notes` | 縦中横 in a vertical Japanese book whose texts fill kfxgen's `content_math` fragment (#247): 4,096 and 4,095 bytes, a third of one byte that still joins them at 8,191, a fourth that starts `content_math2` at 8,192 |
+| `link_colour_runs` | link colours (#728, #732): a link's own colour with its target found, none of its own, its target not found so written as the text's colour against the page (#383) or inside a filled box or cell and on a box filled 0, in a language of its own, bold, twice; a coloured run inside a link found and not |
 
 **Calibre path** (`ebook-convert` with kfxgen, CSS applied): the source is
 `sources/<name>.epub`. For each, the script also checks that replaying the model gives exactly
@@ -95,6 +96,7 @@ the KFX `ebook-convert` wrote.
 | `floats` | kfxgen `test_books/floats/floats-fix-source.epub` | floats opening a paragraph and among its words, linked floats, a picture among words |
 | `floats_697` | kfxgen `test_books/floats_697/F697 kfxgen source.epub` | floats in mid-sentence, left and right (#697) |
 | `font_sizes` | kfxgen `test_books/font_sizes/font-sizes-source.epub` | paragraphs, spans and cells sized in CSS (#241) |
+| `link_greys` | kfxgen `test_books/link_greys_741/s741k.epub` | links in light and dark greys, one around a black word, plain links (#728, #741) |
 
 The `fonts` fixture embeds Liberation Serif 2.1.5 (SIL Open Font License 1.1), taken from
 calibre's bundled fonts. The faces of `font_faces` are TrueType fonts of one empty glyph that

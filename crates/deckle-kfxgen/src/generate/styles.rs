@@ -10,6 +10,7 @@ use super::table_styles::{
     CellStyle, PartStyle, TableStyle, align_symbol, build_cell_style_157, build_part_style_157,
     build_table_style_157,
 };
+use super::typography::on_page;
 use super::writing::{BidiKeys, bidi_value, rotate_margins};
 use super::{Generator, measure, py, st, sym};
 
@@ -46,6 +47,9 @@ pub(crate) struct Style157 {
     /// A run's text-orientation and emphasis marks in vertical text (#247).
     pub text_orientation: Option<String>,
     pub text_emphasis: Option<String>,
+    /// ARGB: the text's colour (#239), and a link's own (#728).
+    pub colour: Option<i64>,
+    pub link_colour: Option<i64>,
 }
 
 impl Default for Style157 {
@@ -72,6 +76,8 @@ impl Default for Style157 {
             explicit_size: None,
             text_orientation: None,
             text_emphasis: None,
+            colour: None,
+            link_colour: None,
         }
     }
 }
@@ -112,6 +118,8 @@ pub(crate) struct Styles {
     counts: Vec<(&'static str, usize)>,
     /// `rotation`: styles are written for a vertical-rl chapter, their margins moved (#247).
     pub vertical: bool,
+    /// `open_fills`: the fill of each box and cell open around the styles written now (#383).
+    pub fills: Vec<Option<i64>>,
 }
 
 impl Styles {
@@ -132,7 +140,15 @@ impl Styles {
         style: impl Into<StyleArgs>,
         bidi: &[(&'static str, String)],
     ) -> String {
-        let style = style.into();
+        let mut style = style.into();
+        if let StyleArgs::Text(s) = &mut style
+            && let Some(colour) = s.colour
+            && !self.fills.iter().any(|f| f.is_some_and(|f| f != 0))
+        {
+            // Text written on the page is measured against it: a colour already readable
+            // there is unchanged (#383).
+            s.colour = Some(on_page(colour));
+        }
         if let Some((.., name)) = self.cache.iter().find(|(k, s, b, v, _)| {
             *k == kind && *s == style && b[..] == *bidi && *v == self.vertical
         }) {
@@ -275,6 +291,9 @@ fn build_fragment_157(g: &mut Generator, name: &str, style: &Style157) -> Value 
         );
     }
     // `_write_typography` (:1023).
+    if let Some(colour) = style.colour {
+        v.insert("$19", Value::Int(colour));
+    }
     if let Some(o) = style
         .text_orientation
         .as_deref()
@@ -293,6 +312,13 @@ fn build_fragment_157(g: &mut Generator, name: &str, style: &Style157) -> Value 
                 .take(py::len(e).saturating_sub(2))
                 .collect();
             v.insert("$717", Value::string(&inner));
+        }
+    }
+    if let Some(link) = style.link_colour {
+        // A link's own colour, as Previewer writes it: the colour of the link and of a
+        // visited link (#728).
+        for key in ["$576", "$577"] {
+            v.insert(key, st([("$19", Value::Int(link))]));
         }
     }
     if style.underline {

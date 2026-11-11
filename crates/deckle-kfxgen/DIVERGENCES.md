@@ -112,3 +112,11 @@ exactly those; anything else is a `GenerateError::Model` naming the runs, where 
 nothing for an orientation or mark of another type but keeps the run's style apart, and raises
 on most 縦中横 it can't unpack. A run carrying two of one kind is
 `GenerateError::Unsupported`: kfxgen would take the first in set order.
+
+## Link colours of another shape
+
+The converter writes a link's colour as `("link-colour", (link, text))`, `link` an ARGB int or
+None and `text` an ARGB int (`converter.py:2653`). The port reads exactly that; anything else
+is a `GenerateError::Model` naming the runs, where kfxgen writes a value of another type as
+that Ion type or raises measuring it against the page. A run carrying two link colours is
+`GenerateError::Unsupported`: kfxgen would take the first in set order.

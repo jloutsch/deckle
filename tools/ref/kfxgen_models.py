@@ -1365,6 +1365,80 @@ def _font_faces_extras():
     }
 
 
+def _link_colour_runs():
+    """Link colours (#728, #732): written as the link's own when its target is found, as the
+    text's when not, measured against the page (#383) unless a fill is open around it."""
+    grey, grey_text = 0xFF999999, 0xFF767676
+    yellow, white, navy = 0xFFFFFF00, 0xFFFFFFFF, 0xFF000080
+
+    def lc(link, text):
+        return ("link-colour", (link, text))
+
+    def gone(text, words, colour, *more):
+        return _on(text, words, ("link", "gone.xhtml#x"), lc(colour, colour), *more)
+
+    def inside(text, target, colour):
+        """A link over all of `text`, its last word in the link's colour."""
+        last = text.rindex(" ") + 1
+        return _block(
+            text,
+            [
+                (0, last, _link(target)),
+                (last, len(text) - last, _link(target, lc(colour, colour))),
+            ],
+        )
+
+    return [
+        _chapter(
+            "Found",
+            [
+                _block("Found", heading=True, level=1),
+                _block("Grey link here.", [_on("Grey link here.", "link", ("link", "lc.xhtml#t"), lc(grey, grey_text))]),
+                _block("Black link here.", [_on("Black link here.", "link", ("link", "lc.xhtml#t"), lc(None, 0xFF000000))]),
+                inside("Plain then grey", "lc.xhtml#t", grey),
+                _block("The target.", keys=["lc.xhtml#t"]),
+            ],
+        ),
+        _chapter(
+            "Missing",
+            [
+                _block("Missing", heading=True, level=1),
+                _block("Yellow gone here.", [gone("Yellow gone here.", "gone", yellow)]),
+                _block("White gone here.", [_on("White gone here.", "gone", ("link", "gone.xhtml#x"), lc(None, white))]),
+                _block("French gone here.", [_on("French gone here.", "gone", ("link", "gone.xhtml#x"), lc(None, white), ("lang", "fr"))]),
+                _block("Navy gone here.", [gone("Navy gone here.", "gone", navy)]),
+                _block("Bold gone here.", [gone("Bold gone here.", "gone", yellow, "bold")]),
+                _block("Again gone here.", [gone("Again gone here.", "gone", yellow)]),
+                inside("Plain then yellow", "gone.xhtml#x", yellow),
+            ],
+        ),
+        _chapter(
+            "Filled",
+            [
+                _block("Filled", heading=True, level=1),
+                _box([_block("Boxed gone.", [gone("Boxed gone.", "gone", yellow)])], background=0xFFDDDDDD),
+                _box([_block("Clear gone.", [gone("Clear gone.", "gone", yellow)])], background=0),
+                _table(
+                    [
+                        _row(
+                            [
+                                _cell("Cell gone.", [gone("Cell gone.", "gone", yellow)], background=0xFF333333),
+                                _cell(
+                                    "Para gone.",
+                                    background=0xFF333333,
+                                    paragraphs=[_block("Para gone.", [gone("Para gone.", "gone", yellow)])],
+                                ),
+                                _cell("Bare gone.", [gone("Bare gone.", "gone", yellow)]),
+                            ]
+                        )
+                    ]
+                ),
+                _block("After gone.", [gone("After gone.", "gone", yellow)]),
+            ],
+        ),
+    ]
+
+
 _APP0 =b"\xff\xe0\x00\x04\x00\x00"
 #: The covers of `cover_paths` and `cover_page`, each also a picture in its book's text.
 _COVER = _jpeg(600, 800, _APP0)
@@ -2202,6 +2276,10 @@ ARG_BOOKS = {
             ],
         )
     ],
+    # Link colours (#728, #732) past what the Calibre-path `link_greys` reaches: a link's
+    # colour found and not, none for it, a run inside a link not found, on the page, in a
+    # filled box and cell and on a box filled 0.
+    "link_colour_runs": _link_colour_runs(),
 }
 
 #: The image books' other arguments.
