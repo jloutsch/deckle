@@ -89,3 +89,21 @@ fn math_span_is_reported_unsupported() {
         Err(GenerateError::Unsupported("math"))
     ));
 }
+
+/// A chapter's heading level picks a `$798` unit, of which there are six: another is an
+/// error in the model, not a panic.
+#[test]
+fn chapter_heading_level_out_of_range_is_a_model_error() {
+    let dir = deckle_kfx::fixtures::kfxgen("models/minimal");
+    let mut model = load_model(&dir).unwrap();
+    let PyValue::Dict(chapter) = item(entry(&mut model.args, "chapters"), 0) else {
+        panic!("not a dict")
+    };
+    chapter.push((PyValue::Str("heading_level".into()), PyValue::Int(7)));
+    // With no blocks, no book heading's level replaces the chapter's.
+    chapter.retain(|(k, _)| k.as_str() != Some("blocks"));
+    assert!(matches!(
+        generate(&model),
+        Err(GenerateError::Model(m)) if m.contains("heading_level")
+    ));
+}

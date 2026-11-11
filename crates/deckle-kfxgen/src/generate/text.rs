@@ -170,11 +170,12 @@ fn read_chapter(ch: &PyValue, at: &str) -> Result<Chapter, GenerateError> {
         Some(PyValue::Int(n)) => *n,
         Some(_) => return Err(model_err(format!("{at}.toc_level: an int"))),
     };
+    // A level picks one of `_HEADING_LEVEL_UNITS`' six (:1840), as a block's does.
     let heading_level = match ch.get("heading_level") {
-        Some(v) if v.is_truthy() => Some(
-            v.as_int()
-                .ok_or_else(|| model_err(format!("{at}.heading_level: an int")))?,
-        ),
+        Some(v) if v.is_truthy() => match v.as_int() {
+            Some(n @ 1..=6) => Some(n),
+            _ => return Err(model_err(format!("{at}.heading_level: 1 to 6"))),
+        },
         _ => None,
     };
     let toc_links = match ch.get("toc_links") {
