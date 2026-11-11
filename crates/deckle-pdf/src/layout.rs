@@ -232,6 +232,9 @@ pub fn apply_outline(blocks: &[Block], marks: &[Mark]) -> Option<Vec<Block>> {
 #[derive(Clone, Debug, PartialEq)]
 struct Line {
     page: usize,
+    /// The top of the row it was cut from: the runs of one row share it, so they keep their
+    /// order left to right whatever a glyph's box says.
+    row: f32,
     rect: Rect,
     size: f32,
     bold: bool,
@@ -255,21 +258,36 @@ impl Item {
             Item::Figure(_, r) => *r,
         }
     }
+    /// Where it sorts from top to bottom: a line by its row, so a row's runs stay in order.
+    fn top(&self) -> f32 {
+        match self {
+            Item::Text(l) => l.row,
+            Item::Figure(_, r) => r.y0,
+        }
+    }
 }
 
 /// A gap wider than this many ems ends a line run: a column gutter or a table cell.
 const RUN_GAP_EM: f32 = 1.5;
+/// A gap wider than this many ems across the page's gutter ends a line run: wider than any word
+/// space, narrower than the tightest column gutter.
+const GUTTER_EM: f32 = 0.8;
+/// Text smaller than this share of the page's usual size is a superscript, a subscript or a
+/// footnote.
+const SCRIPT_SIZE: f32 = 0.75;
+/// A row of text is at most this many ems tall: more would take in the line below.
+const ROW_SPAN: f32 = 1.5;
 /// A gap wider than this many ems between glyphs is a word space.
 const SPACE_EM: f32 = 0.18;
 
 /// The blocks of every page, in reading order, and what was done to get there.
 pub fn blocks(pages: &[Page]) -> (Vec<Block>, Stats) {
     let mut stats = Stats::default();
-    let mut lines: Vec<Vec<Line>> = pages
+    let (mut lines, channels): (Vec<Vec<Line>>, Vec<Option<f32>>) = pages
         .iter()
         .enumerate()
         .map(|(i, p)| lines_of(i, p))
-        .collect();
+        .unzip();
     stats.running_lines = strip_running(&mut lines, pages);
     let body = body_size(lines.iter().flatten());
     let mut flow: Vec<(usize, Vec<Item>)> = Vec::new();
@@ -278,7 +296,7 @@ pub fn blocks(pages: &[Page]) -> (Vec<Block>, Stats) {
         let mut figures = figures_of(page, &mut page_lines, &mut stats);
         figures.extend(tables_of(&mut page_lines, &mut stats));
         figures.extend(equations_of(&mut page_lines, &mut stats));
-        let (items, cols) = reading_order(page, page_lines, figures);
+        let (items, cols) = reading_order(page, page_lines, figures, channels[i]);
         stats.columns = stats.columns.max(cols);
         flow.push((i, items));
     }
@@ -296,24 +314,33 @@ fn median(mut v: Vec<f32>) -> f32 {
     v[v.len() / 2]
 }
 
-/// Glyphs grouped into rows by vertical overlap, then cut into runs at wide gaps.
-fn lines_of(page: usize, p: &Page) -> Vec<Line> {
+/// Glyphs grouped into rows by vertical overlap, then cut into runs at wide gaps, and the
+/// page's column gutter when the rows show one.
+fn lines_of(page: usize, p: &Page) -> (Vec<Line>, Option<f32>) {
     let mut glyphs: Vec<&Glyph> = p
         .glyphs
         .iter()
         .filter(|g| g.y1 > g.y0 && g.x1 >= g.x0 && g.size > 0.0)
         .collect();
     glyphs.sort_by(|a, b| a.y0.total_cmp(&b.y0).then(a.x0.total_cmp(&b.x0)));
-    // Rows: a glyph joins the row its vertical middle falls inside.
+    // Superscripts and subscripts (a citation's "53–55") are placed after the full-size text,
+    // so they join the line they sit on instead of starting a row of their own above it, which
+    // would cut that line in two around the hole they leave.
+    let usual = median(glyphs.iter().map(|g| g.size).collect());
+    let (full, small): (Vec<&Glyph>, Vec<&Glyph>) = glyphs
+        .into_iter()
+        .partition(|g| g.size >= usual * SCRIPT_SIZE);
+    // Rows: a glyph joins the row its vertical middle falls inside, unless that would make the
+    // row taller than the smaller text in it allows: a tall bracket in an equation or a drop cap
+    // would otherwise take in the lines beside it and shuffle their letters together.
     let mut rows: Vec<(f32, f32, Vec<&Glyph>)> = Vec::new();
-    for g in glyphs {
+    for g in full {
         let mid = (g.y0 + g.y1) / 2.0;
-        match rows
-            .iter_mut()
-            .rev()
-            .take(4)
-            .find(|(top, bottom, _)| mid > *top && mid < *bottom)
-        {
+        let fits = |(top, bottom, row): &&mut (f32, f32, Vec<&Glyph>)| {
+            let size = row.first().map_or(g.size, |f| f.size.min(g.size));
+            mid > *top && mid < *bottom && bottom.max(g.y1) - top.min(g.y0) <= ROW_SPAN * size
+        };
+        match rows.iter_mut().rev().take(4).find(fits) {
             Some(row) => {
                 row.0 = row.0.min(g.y0);
                 row.1 = row.1.max(g.y1);
@@ -322,9 +349,33 @@ fn lines_of(page: usize, p: &Page) -> Vec<Line> {
             None => rows.push((g.y0, g.y1, vec![g])),
         }
     }
+    // Small text joins a full-size row without stretching it; small text on lines of its own
+    // (footnotes) makes rows as above.
+    let full_rows = rows.len();
+    for g in small {
+        let mid = (g.y0 + g.y1) / 2.0;
+        match rows
+            .iter_mut()
+            .enumerate()
+            .rev()
+            .find(|(_, (top, bottom, _))| mid > *top && mid < *bottom)
+        {
+            Some((i, row)) => {
+                if i >= full_rows {
+                    row.0 = row.0.min(g.y0);
+                    row.1 = row.1.max(g.y1);
+                }
+                row.2.push(g);
+            }
+            None => rows.push((g.y0, g.y1, vec![g])),
+        }
+    }
+    for row in &mut rows {
+        row.2.sort_by(|a, b| a.x0.total_cmp(&b.x0));
+    }
+    let channel = channel(p, &rows);
     let mut out = Vec::new();
-    for (_, _, mut row) in rows {
-        row.sort_by(|a, b| a.x0.total_cmp(&b.x0));
+    for (row_top, _, row) in rows {
         let mut run: Vec<&Glyph> = Vec::new();
         let mut pending_space = false;
         let mut text = String::new();
@@ -335,6 +386,7 @@ fn lines_of(page: usize, p: &Page) -> Vec<Line> {
                 let n = ink.len().max(1) as f32;
                 out.push(Line {
                     page,
+                    row: row_top,
                     rect: run
                         .iter()
                         .fold(None::<Rect>, |r, g| {
@@ -365,7 +417,8 @@ fn lines_of(page: usize, p: &Page) -> Vec<Line> {
             }
             if let Some(x1) = last_x1 {
                 let gap = g.x0 - x1;
-                if gap > RUN_GAP_EM * g.size {
+                let across = channel.is_some_and(|c| x1 <= c && g.x0 >= c);
+                if gap > RUN_GAP_EM * g.size || (across && gap > GUTTER_EM * g.size) {
                     flush(&mut run, &mut text, &mut out);
                 } else if pending_space || g.space_before || gap > SPACE_EM * g.size {
                     text.push(' ');
@@ -378,7 +431,67 @@ fn lines_of(page: usize, p: &Page) -> Vec<Line> {
         }
         flush(&mut run, &mut text, &mut out);
     }
-    out
+    (out, channel)
+}
+
+/// The x of the page's column gutter, found from its rows of glyphs before they are cut into
+/// runs: a position in the middle of the page that most rows with text on both sides of it pass
+/// with a gap wider than a word space. A tight gutter (a journal's 1.3 em) is narrower than
+/// [`RUN_GAP_EM`], and without this each left-column line would be glued to the right-column
+/// line beside it.
+fn channel(p: &Page, rows: &[(f32, f32, Vec<&Glyph>)]) -> Option<f32> {
+    let (from, to) = (p.width * 0.3, p.width * 0.7);
+    if to <= from {
+        return None;
+    }
+    // Per x: (rows that pass it with a gutter-wide gap, rows whose text runs on across it).
+    let mut counts: Vec<(f32, usize, usize)> = (0..=((to - from) as usize))
+        .map(|i| (from + i as f32, 0, 0))
+        .collect();
+    for (_, _, row) in rows {
+        // Sorted by x0: the row's gutter-wide gaps, from the furthest any glyph reached so far.
+        let Some(first) = row.first() else { continue };
+        let mut reach = first.x1;
+        let mut wide: Vec<(f32, f32)> = Vec::new();
+        for g in &row[1..] {
+            if g.x0 - reach > GUTTER_EM * g.size {
+                wide.push((reach, g.x0));
+            }
+            reach = reach.max(g.x1);
+        }
+        for c in counts.iter_mut().filter(|c| c.0 > first.x0 && c.0 < reach) {
+            if wide.iter().any(|&(l, r)| c.0 >= l && c.0 <= r) {
+                c.1 += 1;
+            } else {
+                c.2 += 1;
+            }
+        }
+    }
+    // Text across the gutter (a title, an abstract, a footer) sits in bands of its own, which
+    // reading order keeps apart, so a third of the rows splitting there is enough: no word
+    // space is gutter-wide, and body text never lines its gaps up like that.
+    let ok = |c: &(f32, usize, usize)| c.1 >= 4 && c.2 <= c.1 * 2;
+    // The widest run of positions where the most rows split, and the fewest run on.
+    let most = counts
+        .iter()
+        .filter(|c| ok(c))
+        .map(|c| (c.1, std::cmp::Reverse(c.2)))
+        .max()?;
+    let best = |c: &(f32, usize, usize)| ok(c) && (c.1, std::cmp::Reverse(c.2)) == most;
+    let (mut widest, mut start): ((f32, f32), Option<f32>) = ((0.0, -1.0), None);
+    for c in counts.iter().chain(std::iter::once(&(to + 1.0, 0, 0))) {
+        match (start, best(c)) {
+            (None, true) => start = Some(c.0),
+            (Some(s), false) => {
+                if c.0 - s > widest.1 - widest.0 {
+                    widest = (s, c.0);
+                }
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    Some((widest.0 + widest.1) / 2.0)
 }
 
 /// The size most of the text is set in, weighted by characters.
@@ -633,17 +746,22 @@ fn pad(r: Rect, by: f32) -> Rect {
 // ---- reading order --------------------------------------------------------------------------
 
 /// The page's items in reading order: bands separated by anything spanning the gutter, each
-/// band's left column before its right. Returns how many columns the page has.
-fn reading_order(p: &Page, lines: Vec<Line>, figures: Vec<(Figure, Rect)>) -> (Vec<Item>, usize) {
+/// band's left column before its right. `channel` is the gutter [`lines_of`] found, if any.
+/// Returns how many columns the page has.
+fn reading_order(
+    p: &Page,
+    lines: Vec<Line>,
+    figures: Vec<(Figure, Rect)>,
+    channel: Option<f32>,
+) -> (Vec<Item>, usize) {
     let mut items: Vec<Item> = lines.into_iter().map(Item::Text).collect();
     items.extend(figures.into_iter().map(|(k, r)| Item::Figure(k, r)));
     let by_top = |a: &Item, b: &Item| {
-        a.rect()
-            .y0
-            .total_cmp(&b.rect().y0)
+        a.top()
+            .total_cmp(&b.top())
             .then(a.rect().x0.total_cmp(&b.rect().x0))
     };
-    let Some(gutter) = gutter(p, &items) else {
+    let Some(gutter) = channel.or_else(|| gutter(p, &items)) else {
         items.sort_by(by_top);
         return (items, 1);
     };
@@ -1076,7 +1194,7 @@ mod tests {
         text_at(&mut g, 72.0, 100.0, "ab");
         text_at(&mut g, 72.0 + 2.0 * 5.0 + 2.5, 100.0, "cd");
         text_at(&mut g, 300.0, 100.0, "far");
-        let lines = lines_of(0, &page(g));
+        let (lines, _) = lines_of(0, &page(g));
         let t: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
         assert_eq!(t, ["ab cd", "far"]);
     }
@@ -1101,6 +1219,93 @@ mod tests {
         );
         assert!(t.last().unwrap().starts_with("Right line 0"), "{t:?}");
         assert_eq!(stats.columns, 2);
+    }
+
+    #[test]
+    fn a_gutter_narrower_than_a_run_gap_still_splits_the_columns() {
+        // A journal's gutter: 12 pt between columns of 10 pt type, under RUN_GAP_EM.
+        let mut g = Vec::new();
+        for i in 0..8 {
+            let y = 120.0 + i as f32 * 12.0;
+            // 31 glyphs, ending at 226.5; the right column starts at 239.
+            text_at(
+                &mut g,
+                72.0,
+                y,
+                &format!("Left {i} of the first column text"),
+            );
+            text_at(&mut g, 239.0, y, &format!("Right {i}"));
+        }
+        // A title across both columns, and an abstract line under it.
+        styled(
+            &mut g,
+            100.0,
+            60.0,
+            "A Title Across Both Columns",
+            18.0,
+            true,
+        );
+        text_at(
+            &mut g,
+            72.0,
+            90.0,
+            "An abstract line that runs across the gutter too.",
+        );
+        let (lines, channel) = lines_of(0, &page(g.clone()));
+        assert!(
+            channel.is_some_and(|c| c > 226.5 && c < 239.0),
+            "{channel:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.text == "Left 0 of the first column text")
+        );
+        let (b, stats) = blocks(&[page(g)]);
+        let t = texts(&b);
+        assert_eq!(stats.columns, 2);
+        let all = t.join(" | ");
+        let lefts: String = (0..8)
+            .map(|i| format!("Left {i} of the first column text"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let rights: String = (0..8)
+            .map(|i| format!("Right {i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(all.ends_with(&format!("{lefts} {rights}")), "{t:?}");
+    }
+
+    #[test]
+    fn superscripts_stay_in_their_line_and_its_halves_in_order() {
+        let mut g = Vec::new();
+        text_at(&mut g, 72.0, 100.0, "generations");
+        // "53-55" raised and small, then ". Acknowledging" a hair higher than the first half.
+        styled(&mut g, 127.0, 98.0, "53-55", 6.0, false);
+        text_at(&mut g, 145.0, 99.99, ". Acknowledging");
+        let (lines, _) = lines_of(0, &page(g.clone()));
+        let t: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(t, ["generations53-55 . Acknowledging"]);
+        let mut g = Vec::new();
+        text_at(&mut g, 72.0, 100.0, "first half");
+        text_at(&mut g, 300.0, 99.99, "second half");
+        let (b, _) = blocks(&[page(g)]);
+        assert_eq!(texts(&b), ["first half second half"]);
+    }
+
+    #[test]
+    fn a_tall_glyph_does_not_merge_the_lines_beside_it() {
+        let mut g = Vec::new();
+        text_at(&mut g, 330.0, 100.0, "upper line");
+        text_at(&mut g, 330.0, 111.0, "lower line");
+        // A bracket in the other column, as tall as both lines.
+        styled(&mut g, 100.0, 99.0, "(", 22.0, false);
+        let (lines, _) = lines_of(0, &page(g));
+        let t: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        assert!(
+            t.contains(&"upper line") && t.contains(&"lower line"),
+            "{t:?}"
+        );
     }
 
     #[test]

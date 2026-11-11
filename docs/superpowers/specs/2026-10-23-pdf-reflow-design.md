@@ -56,10 +56,16 @@ bindings are global.
 
 Coordinates are points, origin top left. In order:
 
-1. **Lines.** Glyphs go into rows by vertical overlap, then each row is cut into runs at gaps
-   wider than 1.5 em (a gutter or a table cell). A word space is a gap over 0.18 em, or a space
-   the PDF itself has (PDFium's generated spaces have no box, so they ride on the next glyph as
-   `space_before`). Rotated glyphs are dropped.
+1. **Lines.** Glyphs go into rows by vertical overlap: a glyph joins the row its middle falls
+   in, as long as the row stays within 1.5 em of the smaller text in it (so a tall bracket or a
+   drop cap doesn't take in the lines beside it). Text under 75% of the page's usual size (a
+   superscript, a subscript) is placed last and joins the row it sits in, without stretching
+   it, so a citation's "53–55" stays in its sentence. Each row is then cut into runs at gaps
+   wider than 1.5 em (a gutter or a table cell), and at gaps over 0.8 em that cross the page's
+   gutter: a position in the middle 40% where at least four rows, and a third of the rows that
+   reach it, have a gap that wide (a journal's gutter can be 1.3 em). A word space is a gap
+   over 0.18 em, or a space the PDF itself has (PDFium's generated spaces have no box, so they
+   ride on the next glyph as `space_before`). Rotated glyphs are dropped.
 2. **Running heads and folios.** In the top and bottom 10% of a page, a line is removed when
    it's a page number ("12", "- 12 -", "Page 12", "12 of 40", "xiv") or when the same line, with
    its digits blanked, appears in that margin on at least 40% of pages (and at least two).
@@ -73,10 +79,11 @@ Coordinates are points, origin top left. In order:
 5. **Equations.** Runs set mostly in math fonts (Computer Modern math, Symbol, STIX, Cambria
    Math and the like), merged with their neighbours, with at least three characters. Inline math
    in a sentence stays text; a lone footnote star stays text.
-6. **Reading order.** A page has two columns when an empty vertical channel in its middle
-   40% has text on both sides and at most 10% of lines cross it; the gutter is the middle of the
-   widest such channel. Anything spanning the gutter (a title, a wide figure) ends a band; each
-   band reads its left column, then its right. Otherwise the page reads top to bottom.
+6. **Reading order.** A page has two columns when step 1 found a gutter, or when an empty
+   vertical channel in its middle 40% has text on both sides and at most 10% of lines cross it;
+   the gutter is the middle of the widest such channel. Anything spanning the gutter (a title, a
+   wide figure) ends a band; each band reads its left column, then its right. Otherwise the
+   page reads top to bottom. The runs cut from one row keep their order left to right.
 7. **Paragraphs.** Body size is the size most characters are set in. A paragraph ends at a
    gap over 1.4 times the usual line step, a list item (a bullet, "1.", "(a)"), an indented first
    line, a sentence that ends on a line stopping before three quarters of its column, a change of
