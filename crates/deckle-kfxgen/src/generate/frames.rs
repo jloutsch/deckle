@@ -12,9 +12,9 @@ use std::collections::BTreeMap;
 use regex::Captures;
 
 use super::boxes::{BoxOpen, BoxSpec};
-use super::chapters::Block;
+use super::chapters::{Block, cut_at_empty_line};
 use super::chunks::{ASCII_SPACE, Chunk, Marker, Node, emit_float_wrapped, space_to_write};
-use super::images::{IMAGE_COLUMN_PX, IMG_TOKEN, Images, SIZE_HINT, picture_link};
+use super::images::{IMAGE_COLUMN_PX, IMG_TOKEN, Images, SIZE_HINT, has_picture, picture_link};
 use super::inline::{Anchors, Span};
 use super::styles::LINE_EM;
 use super::{GenerateError, py};
@@ -123,6 +123,13 @@ pub(crate) fn emit_floated_paragraph(
             break;
         }
         lead = whole.end();
+    }
+    // `_emit_paragraph` cuts the words after the floats at an empty line
+    // (`_cut_after_picture_lines` :535), not ported. With a float among them, the words are
+    // Unsupported below.
+    let words = &text[lead..];
+    if !has_picture(words) && cut_at_empty_line(words) {
+        return Err(Unsupported("a paragraph cut at an empty line"));
     }
     let space = if block.tight {
         0.0

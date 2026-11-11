@@ -77,3 +77,27 @@ fn a_frame_key_of_the_wrong_kind_is_a_model_error() {
         }
     }
 }
+
+/// The words after a paragraph's floats, cut at an empty line, are several entries in kfxgen
+/// (`_cut_after_picture_lines` :535, #602), not ported; one line break keeps one entry.
+#[test]
+fn floated_words_cut_at_an_empty_line_are_unsupported() {
+    let left = "\0IMG\x01OEBPS/p.png\x01left\x01w=30%\x01left\0";
+    for (words, cut) in [
+        ("Words.\n\nMore words.", true),
+        ("Words.\nMore words.", false),
+    ] {
+        let mut model = load_model(&deckle_kfx::fixtures::kfxgen("models/frame_edges")).unwrap();
+        let chapter = item(entry(&mut model.args, "chapters"), 0);
+        let block = item(entry(chapter, "blocks"), 4);
+        *entry(block, "text") = PyValue::Str(format!("{left}{words}"));
+        match generate(&model) {
+            Err(GenerateError::Unsupported(f)) if cut => {
+                assert_eq!(f, "a paragraph cut at an empty line")
+            }
+            Ok(_) if !cut => {}
+            Err(e) => panic!("{words:?}: {e}"),
+            Ok(_) => panic!("{words:?}: generated"),
+        }
+    }
+}

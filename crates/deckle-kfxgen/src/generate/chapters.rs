@@ -282,8 +282,9 @@ pub(crate) fn read_block(b: &PyValue, at: &str) -> Result<Block, GenerateError> 
         Some(PyValue::Str(s)) => s.clone(),
         _ => return Err(model_err(format!("{at}.text: a string"))),
     };
-    // With pictures, `_cut_after_picture_lines` cuts only a paragraph that also has words,
-    // which `emit_paragraph` reports.
+    // With pictures, `_cut_after_picture_lines` cuts only a paragraph that also has words:
+    // `emit_paragraph` reports words after floats cut at an empty line, and any other
+    // pictures among words.
     if !images::has_picture(&text) && cut_at_empty_line(&text) {
         return Err(Unsupported("a paragraph cut at an empty line"));
     }
