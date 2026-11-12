@@ -10,6 +10,8 @@
 - **Starting the app and the watcher together on a new computer works every time.** The
   private `producer.json` appears only once it is complete, so the second one to start reads
   it instead of failing. If an older version left it empty, the message now says to delete it.
+  On a disk without hard links (FAT, some network drives) the file is written in place, and a
+  crash during that first write leaves it empty, with the same message.
 - **Refused requests no longer pile up.** A refused fresh-paper request is forgotten after
   three days instead of thirty, leaving its status in the folder, and is never queued again. A
   request first seen long after it expired gets one `expired` status. Statuses are rewritten

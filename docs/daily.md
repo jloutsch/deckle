@@ -1274,7 +1274,8 @@ paper on this computer must also be removed or corrected before setup can succee
   or manually edit it. After reinstalling without that state, use the deliberate disconnect
   procedure above before creating a new ownership record. If the message says `producer.json` is
   empty or damaged and this computer has no fresh-paper folders yet, delete that file and start
-  Deckle again.
+  Deckle again. On a disk without hard links (FAT, some network drives), a crash while Deckle
+  first writes that file leaves it empty in this way.
 
 ## The AI editor
 
