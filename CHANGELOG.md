@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A second paper no longer deletes the first one's editions on a Kobo or PocketBook.** Its
+  files (`deckle-daily-kid-courier-…`) were counted as the main paper's editions and took their
+  places, so every one of the main paper's editions was removed, the newest too. Now only a
+  paper's own dated editions count toward its `keep`, and each paper on the reader is pruned
+  by its own, as on a Kindle.
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in
