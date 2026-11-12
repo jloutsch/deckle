@@ -411,6 +411,52 @@ fn get_object_downloads_a_multi_chunk_file() {
     assert_eq!(mtp.get_object(0x42).unwrap(), payload);
 }
 
+#[test]
+fn get_object_that_ends_short_is_an_error() {
+    // The data phase announces 1,000 bytes and ends after 100.
+    let mut short = data(op::GET_OBJECT, 1, &[7u8; 1000]);
+    short.truncate(12 + 100);
+    let fake = Fake {
+        script: vec![
+            (
+                cmd(op::OPEN_SESSION, 0, &[1]),
+                vec![ok(op::OPEN_SESSION, 0, &[])],
+            ),
+            (
+                cmd(op::GET_OBJECT, 1, &[0x42]),
+                vec![short, Vec::new(), ok(op::GET_OBJECT, 1, &[])],
+            ),
+        ],
+        ..Default::default()
+    };
+    let mut mtp = Mtp::new(Box::new(fake));
+    mtp.open_session().unwrap();
+    let e = mtp.get_object(0x42).unwrap_err();
+    assert!(e.to_string().contains("100 of 1000"), "{e}");
+}
+
+#[test]
+fn a_data_phase_of_unknown_length_is_taken_as_it_ends() {
+    let mut open = data(op::GET_OBJECT, 1, &[7u8; 100]);
+    open[..4].copy_from_slice(&u32::MAX.to_le_bytes());
+    let fake = Fake {
+        script: vec![
+            (
+                cmd(op::OPEN_SESSION, 0, &[1]),
+                vec![ok(op::OPEN_SESSION, 0, &[])],
+            ),
+            (
+                cmd(op::GET_OBJECT, 1, &[0x42]),
+                vec![open, Vec::new(), ok(op::GET_OBJECT, 1, &[])],
+            ),
+        ],
+        ..Default::default()
+    };
+    let mut mtp = Mtp::new(Box::new(fake));
+    mtp.open_session().unwrap();
+    assert_eq!(mtp.get_object(0x42).unwrap(), [7u8; 100]);
+}
+
 fn sample_device_info() -> DeviceInfo {
     DeviceInfo {
         manufacturer: "Amazon".into(),

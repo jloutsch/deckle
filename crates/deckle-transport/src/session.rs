@@ -41,7 +41,13 @@ pub enum MtpError {
     Missing(&'static str),
     #[error("the Kindle has no documents folder; nothing was written")]
     NoDocumentsFolder,
+    /// The data phase ended before the length it announced: a cable pulled mid-read.
+    #[error("the device sent {got} of {expected} bytes and stopped")]
+    ShortData { got: usize, expected: usize },
 }
+
+/// A container's header: length, kind, code, transaction id.
+const HEADER_LEN: usize = 12;
 
 /// PTP response: a session is already open (a previous run did not close it).
 pub const RSP_SESSION_ALREADY_OPEN: u16 = 0x201E;
@@ -82,7 +88,8 @@ impl Mtp {
         buf.truncate(n);
         let (c, mut payload) = Container::decode(&buf)?;
         if c.kind == ContainerKind::Data {
-            let total = u32::from_le_bytes(buf[..4].try_into().unwrap()) as usize;
+            let announced = u32::from_le_bytes(buf[..4].try_into().unwrap());
+            let total = announced as usize;
             let mut have = buf.len();
             while have < total {
                 let mut more = vec![0u8; READ_CHUNK.min(total - have)];
@@ -92,6 +99,14 @@ impl Mtp {
                 }
                 payload.extend_from_slice(&more[..n]);
                 have += n;
+            }
+            // Fewer bytes than announced is never the whole file. 0xFFFFFFFF means the device
+            // didn't know the length (a file over 4 GB): the data ends where it ends.
+            if announced != u32::MAX && have < total {
+                return Err(MtpError::ShortData {
+                    got: have.saturating_sub(HEADER_LEN),
+                    expected: total.saturating_sub(HEADER_LEN),
+                });
             }
         }
         Ok((c, payload))

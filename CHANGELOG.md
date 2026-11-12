@@ -9,6 +9,9 @@
   when it's whole, as Kobo and PocketBook deliveries already were. A `.part` file a pulled
   cable leaves is removed on a later delivery once it's an hour old. A re-send needs room for
   one more copy for that moment (#74).
+- **A download from an MTP Kindle that stops short is an error.** A cable pulled while a book
+  or its reading position was read off the Kindle returned the bytes so far as the whole file,
+  so a kept copy could be cut off. Now it fails and says how much came (#32).
 - **Put back can't leave a Kindle with neither copy.** It removed the upgraded book first and
   then copied the kept one in, so a failed copy left nothing. Now the kept book goes in first,
   then the upgraded one comes out, then the kept reading position and notes go in (last,
