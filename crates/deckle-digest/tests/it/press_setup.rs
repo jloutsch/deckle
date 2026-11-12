@@ -284,7 +284,8 @@ fn press_setup_producer_identity_is_stable_and_corruption_is_not_replaced() {
 #[test]
 fn press_setup_producer_identity_created_by_many_processes_at_once_is_one_id() {
     let dir = tempfile::tempdir().unwrap();
-    for round in 0..1000 {
+    // 200 rounds: the old code failed in most rounds, and 1,000 take a minute of file syncs.
+    for round in 0..200 {
         let path = dir.path().join(format!("producer-{round}.json"));
         let start = std::sync::Barrier::new(16);
         let ids: Vec<_> = std::thread::scope(|s| {
@@ -302,7 +303,7 @@ fn press_setup_producer_identity_created_by_many_processes_at_once_is_one_id() {
         assert!(ids.iter().all(|id| id.as_ref() == Ok(&first)), "{ids:?}");
     }
     // Only the identity files remain: every temporary file was removed.
-    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1000);
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 200);
 }
 
 #[test]

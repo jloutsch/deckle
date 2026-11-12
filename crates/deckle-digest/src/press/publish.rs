@@ -365,6 +365,60 @@ pub fn flush_statuses(j: &mut PressJournal) -> Result<(), PressError> {
     }
     error.map_or(Ok(()), Err)
 }
+/// Write only statuses that changed since their last successful write. `flushed` records
+/// what was written; the caller keeps it across journal reopens and clears it for a full
+/// flush, which rewrites a status file removed by hand or by a sync tool.
+pub fn flush_changed(
+    j: &mut PressJournal,
+    flushed: &mut std::collections::HashMap<Uuid, PressStatus>,
+) -> Result<(), PressError> {
+    j.ensure_healthy()?;
+    let statuses = j.statuses();
+    flushed.retain(|id, _| statuses.iter().any(|s| s.request_id == *id));
+    let mut error = None;
+    for s in statuses {
+        if flushed.get(&s.request_id) == Some(&s) {
+            continue;
+        }
+        match flush_status(j, s.clone()) {
+            Ok(()) => {
+                flushed.insert(s.request_id, s);
+            }
+            Err(e) => {
+                error.get_or_insert(e);
+            }
+        }
+    }
+    error.map_or(Ok(()), Err)
+}
+/// Whether anything is at this request's status path. The status file is the record that
+/// the request was answered, so a request that has one is never journaled again.
+pub fn status_written(b: &PressBinding, request_id: Uuid) -> bool {
+    fs::symlink_metadata(
+        b.root
+            .join(format!(".deckle-press/status/{request_id}.json")),
+    )
+    .is_ok()
+}
+/// Write a status the journal does not keep (a request first seen long after it expired).
+/// Never replaces an existing file.
+pub fn write_unjournaled_status(b: &PressBinding, s: &PressStatus) -> Result<(), PressError> {
+    check_binding(b)?;
+    let parent = b.root.join(".deckle-press/status");
+    directory(&parent, true)?;
+    let pinned = Dir::open(&parent)?;
+    let temp = format!(".{}-{}.tmp", s.request_id, Uuid::new_v4());
+    let bytes = serde_json::to_vec(s).map_err(|_| storage())?;
+    pinned.write_new(Path::new(&temp), &bytes)?;
+    let linked = check_binding(b).and_then(|()| {
+        pinned.link_new(
+            Path::new(&temp),
+            Path::new(&format!("{}.json", s.request_id)),
+        )
+    });
+    let _ = pinned.remove(Path::new(&temp), false);
+    linked
+}
 pub(crate) fn flush_status(j: &PressJournal, s: PressStatus) -> Result<(), PressError> {
     let b = j.binding_for_request(s.request_id).ok_or_else(conflict)?;
     check_binding(&b)?;

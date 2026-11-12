@@ -514,9 +514,11 @@ mod tests {
         )
         .unwrap();
         fs::remove_dir(&other.root).unwrap();
-        assert!(prune_results(&mut j, now() + Duration::days(31)).is_err());
+        // Forgetting a refusal leaves its status file alone, so the unavailable folder is
+        // not touched at all.
+        prune_results(&mut j, now() + Duration::days(31)).unwrap();
         assert!(!b.root.join(&o.result.bundle).exists());
-        assert!(j.status(request.request_id).is_some());
+        assert!(j.status(request.request_id).is_none());
         let bytes = fs::read(b.root.join(format!(".deckle-press/status/{id}.json"))).unwrap();
         let status: PressStatus = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(status.state, PressState::ResultRemoved);

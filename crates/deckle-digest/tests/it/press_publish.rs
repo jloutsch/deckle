@@ -531,3 +531,209 @@ fn press_publish_unavailable_old_binding_does_not_block_other_statuses() {
     );
     assert_eq!(j.binding_for_request(old_id).unwrap(), b);
 }
+
+fn request_at(
+    b: &PressBinding,
+    created_at: chrono::DateTime<Utc>,
+    expires_at: chrono::DateTime<Utc>,
+) -> PressRequest {
+    PressRequest {
+        format: "deckle-press-request".into(),
+        version: 1,
+        request_id: Uuid::new_v4(),
+        reader_id: Uuid::new_v4(),
+        producer_id: b.producer_id,
+        paper_id: b.paper_id,
+        operation: PressOperation::FreshFull,
+        articles: None,
+        created_at,
+        expires_at,
+    }
+}
+fn status_path(b: &PressBinding, id: Uuid) -> std::path::PathBuf {
+    b.root.join(format!(".deckle-press/status/{id}.json"))
+}
+#[test]
+fn press_retention_forgets_a_refusal_after_three_days_and_keeps_its_status_file() {
+    let d = tempfile::tempdir().unwrap();
+    let (mut j, b) = setup(d.path());
+    let refused = request_at(&b, now(), now() + Duration::hours(24));
+    j.reject_in(&b, refused.clone(), "busy", PressErrorCode::Busy, now())
+        .unwrap();
+    flush_statuses(&mut j).unwrap();
+    prune_results(&mut j, now() + Duration::hours(71)).unwrap();
+    assert!(j.status(refused.request_id).is_some());
+    prune_results(&mut j, now() + Duration::hours(73)).unwrap();
+    assert!(j.status(refused.request_id).is_none());
+    assert!(status_path(&b, refused.request_id).exists());
+}
+#[test]
+fn press_retention_forgets_a_clock_mismatch_three_days_after_first_seen() {
+    let d = tempfile::tempdir().unwrap();
+    let (mut j, b) = setup(d.path());
+    let far = Utc.with_ymd_and_hms(9999, 1, 1, 0, 0, 0).unwrap();
+    let refused = request_at(&b, now(), far);
+    j.reject_in(
+        &b,
+        refused.clone(),
+        "far",
+        PressErrorCode::ClockMismatch,
+        now(),
+    )
+    .unwrap();
+    flush_statuses(&mut j).unwrap();
+    prune_results(&mut j, now() + Duration::hours(71)).unwrap();
+    assert!(j.status(refused.request_id).is_some());
+    prune_results(&mut j, now() + Duration::hours(72)).unwrap();
+    assert!(j.status(refused.request_id).is_none());
+    assert!(status_path(&b, refused.request_id).exists());
+}
+#[test]
+fn press_retention_keeps_a_refusal_from_a_clock_ahead_until_48_hours_past_its_expiry() {
+    let d = tempfile::tempdir().unwrap();
+    let (mut j, b) = setup(d.path());
+    let ahead = now() + Duration::hours(60);
+    let refused = request_at(&b, ahead, ahead + Duration::hours(24));
+    j.reject_in(
+        &b,
+        refused.clone(),
+        "ahead",
+        PressErrorCode::ClockMismatch,
+        now(),
+    )
+    .unwrap();
+    // 73 hours on, the request reads as valid; its refusal must still be the answer.
+    let later = now() + Duration::hours(73);
+    prune_results(&mut j, later).unwrap();
+    let status = j.accept_in(&b, refused.clone(), "ahead", later).unwrap();
+    assert_eq!(status.error_code, Some(PressErrorCode::ClockMismatch));
+    prune_results(&mut j, ahead + Duration::hours(24 + 48)).unwrap();
+    assert!(j.status(refused.request_id).is_none());
+}
+#[test]
+fn press_queue_busy_refusal_is_not_queued_once_the_queue_drains() {
+    let d = tempfile::tempdir().unwrap();
+    let (mut j, b) = setup(d.path());
+    let (lease, _) = admit(&mut j, &b, now());
+    let mut waiting = request_at(&b, now(), now() + Duration::hours(24));
+    waiting.operation = PressOperation::ReadingEdition;
+    waiting.articles = Some(vec!["https://example.com/a".into()]);
+    j.accept_in(&b, waiting, "waiting", now()).unwrap();
+    // A second, different selection while one is already waiting is refused as busy.
+    let mut reading = request_at(&b, now(), now() + Duration::hours(24));
+    reading.operation = PressOperation::ReadingEdition;
+    reading.articles = Some(vec!["https://example.com/b".into()]);
+    assert_eq!(
+        j.accept_in(&b, reading.clone(), "reading", now())
+            .unwrap_err()
+            .code,
+        PressErrorCode::Busy
+    );
+    j.reject_in(&b, reading.clone(), "reading", PressErrorCode::Busy, now())
+        .unwrap();
+    j.fail(&lease, PressErrorCode::BuildFailed, now()).unwrap();
+    let pending = j.admit(now() + Duration::minutes(6)).unwrap().unwrap();
+    j.fail(&pending, PressErrorCode::BuildFailed, now())
+        .unwrap();
+    let again = j
+        .accept_in(&b, reading.clone(), "reading", now() + Duration::minutes(7))
+        .unwrap();
+    assert_eq!(again.state, PressState::Failed);
+    assert_eq!(again.error_code, Some(PressErrorCode::Busy));
+    assert!(j.admit(now() + Duration::minutes(20)).unwrap().is_none());
+}
+#[test]
+fn press_retention_holds_at_most_three_days_of_refusals() {
+    let d = tempfile::tempdir().unwrap();
+    let (mut j, b) = setup(d.path());
+    // 600 refusals, 30 a day for 20 days, retention after each day. (2,000 take a minute
+    // here, nearly all of it syncing the journal; the bound is the same.)
+    for day in 0..20 {
+        for i in 0..30 {
+            let at = now() + Duration::days(day) + Duration::minutes(i * 45);
+            let refused = request_at(&b, at, at + Duration::hours(24));
+            j.reject_in(&b, refused, "busy", PressErrorCode::Busy, at)
+                .unwrap();
+        }
+        prune_results(&mut j, now() + Duration::days(day + 1)).unwrap();
+        assert!(j.statuses().len() <= 90, "{}", j.statuses().len());
+    }
+}
+#[test]
+fn press_status_flush_writes_only_changed_statuses_while_a_folder_is_offline() {
+    let d = tempfile::tempdir().unwrap();
+    let (mut j, b) = setup(d.path());
+    let other_root = d.path().join("other");
+    fs::create_dir(&other_root).unwrap();
+    let other = PressBinding {
+        root: fs::canonicalize(&other_root).unwrap(),
+        producer_id: b.producer_id,
+        paper_id: Uuid::new_v4(),
+    };
+    setup::write_manifest(
+        &other,
+        &ProducerManifest {
+            format: "deckle-press".into(),
+            version: 1,
+            producer_id: other.producer_id,
+            paper_id: other.paper_id,
+            paper_name: "Other".into(),
+            enabled: true,
+            operations: vec![PressOperation::FreshFull],
+            reading_editions: true,
+            updated_at: now(),
+        },
+    )
+    .unwrap();
+    j.register_binding(other.clone(), true, false).unwrap();
+    let here = request_at(&b, now(), now() + Duration::hours(24));
+    let away = request_at(&other, now(), now() + Duration::hours(24));
+    j.reject_in(&b, here.clone(), "here", PressErrorCode::Busy, now())
+        .unwrap();
+    j.reject_in(&other, away.clone(), "away", PressErrorCode::Busy, now())
+        .unwrap();
+    let mut flushed = std::collections::HashMap::new();
+    fs::rename(&other.root, d.path().join("offline")).unwrap();
+    assert!(flush_changed(&mut j, &mut flushed).is_err());
+    assert!(status_path(&b, here.request_id).exists());
+    // A file removed after a successful write is not rewritten by an incremental flush:
+    // each of 100 ticks writes only the offline folder's unwritten status.
+    fs::remove_file(status_path(&b, here.request_id)).unwrap();
+    for _ in 0..100 {
+        assert!(flush_changed(&mut j, &mut flushed).is_err());
+    }
+    assert!(!status_path(&b, here.request_id).exists());
+    fs::rename(d.path().join("offline"), &other.root).unwrap();
+    flush_changed(&mut j, &mut flushed).unwrap();
+    assert!(status_path(&other, away.request_id).exists());
+    assert!(!status_path(&b, here.request_id).exists());
+    // A full flush (an empty record of what was written) writes it again.
+    flushed.clear();
+    flush_changed(&mut j, &mut flushed).unwrap();
+    assert!(status_path(&b, here.request_id).exists());
+}
+#[test]
+fn press_late_request_gets_one_expired_status_and_no_journal_entry() {
+    let d = tempfile::tempdir().unwrap();
+    let (mut j, b) = setup(d.path());
+    let created = now() - Duration::days(4);
+    let late = request_at(&b, created, created + Duration::hours(24));
+    let status = j
+        .reject_in(&b, late.clone(), "late", PressErrorCode::Expired, now())
+        .unwrap();
+    assert_eq!(status.state, PressState::Expired);
+    assert!(j.status(late.request_id).is_none());
+    assert!(!status_written(&b, late.request_id));
+    write_unjournaled_status(&b, &status).unwrap();
+    assert!(status_written(&b, late.request_id));
+    let written: PressStatus =
+        serde_json::from_slice(&fs::read(status_path(&b, late.request_id)).unwrap()).unwrap();
+    assert_eq!(written, status);
+    // Never replaces a status file that is already there.
+    assert!(write_unjournaled_status(&b, &status).is_err());
+    // Under 48 hours past expiry, an expired request is journaled as before.
+    let recent = request_at(&b, now() - Duration::hours(71), now() - Duration::hours(47));
+    j.reject_in(&b, recent.clone(), "recent", PressErrorCode::Expired, now())
+        .unwrap();
+    assert!(j.status(recent.request_id).is_some());
+}

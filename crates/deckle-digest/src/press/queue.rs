@@ -792,6 +792,38 @@ fn expire_queued(data: &mut JournalData, now: DateTime<Utc>) -> Result<bool, Pre
     Ok(changed)
 }
 
+/// When a refusal is forgotten: three days after it was first seen, and for a request with
+/// the protocol's 24-hour lifetime not before 48 hours past its expiry, so a request from a
+/// clock that runs ahead cannot become valid while it is still remembered. Any other
+/// lifetime was refused as a clock mismatch, and its `expires_at` cannot be trusted.
+fn refusal_forgotten_at(e: &Entry) -> DateTime<Utc> {
+    let seen = e.first_seen + Duration::hours(72);
+    if e.request.expires_at - e.request.created_at == Duration::hours(24)
+        && let Some(expiry) = e.request.expires_at.checked_add_signed(Duration::hours(48))
+    {
+        return seen.max(expiry);
+    }
+    seen
+}
+/// Terminal entries one folder may hold before its new requests are left unanswered. A
+/// backstop: entries are never forgotten early, since a live request would be built again.
+pub const HISTORY_CAP: usize = 1000;
+impl PressJournal {
+    /// Whether this folder's terminal entries have reached `HISTORY_CAP`.
+    pub fn history_full(&self, binding: &PressBinding) -> bool {
+        self.data
+            .entries
+            .iter()
+            .filter(|e| {
+                e.root == binding.root
+                    && e.request.producer_id == binding.producer_id
+                    && e.request.paper_id == binding.paper_id
+                    && terminal(e.status.state)
+            })
+            .count()
+            >= HISTORY_CAP
+    }
+}
 fn rejection_code(code: PressErrorCode) -> bool {
     matches!(
         code,
@@ -901,8 +933,10 @@ impl PressJournal {
             message: None,
         };
         // Already-known IDs returned above retain their full reconciliation history.
-        // Unknown controls at the terminal horizon do not renew their journal lifetime.
-        if code == PressErrorCode::Expired && now - request.expires_at >= Duration::days(30) {
+        // A request first seen 48 hours or more after it expired (its lifetime is 24 hours,
+        // or it would be a clock mismatch) is not journaled: the caller writes this status
+        // once, and the status file then stands for the answer.
+        if code == PressErrorCode::Expired && now - request.expires_at >= Duration::hours(48) {
             return Ok(status);
         }
         let mut data = self.data.clone();
@@ -1047,9 +1081,18 @@ impl PressJournal {
     ) -> Result<(), PressError> {
         self.ensure_healthy()?;
         let mut data = self.data.clone();
+        // A refusal (no job) is forgotten sooner and keeps its status file: the scan never
+        // journals a request whose status file exists, so it cannot come back.
+        let refusals: std::collections::HashSet<_> = data
+            .entries
+            .iter()
+            .filter(|e| e.status.job_id.is_none() && now >= refusal_forgotten_at(e))
+            .map(|e| e.request.request_id)
+            .collect();
         let old: std::collections::HashSet<_> = data
             .entries
             .iter()
+            .filter(|e| e.status.job_id.is_some())
             .filter(|e| terminal(e.status.state) && now - e.status.updated_at >= Duration::days(30))
             .filter(|e| {
                 !data.outputs.iter().any(|o| {
@@ -1071,7 +1114,7 @@ impl PressJournal {
             })
             .collect();
         let mut error = None;
-        let mut completed = std::collections::HashSet::new();
+        let mut completed = refusals;
         for (binding, id) in removed {
             match remove_status(&binding, id) {
                 Ok(()) => {

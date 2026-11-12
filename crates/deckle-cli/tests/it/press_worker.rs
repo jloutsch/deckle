@@ -279,7 +279,12 @@ fn press_worker_removes_stale_job_folders_at_start() {
             .unwrap();
     }
     let mut w = PressSupervisor::with_options(f.options.clone());
-    until(&f, &mut w, PressState::Building);
+    // The status still says building from the first run; wait for the sweep itself.
+    let end = Instant::now() + Duration::from_secs(30);
+    while damaged.exists() && Instant::now() < end {
+        let _ = w.tick(std::slice::from_ref(&f.cfg), Utc::now());
+        std::thread::sleep(Duration::from_millis(20));
+    }
     drop(w);
     assert!(!damaged.exists(), "an old unreadable job folder is removed");
     assert!(held.exists(), "a job the journal holds keeps its folder");
@@ -1458,7 +1463,8 @@ fn regression_ancient_expiry_boundary_and_known_request_reconciliation() {
     for (seconds, retained) in [(1, true), (0, false), (-1, false)] {
         let mut request = f.request.clone();
         request.request_id = Uuid::new_v4();
-        request.expires_at = at - deckle_digest::chrono::Duration::days(30)
+        // First seen 48 hours or more after expiry: answered once, never journaled.
+        request.expires_at = at - deckle_digest::chrono::Duration::hours(48)
             + deckle_digest::chrono::Duration::seconds(seconds);
         request.created_at = request.expires_at - deckle_digest::chrono::Duration::hours(24);
         j.reject_in(
@@ -1685,4 +1691,226 @@ fn press_worker_accepts_legacy_descriptor_without_source_input() {
     )
     .unwrap();
     assert!(body.contains("Library reopened"));
+}
+
+type Clock = Arc<std::sync::Mutex<deckle_digest::chrono::DateTime<Utc>>>;
+fn clocked(f: &mut Fixture) -> Clock {
+    let clock = Arc::new(std::sync::Mutex::new(Utc::now()));
+    let c = clock.clone();
+    f.options.clock = Arc::new(move || *c.lock().unwrap());
+    clock
+}
+fn hours(n: i64) -> deckle_digest::chrono::Duration {
+    deckle_digest::chrono::Duration::hours(n)
+}
+fn request_file(f: &Fixture, r: &PressRequest) -> std::path::PathBuf {
+    f.binding.root.join(format!(
+        ".deckle-press/requests/{}/{}.json",
+        r.reader_id, r.request_id
+    ))
+}
+fn write_request(f: &Fixture, r: &PressRequest) {
+    let path = request_file(f, r);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, serde_json::to_vec(r).unwrap()).unwrap();
+}
+fn status_file(f: &Fixture, id: Uuid) -> std::path::PathBuf {
+    f.binding
+        .root
+        .join(format!(".deckle-press/status/{id}.json"))
+}
+fn status_of(f: &Fixture, id: Uuid) -> Option<press::PressStatus> {
+    serde_json::from_slice(&std::fs::read(status_file(f, id)).ok()?).ok()
+}
+fn wait_for_status(f: &Fixture, w: &mut PressSupervisor, id: Uuid) -> press::PressStatus {
+    let end = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < end {
+        let _ = w.tick(std::slice::from_ref(&f.cfg), Utc::now());
+        if let Some(s) = status_of(f, id) {
+            return s;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    panic!("no status for {id}");
+}
+/// Several supervisor steps; each one scans the fixture's only folder.
+fn steps(f: &Fixture, w: &mut PressSupervisor) -> Vec<String> {
+    let mut errors = Vec::new();
+    for _ in 0..10 {
+        if let Err(e) = w.tick(std::slice::from_ref(&f.cfg), Utc::now()) {
+            errors.push(e);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    errors
+}
+#[test]
+fn press_worker_forgotten_refusals_are_not_journaled_again() {
+    let mut f = fixture("Stopped refusals");
+    let clock = clocked(&mut f);
+    press::write_stop(&f.cfg.press_state(), Some(Utc::now().date_naive())).unwrap();
+    let mut mismatch = f.request.clone();
+    mismatch.request_id = Uuid::new_v4();
+    mismatch.expires_at =
+        deckle_digest::chrono::TimeZone::with_ymd_and_hms(&Utc, 9999, 1, 1, 0, 0, 0).unwrap();
+    write_request(&f, &mismatch);
+    let mut w = PressSupervisor::with_options(f.options.clone());
+    until(&f, &mut w, PressState::Failed);
+    let stopped = status(&f).unwrap();
+    let refused = wait_for_status(&f, &mut w, mismatch.request_id);
+    assert_eq!(
+        refused.error_code,
+        Some(press::PressErrorCode::ClockMismatch)
+    );
+    *clock.lock().unwrap() += hours(73);
+    steps(&f, &mut w);
+    drop(w);
+    let j = press::PressJournal::open(&f.root.join("journal")).unwrap();
+    for (request, answer) in [(&f.request, &stopped), (&mismatch, &refused)] {
+        assert!(j.status(request.request_id).is_none(), "forgotten");
+        assert!(
+            request_file(&f, request).exists(),
+            "the reader's request stays"
+        );
+        assert_eq!(&status_of(&f, request.request_id).unwrap(), answer);
+    }
+}
+#[test]
+fn press_worker_request_from_a_clock_ahead_is_never_accepted() {
+    let mut f = fixture("Clock ahead");
+    let clock = clocked(&mut f);
+    std::fs::remove_file(request_file(&f, &f.request)).unwrap();
+    f.options.launch = Arc::new(|_| panic!("a refused request must not be built"));
+    let mut ahead = f.request.clone();
+    ahead.created_at = Utc::now() + hours(60);
+    ahead.expires_at = ahead.created_at + hours(24);
+    write_request(&f, &ahead);
+    let mut w = PressSupervisor::with_options(f.options.clone());
+    let refused = wait_for_status(&f, &mut w, ahead.request_id);
+    assert_eq!(
+        refused.error_code,
+        Some(press::PressErrorCode::ClockMismatch)
+    );
+    for later in [73, 133] {
+        *clock.lock().unwrap() = ahead.created_at - hours(60) + hours(later);
+        steps(&f, &mut w);
+        assert_eq!(status_of(&f, ahead.request_id).unwrap(), refused);
+    }
+}
+#[test]
+fn press_worker_late_request_gets_one_expired_status_and_no_entry() {
+    let f = fixture("Late request");
+    std::fs::remove_file(request_file(&f, &f.request)).unwrap();
+    let mut late = f.request.clone();
+    late.created_at = Utc::now() - hours(4 * 24);
+    late.expires_at = late.created_at + hours(24);
+    write_request(&f, &late);
+    let mut w = PressSupervisor::with_options(f.options.clone());
+    let expired = wait_for_status(&f, &mut w, late.request_id);
+    assert_eq!(expired.state, PressState::Expired);
+    assert_eq!(expired.error_code, Some(press::PressErrorCode::Expired));
+    // Later scans leave the file alone, whatever it now says.
+    let marked = serde_json::to_vec(&press::PressStatus {
+        revision: 9,
+        ..expired
+    })
+    .unwrap();
+    std::fs::write(status_file(&f, late.request_id), &marked).unwrap();
+    steps(&f, &mut w);
+    drop(w);
+    assert_eq!(
+        std::fs::read(status_file(&f, late.request_id)).unwrap(),
+        marked
+    );
+    let j = press::PressJournal::open(&f.root.join("journal")).unwrap();
+    assert!(j.status(late.request_id).is_none());
+}
+#[test]
+fn press_worker_status_file_removed_by_hand_is_back_within_five_minutes() {
+    let mut f = fixture("Status rewrite");
+    let clock = clocked(&mut f);
+    press::write_stop(&f.cfg.press_state(), Some(Utc::now().date_naive())).unwrap();
+    let mut w = PressSupervisor::with_options(f.options.clone());
+    until(&f, &mut w, PressState::Failed);
+    let refused = status(&f).unwrap();
+    std::fs::remove_file(status_file(&f, f.request.request_id)).unwrap();
+    steps(&f, &mut w);
+    assert!(
+        status(&f).is_none(),
+        "unchanged statuses are not rewritten every tick"
+    );
+    *clock.lock().unwrap() += deckle_digest::chrono::Duration::minutes(5);
+    assert_eq!(wait_for_status(&f, &mut w, f.request.request_id), refused);
+}
+#[test]
+fn press_worker_full_request_history_leaves_new_requests_unanswered() {
+    use sha2::{Digest, Sha256};
+    let f = fixture("Full history");
+    // A journal holding 1,000 refusals for this folder, built from one real entry.
+    let mut j = press::PressJournal::open(&f.root.join("journal")).unwrap();
+    j.register_binding(f.binding.clone(), true, false).unwrap();
+    let mut first = f.request.clone();
+    first.request_id = Uuid::new_v4();
+    j.reject_in(
+        &f.binding,
+        first,
+        "seed",
+        press::PressErrorCode::Busy,
+        Utc::now(),
+    )
+    .unwrap();
+    drop(j);
+    let path = f.root.join("journal/journal.json");
+    let mut snapshot: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let mut data: serde_json::Value =
+        serde_json::from_str(snapshot["payload"].as_str().unwrap()).unwrap();
+    let seed = data["entries"][0].clone();
+    for _ in 1..1000 {
+        let mut entry = seed.clone();
+        let id = Uuid::new_v4().to_string();
+        entry["request"]["request_id"] = id.clone().into();
+        entry["status"]["request_id"] = id.into();
+        data["entries"].as_array_mut().unwrap().push(entry);
+    }
+    // Their status files, as an earlier run would have left them.
+    std::fs::create_dir_all(f.binding.root.join(".deckle-press/status")).unwrap();
+    for entry in data["entries"].as_array().unwrap() {
+        let id = Uuid::parse_str(entry["status"]["request_id"].as_str().unwrap()).unwrap();
+        std::fs::write(
+            status_file(&f, id),
+            serde_json::to_vec(&entry["status"]).unwrap(),
+        )
+        .unwrap();
+    }
+    let payload = serde_json::to_string(&data).unwrap();
+    snapshot["sha256"] = Sha256::digest(payload.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>()
+        .into();
+    snapshot["payload"] = payload.into();
+    let bytes = serde_json::to_vec(&snapshot).unwrap();
+    std::fs::write(&path, &bytes).unwrap();
+    std::fs::write(f.root.join("journal/journal.backup.json"), &bytes).unwrap();
+    let mut options = f.options.clone();
+    options.launch = Arc::new(|_| panic!("a full history admits nothing new"));
+    let mut w = PressSupervisor::with_options(options);
+    // Opening and committing a journal this size takes a while in a debug build.
+    let end = Instant::now() + Duration::from_secs(30);
+    let mut errors = Vec::new();
+    while !errors
+        .iter()
+        .any(|e: &String| e.contains("request history full"))
+    {
+        assert!(Instant::now() < end, "{errors:?}");
+        errors.extend(steps(&f, &mut w));
+    }
+    // Reported once, when the folder reached the cap, not on every tick.
+    assert!(steps(&f, &mut w).is_empty());
+    drop(w);
+    assert!(status(&f).is_none(), "a new request is left unanswered");
+    let j = press::PressJournal::open(&f.root.join("journal")).unwrap();
+    assert!(j.status(f.request.request_id).is_none());
+    assert_eq!(j.statuses().len(), 1000);
 }

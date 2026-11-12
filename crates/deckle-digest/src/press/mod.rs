@@ -292,7 +292,10 @@ pub use queue::{JobInput, JobLease};
 pub mod publish;
 pub mod retention;
 mod safe_io;
-pub use publish::{archived_artifact, flush_statuses, publish_result, recover_result};
+pub use publish::{
+    archived_artifact, flush_changed, flush_statuses, publish_result, recover_result,
+    status_written, write_unjournaled_status,
+};
 pub use retention::prune_results;
 
 pub mod scan;

@@ -7,7 +7,7 @@ use deckle_digest::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap, HashSet},
     fs::{self, File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
@@ -75,6 +75,7 @@ impl PressSupervisor {
         let thread = thread::spawn(move || {
             let mut engine = Engine::new(options);
             let mut last: Option<(Vec<Config>, u64)> = None;
+            let mut reported = String::new();
             loop {
                 let (papers, rev) = {
                     let (lock, wake) = &*inbox;
@@ -100,7 +101,18 @@ impl PressSupervisor {
                     }
                     last.clone().unwrap()
                 };
-                if let Err(error) = engine.step(&papers, &version, rev) {
+                let stepped = engine.step(&papers, &version, rev);
+                // A folder's policy error does not block other folders and needs no fresh
+                // journal; it is reported when it changes, not on every tick.
+                if stepped.is_ok() {
+                    let report = engine.folder_report();
+                    if report != reported
+                        && (report.is_empty() || tx.try_send(report.clone()).is_ok())
+                    {
+                        reported = report;
+                    }
+                }
+                if let Err(error) = stepped {
                     // Any uncertain snapshot commit requires a fresh locked journal. Stop the
                     // child first, keep run.lock until the next reconciliation or shutdown.
                     let live = engine.running.as_ref().is_some_and(|r| {
@@ -323,8 +335,23 @@ struct Engine {
     running: Option<Running>,
     lock: Option<File>,
     swept: bool,
+    /// This step's per-folder policy errors. One folder's error never blocks another's.
+    folder_errors: BTreeMap<PathBuf, PressError>,
+    /// Folders whose request history is full, to log entering and leaving once.
+    full: HashSet<PathBuf>,
+    /// Statuses written since the last full flush. Kept here, not in the journal, because a
+    /// flush error drops and reopens the journal.
+    flushed: HashMap<Uuid, PressStatus>,
+    full_flush_at: Option<DateTime<Utc>>,
 }
 impl Engine {
+    fn folder_report(&self) -> String {
+        self.folder_errors
+            .values()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
     fn new(options: WorkerOptions) -> Self {
         Self {
             options,
@@ -337,6 +364,10 @@ impl Engine {
             running: None,
             lock: None,
             swept: false,
+            folder_errors: BTreeMap::new(),
+            full: HashSet::new(),
+            flushed: HashMap::new(),
+            full_flush_at: None,
         }
     }
     fn stop_child(&mut self) -> Result<(), PressError> {
@@ -538,6 +569,7 @@ impl Engine {
         revision: &AtomicU64,
         rev: u64,
     ) -> Result<(), PressError> {
+        self.folder_errors.clear();
         if !self.initialize(papers)? {
             return Ok(());
         }
@@ -606,6 +638,36 @@ impl Engine {
         let policy_result = self.policies(papers, now);
         let policy_error = policy_result.as_ref().err().cloned();
         let bindings = policy_result.unwrap_or_default();
+        for (binding, _, _) in &bindings {
+            let full = self.journal.as_ref().unwrap().history_full(binding);
+            if full != self.full.contains(&binding.root) {
+                if full {
+                    eprintln!(
+                        "fresh-paper folder {}: request history full; new requests wait until old ones age out",
+                        binding.root.display()
+                    );
+                    self.full.insert(binding.root.clone());
+                } else {
+                    eprintln!(
+                        "fresh-paper folder {}: request history has room again",
+                        binding.root.display()
+                    );
+                    self.full.remove(&binding.root);
+                }
+            }
+            if full {
+                self.folder_errors.insert(
+                    binding.root.clone(),
+                    PressError::with_detail(
+                        PressErrorCode::Busy,
+                        format!(
+                            "fresh-paper folder {}: request history full",
+                            binding.root.display()
+                        ),
+                    ),
+                );
+            }
+        }
         // One binding per cycle bounds total request candidates globally to 100.
         let selected = if bindings.is_empty() {
             None
@@ -634,11 +696,28 @@ impl Engine {
                 } = event
                 {
                     let journal = self.journal.as_mut().unwrap();
+                    if journal.status(request.request_id).is_none() {
+                        // The status file is the record that the request was answered, so a
+                        // forgotten refusal is never journaled again. A full history leaves
+                        // new requests unanswered.
+                        if press::status_written(binding, request.request_id)
+                            || self.full.contains(&binding.root)
+                        {
+                            continue;
+                        }
+                    }
                     let result = if let Some(code) = rejection {
                         journal.reject_in(binding, request.clone(), &hash, code, now)
                     } else {
                         journal.accept_in(binding, request.clone(), &hash, now)
                     };
+                    if let Ok(status) = &result
+                        && journal.status(request.request_id).is_none()
+                    {
+                        // First seen long after it expired: answered once, not journaled. A
+                        // failed write is retried on the next pass, since no file exists.
+                        let _ = press::write_unjournaled_status(binding, status);
+                    }
                     if let Err(e) = result {
                         match e.code {
                             PressErrorCode::Busy
@@ -759,7 +838,16 @@ impl Engine {
         if self.running.is_none() && self.journal.as_ref().unwrap().active().is_none() {
             self.lock = None;
         }
-        let statuses = press::flush_statuses(self.journal.as_mut().unwrap());
+        // Write only changed statuses, and everything every five minutes so a status file
+        // removed by hand or by a sync tool comes back.
+        if self
+            .full_flush_at
+            .is_none_or(|at| now < at || now - at >= deckle_digest::chrono::Duration::minutes(5))
+        {
+            self.flushed.clear();
+            self.full_flush_at = Some(now);
+        }
+        let statuses = press::flush_changed(self.journal.as_mut().unwrap(), &mut self.flushed);
         let retention =
             press::prune_results(self.journal.as_mut().unwrap(), (self.options.clock)());
         statuses.and(retention)?;
