@@ -1353,6 +1353,23 @@ mod kobo_tests {
     }
 
     #[test]
+    fn a_kobo_without_a_version_file_is_found_and_takes_the_push() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("KOBOeReader");
+        fake_kobo(&root, "");
+        // Detection asks only for the database: `version` is optional.
+        std::fs::remove_file(root.join(".kobo/version")).unwrap();
+        let found = crate::reader::detect_in(std::slice::from_ref(&root));
+        assert_eq!(found.len(), 1);
+        let q = Queue::new(tmp.path().join("outbox-epub"));
+        std::fs::create_dir_all(&q.dir).unwrap();
+        std::fs::write(q.dir.join("a.epub"), epub("A.")).unwrap();
+        let r = run_reader(&q, &found[0], PUSH, &Prune::default(), &mut |_, _, _| {}).unwrap();
+        assert_eq!(r.delivered.len(), 1, "{r:?}");
+        assert!(r.failed.is_empty() && !r.stopped, "{r:?}");
+    }
+
+    #[test]
     fn a_reader_unplugged_from_a_fixed_mount_point_gets_nothing() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("KOBOeReader");
