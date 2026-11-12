@@ -172,8 +172,7 @@ fn parse<'i>(xml: &'i str, part: &str) -> Result<Document<'i>, OdtError> {
         allow_dtd: true,
         ..Default::default()
     };
-    Document::parse_with_options(xml, options)
-        .map_err(|e| OdtError::Corrupt(format!("{part}: {e}")))
+    deckle_limits::parse_xml(xml, options).map_err(|e| OdtError::Corrupt(format!("{part}: {e}")))
 }
 
 struct Meta {

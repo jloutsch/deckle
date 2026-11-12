@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A file nested too deep is refused instead of crashing Deckle.** An EPUB, Word, OpenDocument,
+  FictionBook or Kindle file, or a comic's ComicInfo.xml, whose XML nests more than 256 levels
+  deep (real books stay under 30) used to overflow the stack and close the app or the server.
+  It's now refused with "this file is nested more than 256 levels deep". A story in the paper's
+  PDF edition nested that deep prints as plain text.
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in

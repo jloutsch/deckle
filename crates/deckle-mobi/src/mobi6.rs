@@ -605,7 +605,7 @@ pub fn rebuild(
     let mut parts = Vec::new();
     for (name, body) in names.iter().zip(&bodies) {
         let doc = document(&title, &language, body);
-        if let Err(e) = roxmltree::Document::parse(&doc) {
+        if let Err(e) = deckle_limits::parse_xml(&doc, Default::default()) {
             return Err(MobiError::BadPart(name.clone(), e.to_string()));
         }
         parts.push((format!("Text/{name}"), doc));

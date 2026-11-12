@@ -26,7 +26,7 @@ impl SourceEpub {
             .ok()?
             .read_to_string(&mut container)
             .ok()?;
-        let cdoc = roxmltree::Document::parse(&container).ok()?;
+        let cdoc = deckle_limits::parse_xml(&container, Default::default()).ok()?;
         let opf_path = cdoc
             .descendants()
             .find(|n| n.has_tag_name("rootfile"))
@@ -34,7 +34,7 @@ impl SourceEpub {
             .to_owned();
         let mut opf = String::new();
         zip.by_name(&opf_path).ok()?.read_to_string(&mut opf).ok()?;
-        let doc = roxmltree::Document::parse(&opf).ok()?;
+        let doc = deckle_limits::parse_xml(&opf, Default::default()).ok()?;
         let metadata = doc.descendants().find(|n| n.has_tag_name("metadata"))?;
         let mut out = SourceEpub::default();
         let mut seq: Vec<(i64, String)> = Vec::new();

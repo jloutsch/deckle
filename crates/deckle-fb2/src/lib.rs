@@ -275,8 +275,7 @@ pub fn to_epub(bytes: &[u8], fallback_title: &str) -> Result<(Files, ImportRepor
         allow_dtd: true,
         ..Default::default()
     };
-    let doc = roxmltree::Document::parse_with_options(&text, options)
-        .map_err(|e| Fb2Error::Xml(e.to_string()))?;
+    let doc = deckle_limits::parse_xml(&text, options).map_err(|e| Fb2Error::Xml(e.to_string()))?;
     let root = doc.root_element();
     if name(root) != "FictionBook" {
         return Err(Fb2Error::NotFb2(name(root).to_owned()));

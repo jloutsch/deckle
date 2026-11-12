@@ -32,8 +32,8 @@ impl EpubReader {
             f.read_to_string(&mut s).map_err(InspectError::Io)?;
             s
         };
-        let doc =
-            roxmltree::Document::parse(&container).map_err(|e| InspectError::Xml(e.to_string()))?;
+        let doc = deckle_limits::parse_xml(&container, Default::default())
+            .map_err(|e| InspectError::Xml(e.to_string()))?;
         let opf_path = doc
             .descendants()
             .find(|n| n.has_tag_name("rootfile"))
@@ -138,7 +138,7 @@ const FONT_EXTENSIONS: [&str; 6] = [".ttf", ".otf", ".woff", ".woff2", ".eot", "
 /// True when `META-INF/encryption.xml` encrypts anything beyond obfuscated fonts (IDPF/Adobe
 /// font mangling is routine in DRM-free books). Unparseable files count as DRM.
 pub fn encryption_is_drm(xml: &str) -> bool {
-    let Ok(doc) = roxmltree::Document::parse(xml) else {
+    let Ok(doc) = deckle_limits::parse_xml(xml, Default::default()) else {
         return true;
     };
     let mut saw_any = false;
