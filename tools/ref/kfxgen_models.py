@@ -2610,6 +2610,26 @@ ARG_BOOKS["cover_box_alone"] = _cover_in_box(
 # takes its mode from the blocks left once the picture is out.
 ARG_BOOKS["cover_mode"] = _cover_in_box({**_COVER_BLOCK, "writing_mode": "vertical-rl"})
 
+# A title spelled over blocks (#64): kfxgen's heading takes the first block's style (#490)
+# but not its small caps, transform, spacing and colour (#239), which only a title in one
+# block gives it. Over two paragraphs, then over two with a rule between.
+_SPLIT_LOOK = dict(
+    px=24.0,
+    bold=True,
+    small_caps="small-caps",
+    text_transform="uppercase",
+    letter_spacing=("0.1", "$308"),
+    colour=0xFFFFFF00,
+)
+ARG_BOOKS["split_title"] = [
+    _chapter("One Two", [_para("One", **_SPLIT_LOOK), _para("Two"), _para("Body one.")]),
+    _chapter(
+        "Three Four",
+        [_para("Three", **_SPLIT_LOOK), _rule(), _para("Four"), _para("Body two.")],
+    ),
+    _chapter("Five", [_para("Five", **_SPLIT_LOOK), _para("Body three.")]),
+]
+
 #: The image books' other arguments.
 ARG_BOOK_EXTRAS = {
     "tcy_notes": {"language": "ja", "rtl": True, "writing_mode": "vertical-rl"},

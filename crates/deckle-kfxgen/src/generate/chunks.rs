@@ -212,6 +212,11 @@ impl Chunk {
 pub(crate) fn print_book_heading(heading: &mut Chunk, block: &Block, title: &str) {
     heading.spans = inline::title_spans(&block.text, &block.spans, py::len(title));
     heading.heading.book_style = block.style.clone();
+    heading.heading.typography = block
+        .style
+        .as_ref()
+        .map(|b| b.typography.clone())
+        .unwrap_or_default();
     // Words all in runs of one size print at that size, as Kindle Previewer 4.0.3 writes a
     // 0.75em heading holding a 2em span: 1.5em (QA on #720). A heading of no style then has
     // one of only that size.
