@@ -6,7 +6,7 @@
 
 **Architecture:** kfxgen gets a dump hook that writes the arguments of `generate_full_book` as `model.json` plus resource files. The new crate `deckle-kfxgen` loads that model, builds fragments, and writes them with `deckle-kfx`'s existing container writer. Each slice of the port is tested by comparing its fragments with kfxgen's KFX for the same model.
 
-**Tech Stack:** Rust 2024 workspace (`deckle-kfx`, serde, serde_json, sha2; `indexmap` 2 as a new direct dependency, already in `Cargo.lock` transitively); Python 3.13 in `/Users/justin/GitHub/kfxgen-public` for the dump hook; Calibre 9 `ebook-convert` with the kfxgen plugin, to make fixtures.
+**Tech Stack:** Rust 2024 workspace (`deckle-kfx`, serde, serde_json, sha2; `indexmap` 2 as a new direct dependency, already in `Cargo.lock` transitively); Python 3.13 in the kfxgen repository for the dump hook; Calibre 9 `ebook-convert` with the kfxgen plugin, to make fixtures.
 
 **Spec:** `docs/superpowers/specs/2026-11-10-native-kfx-design.md` (Phase 1, Oracles, Constraints). Phases 2–5 get their own plans.
 
@@ -80,7 +80,7 @@ In deckle-core: `kfxgen_golden_cover_extracts` asserts `thumbnail::cover_jpeg_fr
 
 ### Task 2: kfxgen dumps and replays its generator input (kfxgen-public repo)
 
-**Files (all in `/Users/justin/GitHub/kfxgen-public`):**
+**Files (all in the kfxgen repository):**
 - Create: `plugin/kfxgen/model_dump.py`
 - Modify: `plugin/kfxgen/native_generator.py` (at the top of `generate_full_book`, :4549)
 - Create: `research/generate_from_model.py`

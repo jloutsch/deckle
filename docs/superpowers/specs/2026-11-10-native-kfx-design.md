@@ -22,7 +22,7 @@ Half 1 is Previewer, and Previewer has three problems:
 - **It is a separate download.** Users must install it before any Kindle book works; the app
   gates runs on it (`apps/desktop/src/App.tsx:502-510`, `settings/Sending.tsx:65-88`).
 
-kfxgen (`/Users/justin/GitHub/kfxgen-public`, GPL-3, same author) already does half 1 natively,
+kfxgen (the kfxgen repository, GPL-3, same author) already does half 1 natively,
 but in Python inside Calibre. This project ports it to Rust inside Deckle, so half 1 runs in the
 Deckle binary with no Python, no Calibre and no Previewer.
 
