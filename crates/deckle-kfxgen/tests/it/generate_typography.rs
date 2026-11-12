@@ -91,6 +91,13 @@ fn typography_runs_matches_kfxgen() {
     matches_kfxgen("typography_runs");
 }
 
+/// A title spelled over blocks takes the first block's style but not its small caps,
+/// transform, spacing and colour, which a title in one block gives it (issue #6).
+#[test]
+fn split_title_matches_kfxgen() {
+    matches_kfxgen("split_title");
+}
+
 fn s(v: &str) -> PyValue {
     PyValue::Str(v.into())
 }

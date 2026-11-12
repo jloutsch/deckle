@@ -64,6 +64,27 @@ fn cover_alone_matches_kfxgen() {
     matches_kfxgen("cover_alone");
 }
 
+/// The cover's picture in a box in a box, a caption after it: left out, its ids on the
+/// caption (issue #5).
+#[test]
+fn cover_in_box_matches_kfxgen() {
+    matches_kfxgen("cover_in_box");
+}
+
+/// The cover's picture alone in its box: the box left out, its ids and the picture's on the
+/// next block (issue #5).
+#[test]
+fn cover_box_alone_matches_kfxgen() {
+    matches_kfxgen("cover_box_alone");
+}
+
+/// The cover's picture is vertical, the rest of its page isn't: the page's writing mode is
+/// read once the picture is out (issue #8).
+#[test]
+fn cover_mode_matches_kfxgen() {
+    matches_kfxgen("cover_mode");
+}
+
 /// kfxgen refuses a cover that is neither a JPEG nor a PNG (:4692).
 #[test]
 fn a_cover_neither_jpeg_nor_png_is_a_model_error() {

@@ -337,9 +337,9 @@ pub(crate) fn heading_style(
         // None set: none written, not kfxgen's justified body default.
         attrs.no_align = book.align.is_none();
         attrs.italic = book.italic;
-        // Its small caps, transform, spacing and colour (#239).
-        attrs.typography = book.typography.clone();
     }
+    // Its small caps, transform, spacing and colour (#239), whichever style follows (:7788).
+    attrs.typography = chunk.heading.typography.clone();
     let size_px = attrs.font_size * sizes.main_px_or_16();
     if let Some(below) = chunk.heading.space_below_px.filter(|&b| b != 0.0) {
         attrs.space_below = Some(below / size_px);
@@ -349,7 +349,10 @@ pub(crate) fn heading_style(
             attrs.space_above = Some(above / size_px);
             attrs.margin_top = None;
         }
-    } else if attrs.space_below.is_none() && bidi.is_empty() {
+    } else if attrs.space_below.is_none()
+        && bidi.is_empty()
+        && attrs.typography == Typography::default()
+    {
         return None;
     }
     Some(styles.allocate_in(g, "_h", attrs, &bidi))
@@ -360,6 +363,9 @@ pub(crate) fn heading_style(
 pub(crate) struct HeadingStyle {
     /// The book's heading's style, when it prints as kfxgen's (#490); never `{}`.
     pub book_style: Option<BlockStyle>,
+    /// The book's heading's small caps, transform, spacing and colour (#239): only
+    /// `_print_book_heading` sets them (:1493), so a title split over blocks has none.
+    pub typography: Typography,
     pub space_above_px: Option<f64>,
     pub space_below_px: Option<f64>,
     /// The page's direction and language, from its first block that has them (#714).
