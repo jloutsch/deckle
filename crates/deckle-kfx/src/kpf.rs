@@ -8,7 +8,9 @@ use std::path::Path;
 use deckle_limits::{Budget, MAX_BOOK_BYTES, MAX_ENTRY_BYTES, TooLarge};
 
 use crate::fragment::{Fragment, FragmentList, is_root_type};
-use crate::ion::{BVM, IonError, Struct, Sym, Value, decode_annotated, decode_single};
+use crate::ion::{
+    BVM, IonError, Struct, Sym, Value, ValueBudget, decode_annotated_in, decode_single_in,
+};
 use crate::symtab::SymbolTable;
 
 /// Signature of a DRM-protected Ion payload.
@@ -237,6 +239,8 @@ fn read_kpf_with(path: &Path, entry_limit: u64, book_limit: u64) -> Result<Kpf, 
     });
 
     let mut have_symtab = false;
+    // One budget of decoded values for the whole book.
+    let values = ValueBudget::default();
     for row in &rows {
         process_row(
             row,
@@ -247,6 +251,7 @@ fn read_kpf_with(path: &Path, entry_limit: u64, book_limit: u64) -> Result<Kpf, 
             &mut have_symtab,
             &resources,
             &kdf_dir,
+            &values,
         )?;
     }
 
@@ -322,6 +327,7 @@ fn process_row(
     have_symtab: &mut bool,
     resources: &HashMap<String, Vec<u8>>,
     kdf_dir: &str,
+    values: &ValueBudget,
 ) -> Result<(), KpfError> {
     let id = &row.id;
     let ion_err = |e: IonError| KpfError::Ion {
@@ -336,15 +342,16 @@ fn process_row(
             }
             if id == "$ion_symbol_table" {
                 if !*have_symtab {
-                    let (_, table) = decode_annotated(data, symtab, Some("$ion_symbol_table"))
-                        .map_err(ion_err)?;
+                    let (_, table) =
+                        decode_annotated_in(data, symtab, Some("$ion_symbol_table"), values)
+                            .map_err(ion_err)?;
                     *symtab = SymbolTable::from_kdf_table(&table).map_err(ion_err)?;
                     fragments.push(Fragment::root("$ion_symbol_table", table));
                     *have_symtab = true;
                 }
             } else if id == "max_id" {
                 if !*have_symtab {
-                    let max_id = decode_single(data, symtab).map_err(ion_err)?;
+                    let max_id = decode_single_in(data, symtab, values).map_err(ion_err)?;
                     let max_id = crate::symtab::checked_max_id(max_id.as_int().unwrap_or(0))
                         .map_err(ion_err)?;
                     *symtab = SymbolTable::with_yj_max_id(
@@ -379,7 +386,8 @@ fn process_row(
                 }
                 // empty book_navigation or other empty fragments are ignored
             } else {
-                let (annots, value) = decode_annotated(data, symtab, None).map_err(ion_err)?;
+                let (annots, value) =
+                    decode_annotated_in(data, symtab, None, values).map_err(ion_err)?;
                 let ftype = annots[0].clone();
                 let fid = if is_root_type(ftype.as_str()) {
                     None
@@ -537,6 +545,72 @@ mod tests {
         ));
     }
 
+    /// A KDF row holding `value` under the annotation `ftype`, run through one book's budget.
+    fn row_with(ftype: &str, value: Value, values: &ValueBudget) -> Result<(), KpfError> {
+        let mut symtab = SymbolTable::yj_default();
+        let annotated = Value::Annotated {
+            annots: vec![Sym::new(ftype)],
+            value: Box::new(value),
+        };
+        let row = Row {
+            id: "content_1".into(),
+            payload_type: "blob".into(),
+            payload: crate::ion::encode_single(&annotated, &symtab).unwrap(),
+        };
+        let (mut fragments, mut have) = (FragmentList::new(), false);
+        process_row(
+            &row,
+            &HashMap::new(),
+            &HashMap::new(),
+            &mut symtab,
+            &mut fragments,
+            &mut have,
+            &HashMap::new(),
+            "",
+            values,
+        )
+    }
+
+    fn too_many(r: Result<(), KpfError>) -> bool {
+        matches!(
+            r,
+            Err(KpfError::Ion {
+                source: IonError::TooManyValues { .. },
+                ..
+            })
+        )
+    }
+
+    #[test]
+    fn a_list_of_many_small_values_is_refused_at_the_value_limit() {
+        // A storyline of 200,000 one-byte ints: 200 KB of Ion, a value each. Decoding stops at
+        // the limit, before the rest is made.
+        let ints = Value::List((0..200_000).map(|_| Value::Int(0)).collect());
+        let values = ValueBudget::new(50_000);
+        assert!(too_many(row_with("$259", ints, &values)));
+        assert_eq!(values.used(), 50_000);
+        // The same list inside the limit decodes.
+        let ints = Value::List((0..20_000).map(|_| Value::Int(0)).collect());
+        row_with("$259", ints, &ValueBudget::new(50_000)).unwrap();
+    }
+
+    #[test]
+    fn empty_position_chunks_in_bulk_are_refused_by_the_same_budget() {
+        // `$609` entries of zero length pass the position bound; their number is held by the
+        // value budget, shared by every row of the book.
+        let chunk = || Value::List(vec![Value::Int(1), Value::Int(1)]);
+        let spim = |n: usize| {
+            let mut s = Struct::new();
+            s.insert("$174", Value::String("s1".into()));
+            s.insert("$181", Value::List((0..n).map(|_| chunk()).collect()));
+            Value::Struct(s)
+        };
+        let values = ValueBudget::new(10_000);
+        row_with("$609", spim(2_000), &values).unwrap();
+        assert!(values.used() > 6_000);
+        assert!(too_many(row_with("$609", spim(2_000), &values)));
+    }
+
     #[test]
     fn a_max_id_row_past_the_limit_is_refused() {
         // The KDF's own `max_id` row, the path without a symbol table fragment.
@@ -557,6 +631,7 @@ mod tests {
                 &mut have,
                 &HashMap::new(),
                 "",
+                &ValueBudget::default(),
             );
             (r, symtab)
         };

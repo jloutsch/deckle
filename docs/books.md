@@ -92,6 +92,7 @@ the limit, instead of slowing the computer or crashing. Real books are far insid
 | PDF: a page rendered as a picture (a larger one renders smaller) | 100 megapixels |
 | A picture in a book, a cover or a web photo (not comic pages) | 100 megapixels |
 | KFX, KPF: symbols in the symbol table | 1,000,000 |
+| KFX, KPF: values decoded from the file (paragraphs, styles, positions…) | 1,500,000 |
 | KFX, KPF: positions and page ranges, all together | one a character of the book's text, one an element |
 
 Comic pages have no pixel limit of their own: one page decodes to at most 512 MiB, and fitting

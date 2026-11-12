@@ -104,13 +104,53 @@ fn signed_int(data: &[u8]) -> Result<i128, IonError> {
     Ok(if negative { -m } else { m })
 }
 
+/// How many Ion values may be decoded from one file (one KPF, one KFX container): each value,
+/// and each annotation, counts one before it is made, so a small file that decodes to a huge
+/// tree is refused (size-limits design). Shared by every decode of that file.
+#[derive(Debug)]
+pub struct ValueBudget {
+    limit: u64,
+    used: std::cell::Cell<u64>,
+}
+
+impl ValueBudget {
+    /// A budget of `limit` values, none used.
+    pub fn new(limit: u64) -> Self {
+        ValueBudget {
+            limit,
+            used: std::cell::Cell::new(0),
+        }
+    }
+
+    /// Values decoded so far.
+    pub fn used(&self) -> u64 {
+        self.used.get()
+    }
+
+    fn charge(&self) -> Result<(), IonError> {
+        if self.used.get() >= self.limit {
+            return Err(IonError::TooManyValues { limit: self.limit });
+        }
+        self.used.set(self.used.get() + 1);
+        Ok(())
+    }
+}
+
+impl Default for ValueBudget {
+    /// [`MAX_ION_VALUES`](deckle_limits::MAX_ION_VALUES).
+    fn default() -> Self {
+        ValueBudget::new(deckle_limits::MAX_ION_VALUES)
+    }
+}
+
 pub(crate) struct Decoder<'s> {
     symtab: &'s SymbolTable,
+    budget: &'s ValueBudget,
 }
 
 impl<'s> Decoder<'s> {
-    pub(crate) fn new(symtab: &'s SymbolTable) -> Self {
-        Decoder { symtab }
+    pub(crate) fn new(symtab: &'s SymbolTable, budget: &'s ValueBudget) -> Self {
+        Decoder { symtab, budget }
     }
 
     /// Resolves a symbol id; unknown ids become `$N` placeholders, as kfxlib does.
@@ -154,6 +194,10 @@ impl<'s> Decoder<'s> {
         }
         let signature = descriptor >> 4;
         let flag = descriptor & 0x0f;
+        // Every value but NOP padding is counted before it is made.
+        if signature != 0 || flag == NULL_FLAG {
+            self.budget.charge()?;
+        }
 
         // null of any type
         if flag == NULL_FLAG && signature != 0 {
@@ -249,6 +293,7 @@ impl<'s> Decoder<'s> {
                 let mut ac = Cursor::new(abytes);
                 let mut annots = Vec::new();
                 while ac.remaining() > 0 {
+                    self.budget.charge()?;
                     annots.push(self.symbol(var_uint(&mut ac)?)?);
                 }
                 if annots.is_empty() {
@@ -335,9 +380,20 @@ impl<'s> Decoder<'s> {
     }
 }
 
-/// Decodes exactly one value from a BVM-prefixed stream.
+/// Decodes exactly one value from a BVM-prefixed stream, within a budget of its own
+/// ([`ValueBudget::default`]). A file read in many pieces uses [`decode_single_in`] with one
+/// budget for all of them.
 pub fn decode_single(data: &[u8], symtab: &SymbolTable) -> Result<Value, IonError> {
-    let mut values = Decoder::new(symtab).values(data)?;
+    decode_single_in(data, symtab, &ValueBudget::default())
+}
+
+/// [`decode_single`], counting the values decoded against `budget`.
+pub fn decode_single_in(
+    data: &[u8],
+    symtab: &SymbolTable,
+    budget: &ValueBudget,
+) -> Result<Value, IonError> {
+    let mut values = Decoder::new(symtab, budget).values(data)?;
     if values.len() != 1 {
         return Err(IonError::NotSingle(values.len()));
     }
@@ -350,7 +406,17 @@ pub fn decode_annotated(
     symtab: &SymbolTable,
     expect: Option<&str>,
 ) -> Result<(Vec<Sym>, Value), IonError> {
-    match decode_single(data, symtab)? {
+    decode_annotated_in(data, symtab, expect, &ValueBudget::default())
+}
+
+/// [`decode_annotated`], counting the values decoded against `budget`.
+pub fn decode_annotated_in(
+    data: &[u8],
+    symtab: &SymbolTable,
+    expect: Option<&str>,
+    budget: &ValueBudget,
+) -> Result<(Vec<Sym>, Value), IonError> {
+    match decode_single_in(data, symtab, budget)? {
         Value::Annotated { annots, value } => {
             if let Some(e) = expect
                 && !(annots.len() == 1 && annots[0].0 == e)
