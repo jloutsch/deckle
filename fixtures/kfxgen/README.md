@@ -29,8 +29,12 @@ native generator can write through `deckle_kfx::container::write_kfx` with no ch
 
 One folder per fixture: `model.json` and `resources/` (the arguments of kfxgen's
 `generate_full_book`, written by Deckle's `KFXGEN_DUMP_MODEL` hook) and `expected.kfx` (what
-kfxgen's generator makes from them). `KFXGEN_COMMIT` names the kfxgen commit they came from.
-Rebuild all of them with `tools/ref/kfxgen_models.sh`; two runs give the same bytes. The script
+kfxgen's generator makes from them). `KFXGEN_COMMIT` names the kfxgen commit they came from, and
+`TOOLS` the Calibre (`ebook-convert --version`) and the kfxgen venv's Python and lxml that made
+them (calibre 9.18.0, Python 3.13.18, lxml 6.0.2). Regenerating expects the same Calibre: its CSS
+handling shapes a Calibre-path fixture's `model.json`, so another version can change those, and
+possibly their `expected.kfx`. Rebuild all of them with `tools/ref/kfxgen_models.sh`; two runs
+give the same bytes. The script
 needs kfxgen `0bc705d` or later (the replay imports its `page_scale`). It exports commit
 `KFXGEN_REF` (default `0bc705d`) of the kfxgen repo `KFXGEN` (default `../kfxgen-public`, only
 read) with `git archive`, puts the hook into the export
@@ -149,7 +153,11 @@ on 2026-08-01), so a fresh download can differ from them: on 2026-11-11 `pg11-im
 test both start from whatever is in `gutenberg/`; it just isn't the same books byte for byte.
 To dump them:
 `DECKLE_KFXGEN_CORPUS_OUT=gutenberg/models tools/ref/kfxgen_models.sh --corpus gutenberg/*.epub`
-(28 s on an M-series Mac, 174 MB). `crates/deckle-kfxgen` makes every corpus book byte for
+(28 s on an M-series Mac, 174 MB), which writes `KFXGEN_COMMIT` and `TOOLS` there too. Two dumps
+give the same `expected.kfx` for every book, but not always the same `model.json`: in two dumps of
+pg74 the `images` argument held the same pictures in another order (pg76, pg86 and pg98's
+`model.json` also changed on a redump, their `expected.kfx` not). The port makes the same bytes
+from either order. `crates/deckle-kfxgen` makes every corpus book byte for
 byte: `DECKLE_KFXGEN_CORPUS=gutenberg/models cargo test -p deckle-kfxgen --test it corpus -- --ignored`.
 
 ## Phase 1 timings

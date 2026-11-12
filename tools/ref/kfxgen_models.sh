@@ -69,6 +69,17 @@ calibre_model() {
   echo "calibre $name: $(wc -c <"$dir/expected.kfx" | tr -d ' ') bytes"
 }
 
+# record_tools DIR: the kfxgen commit and the tools that made DIR. Calibre's CSS handling
+# shapes a Calibre-path model.json, so another Calibre can make other fixtures.
+record_tools() {
+  echo "$KFXGEN_COMMIT" >"$1/KFXGEN_COMMIT"
+  {
+    echo "calibre: $("$EBOOK_CONVERT" --version | head -1)"
+    echo "kfxgen venv python: $("$PY" -c 'import platform; print(platform.python_version())')"
+    echo "kfxgen venv lxml: $("$PY" -c 'import lxml.etree; print(lxml.etree.__version__)')"
+  } >"$1/TOOLS"
+}
+
 if [ "${1:-}" = "--corpus" ]; then
   shift
   : "${DECKLE_KFXGEN_CORPUS_OUT:?set DECKLE_KFXGEN_CORPUS_OUT to the folder for the models}"
@@ -76,7 +87,7 @@ if [ "${1:-}" = "--corpus" ]; then
   for epub in "$@"; do
     calibre_model "$(basename "$epub" .epub)" "$epub" "$DECKLE_KFXGEN_CORPUS_OUT"
   done
-  echo "$KFXGEN_COMMIT" >"$DECKLE_KFXGEN_CORPUS_OUT/KFXGEN_COMMIT"
+  record_tools "$DECKLE_KFXGEN_CORPUS_OUT"
   exit 0
 fi
 
@@ -115,5 +126,5 @@ LIST
 for epub in "$SOURCES"/*.epub; do
   calibre_model "$(basename "$epub" .epub)" "$epub" "$OUT"
 done
-echo "$KFXGEN_COMMIT" >"$OUT/KFXGEN_COMMIT"
+record_tools "$OUT"
 du -sh "$ROOT/fixtures/kfxgen"
