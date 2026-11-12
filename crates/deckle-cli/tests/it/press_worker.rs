@@ -2005,6 +2005,16 @@ fn shared_manifest(b: &PressBinding, name: &str) -> ProducerManifest {
 }
 #[test]
 fn press_worker_blocked_folder_move_is_reported_without_reopening_the_journal() {
+    blocked_folder_move(deckle_digest::chrono::Duration::seconds(61));
+}
+#[test]
+fn press_worker_blocked_folder_move_is_retried_after_the_clock_goes_back() {
+    // A clock set back hours must not hold the folder for those hours.
+    blocked_folder_move(-deckle_digest::chrono::Duration::hours(3));
+}
+/// A move blocked by a stray file, then unblocked; `then` is how the press clock moves
+/// before the move must be retried.
+fn blocked_folder_move(then: deckle_digest::chrono::Duration) {
     let mut f = fixture("Moving paper");
     let clock = clocked(&mut f);
     // Paper A published an edition into the folder; a stray .DS_Store sits in it.
@@ -2104,7 +2114,7 @@ fn press_worker_blocked_folder_move_is_reported_without_reopening_the_journal() 
         tick(&mut w, &mut errors);
     }
     assert!(bundle.exists());
-    *clock.lock().unwrap() += deckle_digest::chrono::Duration::seconds(61);
+    *clock.lock().unwrap() += then;
     let end = Instant::now() + Duration::from_secs(30);
     while bundle.exists() {
         assert!(Instant::now() < end, "move not retried: {errors:?}");

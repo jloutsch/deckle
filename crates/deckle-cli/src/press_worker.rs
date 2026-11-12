@@ -571,9 +571,11 @@ impl Engine {
                     // out: its old binding is disabled below, and other folders go on. A
                     // refused registration is retried once a minute, not on every tick: a
                     // blocked move re-checks the old paper's editions each time.
+                    // A hold more than a minute away means the clock went back: retry now.
                     if let Some((held, until, error)) = self.held.get(&binding.root)
                         && *held == binding
                         && now < *until
+                        && *until - now <= deckle_digest::chrono::Duration::minutes(1)
                     {
                         self.folder_errors
                             .insert(binding.root.clone(), error.clone());
