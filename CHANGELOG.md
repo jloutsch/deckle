@@ -9,7 +9,9 @@
   nested more than 256 levels deep" (128 for KFX). A comic's ComicInfo.xml nested that deep is
   ignored, as an unreadable one is. A story for The Daily nested that deep still prints: past
   the limit its text is set plain, in the EPUB and in the PDF edition. A feed nested that deep
-  is reported as unreadable, like any feed that won't parse.
+  is reported as unreadable, like any feed that won't parse, and so is a feed whose XML
+  declaration made the feed reader stop the whole edition (a second declaration naming
+  another encoding): it now costs that feed only.
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in

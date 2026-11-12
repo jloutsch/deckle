@@ -40,6 +40,84 @@ pub fn google_news_url(query: &str, max_age_hours: u32) -> String {
     )
 }
 
+/// Why `feed-rs` must not read this feed, or `None` (nesting-depth design, feeds).
+///
+/// `feed-rs` recurses once per element level before it rejects anything, so the depth is
+/// counted first. A scan of the raw bytes cannot agree with it: quick-xml decodes the bytes
+/// first (by byte-order mark, then by the declaration's `encoding`), and a byte of a Shift_JIS
+/// or ISO-2022-JP character can look like markup. So the feed is read here by the same reader,
+/// set up as `feed-rs` 3 sets it up (`feed_rs::xml::ElementSource::new`, `fetch_next`): a
+/// quick-xml `NsReader` over its `DecodingReader`, switching encoding at the declaration. This
+/// reader does not recurse. It stops at the reader's first error, where `feed-rs` stops too.
+fn refusal(bytes: &[u8]) -> Option<String> {
+    use quick_xml::events::{BytesStart, Event};
+    use std::io::BufRead;
+
+    let mut input = std::io::BufReader::new(bytes);
+    // As `feed_rs::parser::Parser::parse`: JSON when `{` comes before `<` in the first buffer.
+    let first = input
+        .fill_buf()
+        .ok()?
+        .iter()
+        .copied()
+        .find(|b| matches!(b, b'<' | b'{'));
+    if first != Some(b'<') {
+        return None;
+    }
+    let read = std::panic::catch_unwind(move || {
+        let mut reader =
+            quick_xml::NsReader::from_reader(quick_xml::encoding::DecodingReader::new(input));
+        let config = reader.config_mut();
+        config.expand_empty_elements = true;
+        config.trim_markup_names_in_closing_tags = true;
+        config.trim_text(false);
+        let mut buf = Vec::new();
+        let (mut depth, mut declarations) = (0usize, 0);
+        loop {
+            buf.clear();
+            match reader.read_resolved_event_into(&mut buf) {
+                Ok((_, Event::Decl(decl))) => {
+                    // A second declaration naming another encoding trips an assert in
+                    // quick-xml; neither it nor a doubled `encoding` has a reading to trust.
+                    declarations += 1;
+                    if declarations > 1 {
+                        return Some("it has more than one XML declaration".to_owned());
+                    }
+                    let start = BytesStart::from_content(&*decl, 3);
+                    let mut attributes = start.attributes();
+                    attributes.with_checks(false);
+                    let encodings = attributes
+                        .map_while(Result::ok)
+                        .filter(|a| a.key.as_ref() == "encoding")
+                        .count();
+                    if encodings > 1 {
+                        return Some("its XML declaration gives the encoding twice".to_owned());
+                    }
+                    if let Some(encoding) = decl.encoder() {
+                        reader.get_mut().set_encoding(encoding);
+                    }
+                }
+                Ok((_, Event::Start(_))) => {
+                    depth += 1;
+                    if depth > deckle_limits::MAX_DEPTH {
+                        return Some(format!(
+                            "it is nested more than {} levels deep",
+                            deckle_limits::MAX_DEPTH
+                        ));
+                    }
+                }
+                Ok((_, Event::End(_))) => depth = depth.saturating_sub(1),
+                Ok((_, Event::Eof)) | Err(_) => return None,
+                Ok(_) => {}
+            }
+        }
+    });
+    // The panic is quick-xml's, in a call `feed-rs` makes the same way.
+    read.unwrap_or_else(|_| {
+        Some("its XML declaration names an encoding it cannot switch to".into())
+    })
+}
+
 /// Feed title and its items, newest first, without items older than `max_age_hours` (items
 /// without a date are kept).
 pub fn parse(
@@ -47,15 +125,14 @@ pub fn parse(
     now: DateTime<Utc>,
     max_age_hours: u32,
 ) -> Result<(Option<String>, Vec<Item>), String> {
-    // `feed-rs` recurses once per element level before it rejects anything (nesting-depth
-    // design): check the raw bytes first, whatever their encoding.
-    if deckle_limits::xml_depth_over(bytes, deckle_limits::MAX_DEPTH) {
-        return Err(format!(
-            "unreadable feed: its markup nests too deep (more than {} levels) or is unfinished",
-            deckle_limits::MAX_DEPTH
-        ));
+    if let Some(why) = refusal(bytes) {
+        return Err(format!("this feed could not be read: {why}"));
     }
-    let feed = feed_rs::parser::parse(bytes).map_err(|e| e.to_string())?;
+    // A panic in the parser (quick-xml asserts on some declarations) costs this feed, not the
+    // edition.
+    let feed = std::panic::catch_unwind(|| feed_rs::parser::parse(bytes))
+        .map_err(|_| "this feed could not be read".to_owned())?
+        .map_err(|e| e.to_string())?;
     let cutoff = now - chrono::Duration::hours(i64::from(max_age_hours));
     let mut items: Vec<Item> = feed
         .entries
@@ -930,31 +1007,30 @@ mod tests {
         assert!(!a.body.contains("Subscriber story"));
     }
 
-    /// An RSS feed of one item whose description holds `levels` nested `media:group`, in
-    /// Latin-1 (`é` as one byte) or UTF-8.
-    fn grouped_feed(levels: usize, latin1: bool) -> Vec<u8> {
-        let e: &[u8] = if latin1 { b"\xe9" } else { "é".as_bytes() };
-        let encoding = if latin1 { "ISO-8859-1" } else { "UTF-8" };
-        let mut out = format!(
-            "<?xml version=\"1.0\" encoding=\"{encoding}\"?><rss version=\"2.0\" \
-             xmlns:media=\"http://search.yahoo.com/mrss/\"><channel><title>Deep</title><item>\
-             <title>Caf"
+    // --- Nesting depth (nesting-depth design, feeds) ---
+
+    const NOW: &str = "2026-10-20T22:00:00Z";
+
+    /// An RSS 2.0 feed of one item titled `title` holding `levels` nested `media:group`.
+    fn rss(title: &str, levels: usize) -> String {
+        format!(
+            "<rss version=\"2.0\" xmlns:media=\"http://search.yahoo.com/mrss/\"><channel>\
+             <title>Feed</title><item><title>{title}</title><link>https://x/a</link>{}{}</item>\
+             </channel></rss>",
+            "<media:group>".repeat(levels),
+            "</media:group>".repeat(levels)
         )
-        .into_bytes();
-        out.extend_from_slice(e);
-        out.extend_from_slice(b"</title><link>https://x/a</link>");
-        out.extend_from_slice(&b"<media:group>".repeat(levels));
-        out.extend_from_slice(&b"</media:group>".repeat(levels));
-        out.extend_from_slice(b"</item></channel></rss>");
-        out
     }
 
-    fn utf16(feed: &[u8], little: bool) -> Vec<u8> {
-        // Without the declaration: quick-xml 0.42 panics on `encoding="UTF-16"` after a BOM
-        // ("set_encoding() called after prefix buffer was drained"), deep or not.
-        let text = String::from_utf8(feed.to_vec())
-            .unwrap()
-            .replace("<?xml version=\"1.0\" encoding=\"UTF-8\"?>", "");
+    /// `text` in the encoding `label` names.
+    fn encode(text: &str, label: &str) -> Vec<u8> {
+        let encoding = encoding_rs::Encoding::for_label(label.as_bytes()).unwrap();
+        let (bytes, _, unmappable) = encoding.encode(text);
+        assert!(!unmappable, "{label}");
+        bytes.into_owned()
+    }
+
+    fn utf16(text: &str, little: bool) -> Vec<u8> {
         std::iter::once(0xFEFF)
             .chain(text.encode_utf16())
             .flat_map(|u| {
@@ -967,44 +1043,211 @@ mod tests {
             .collect()
     }
 
-    /// Parsed on a 1 MiB stack: the depth check runs before `feed-rs` recurses, so a parse that
-    /// came first would abort the process.
-    fn parse_small_stack(feed: Vec<u8>) -> Result<Vec<String>, String> {
+    /// The item titles, parsed on a 2 MiB stack (the app's import threads): a check that came
+    /// after `feed-rs` recursed would abort the process.
+    fn titles(feed: Vec<u8>) -> Result<Vec<String>, String> {
         std::thread::Builder::new()
-            .stack_size(1 << 20)
+            .stack_size(2 << 20)
             .spawn(move || {
-                let now = "2026-10-20T22:00:00Z".parse().unwrap();
-                parse(&feed, now, 72).map(|(_, items)| items.into_iter().map(|i| i.title).collect())
+                parse(&feed, NOW.parse().unwrap(), 1_000_000)
+                    .map(|(_, items)| items.into_iter().map(|i| i.title).collect())
             })
             .unwrap()
             .join()
             .unwrap()
     }
 
+    /// The titles `feed-rs` itself reads, without Deckle's checks.
+    fn feed_rs_titles(feed: &[u8]) -> Vec<String> {
+        feed_rs::parser::parse(feed)
+            .unwrap()
+            .entries
+            .into_iter()
+            .map(|e| clean_line(&e.title.map(|t| t.content).unwrap_or_default()))
+            .collect()
+    }
+
     #[test]
     fn a_feed_nested_5_000_deep_is_refused_without_an_abort() {
-        let e = parse_small_stack(grouped_feed(5_000, false)).unwrap_err();
-        assert!(e.contains("nests too deep"), "{e}");
-        assert_eq!(parse_small_stack(grouped_feed(3, false)).unwrap(), ["Café"]);
+        let e = titles(rss("Deep", 5_000).into_bytes()).unwrap_err();
+        assert!(e.contains("nested more than 256 levels deep"), "{e}");
+        assert_eq!(titles(rss("Café", 3).into_bytes()).unwrap(), ["Café"]);
     }
 
+    /// QA's first bypass of a scan of the raw bytes: in these encodings `[` can be the second
+    /// byte of a character. Read raw, the DOCTYPE opens an internal subset holding a comment
+    /// that runs past the whole feed; decoded, there is no `[`, the DOCTYPE ends at the first
+    /// `>`, and the feed's elements are read.
     #[test]
-    fn a_deep_latin1_feed_is_refused_and_a_shallow_one_loads() {
-        assert!(parse_small_stack(grouped_feed(5_000, true)).is_err());
-        assert_eq!(parse_small_stack(grouped_feed(3, true)).unwrap(), ["Café"]);
-    }
-
-    #[test]
-    fn a_deep_utf16_feed_is_refused_and_a_shallow_one_loads() {
-        for little in [true, false] {
-            let deep = utf16(&grouped_feed(5_000, false), little);
-            assert!(parse_small_stack(deep).is_err(), "little {little}");
-            let shallow = utf16(&grouped_feed(3, false), little);
-            assert_eq!(
-                parse_small_stack(shallow).unwrap(),
-                ["Café"],
-                "little {little}"
+    fn a_trail_byte_that_looks_like_a_bracket_does_not_hide_nesting() {
+        for (label, lead) in [
+            ("Shift_JIS", 0x81),
+            ("Big5", 0xA1),
+            ("GBK", 0x81),
+            ("gb18030", 0x81),
+        ] {
+            let mut feed = encode(
+                &format!(
+                    "<?xml version=\"1.0\" encoding=\"{label}\"?>\
+                     <!DOCTYPE rss PUBLIC \"-//Deckle//Test//EN\" \"rss.dtd\" "
+                ),
+                label,
             );
+            feed.extend([lead, b'[']);
+            feed.extend(encode(
+                &format!("<!-- <x> {} -->]>", rss("Deep", 5_000)),
+                label,
+            ));
+            let e = titles(feed).unwrap_err();
+            assert!(e.contains("nested more than 256"), "{label}: {e}");
         }
+    }
+
+    /// QA's second bypass: an `encoding=` inside the version's value hides the real one,
+    /// ISO-2022-JP. Read raw, `<!--` opens a comment that runs past the whole feed; decoded,
+    /// those four bytes between the escapes are two kanji, and the feed's elements are read.
+    #[test]
+    fn an_encoding_inside_another_value_does_not_hide_nesting() {
+        let feed = format!(
+            // The line breaks put the escapes past the first 64 bytes, which quick-xml decodes
+            // before it reads the declaration.
+            "<?xml version=\"1.0 encoding='utf-8'\" encoding=\"ISO-2022-JP\"?>\n\n\n\n\n\n\n\n\
+             \x1b$B<!--\x1b(B{} -->",
+            rss("Deep", 5_000)
+        );
+        let e = titles(feed.into_bytes()).unwrap_err();
+        assert!(e.contains("nested more than 256"), "{e}");
+    }
+
+    /// A second declaration that changes the encoding made `quick-xml` panic, and the panic
+    /// ended the edition. Now that feed is unreadable and the others still load.
+    #[test]
+    fn a_second_declaration_makes_the_feed_unreadable_not_the_edition() {
+        struct Two;
+        impl Net for Two {
+            fn get(&self, url: &str) -> Result<Vec<u8>, String> {
+                let body = rss("Fine", 0);
+                Ok(if url.contains("bad") {
+                    let mut feed = rss("Bad", 0);
+                    // More than 64 bytes in, past what quick-xml reads before it decodes.
+                    feed.insert_str(
+                        feed.find("<item>").unwrap(),
+                        "<?xml version=\"1.0\" encoding=\"windows-1252\"?>",
+                    );
+                    feed.into_bytes()
+                } else {
+                    body.into_bytes()
+                })
+            }
+        }
+        let (items, errors) = fetch_merged(
+            &[],
+            &[
+                "https://bad.example/rss".into(),
+                "https://good.example/rss".into(),
+            ],
+            72,
+            NOW.parse().unwrap(),
+            &Two,
+        );
+        assert_eq!(
+            items.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(),
+            ["Fine"]
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].starts_with("bad.example: "), "{errors:?}");
+        assert!(errors[0].contains("could not be read"), "{errors:?}");
+    }
+
+    #[test]
+    fn the_encoding_named_twice_in_the_declaration_is_unreadable() {
+        let feed = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" encoding=\"UTF-8\"?>{}",
+            rss("Twice", 0)
+        );
+        let e = titles(feed.into_bytes()).unwrap_err();
+        assert!(e.contains("could not be read"), "{e}");
+    }
+
+    /// `quick-xml` panics on a UTF-16 big-endian feed declared `encoding="UTF-16"` (the label
+    /// means little-endian, and the declaration ends past the bytes it reads first). The panic
+    /// is caught: the feed is unreadable, nothing else is lost.
+    #[test]
+    fn a_parser_panic_is_an_unreadable_feed() {
+        let feed = utf16(
+            &format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-16\"?>{}",
+                rss("Panics", 0)
+            ),
+            false,
+        );
+        let e = titles(feed).unwrap_err();
+        assert!(e.contains("could not be read"), "{e}");
+    }
+
+    /// Shallow feeds in the encodings feeds use load with the titles `feed-rs` reads.
+    #[test]
+    fn shallow_feeds_in_every_encoding_load_as_before() {
+        let mut feeds = Vec::new();
+        for (label, title) in [
+            ("Shift_JIS", "日本語のニュース"),
+            ("EUC-JP", "日本語のニュース"),
+            ("GBK", "中文新闻"),
+            ("Big5", "中文新聞"),
+            ("ISO-8859-1", "Café crème"),
+            ("UTF-8", "Grüße ✓"),
+        ] {
+            let text = format!(
+                "<?xml version=\"1.0\" encoding=\"{label}\"?>{}",
+                rss(title, 3)
+            );
+            feeds.push((label.to_owned(), title, encode(&text, label)));
+        }
+        for little in [true, false] {
+            let label = if little { "UTF-16LE" } else { "UTF-16BE" };
+            let text = format!(
+                "<?xml version=\"1.0\" encoding=\"{label}\"?>{}",
+                rss("Grüße ✓", 3)
+            );
+            feeds.push((label.to_owned(), "Grüße ✓", utf16(&text, little)));
+        }
+        for (label, title, bytes) in feeds {
+            assert_eq!(feed_rs_titles(&bytes), [title], "{label}");
+            assert_eq!(titles(bytes), Ok(vec![title.to_owned()]), "{label}");
+        }
+    }
+
+    /// Every feed fixture loads with the titles `feed-rs` reads.
+    #[test]
+    fn every_feed_fixture_loads_as_before() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let mut stack = vec![dir];
+        let mut seen = 0;
+        while let Some(d) = stack.pop() {
+            for entry in std::fs::read_dir(&d).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                let bytes = std::fs::read(&path).unwrap();
+                if !matches!(
+                    path.extension().and_then(|e| e.to_str()),
+                    Some("xml" | "rss" | "atom")
+                ) || feed_rs::parser::parse(&bytes[..]).is_err()
+                {
+                    continue;
+                }
+                seen += 1;
+                let parsed = parse(&bytes, NOW.parse().unwrap(), 1_000_000).unwrap();
+                let mut want = feed_rs_titles(&bytes);
+                want.retain(|t| !t.is_empty());
+                let mut got: Vec<String> = parsed.1.into_iter().map(|i| i.title).collect();
+                want.sort();
+                got.sort();
+                assert_eq!(got, want, "{}", path.display());
+            }
+        }
+        assert!(seen >= 6, "{seen} feed fixtures");
     }
 }
