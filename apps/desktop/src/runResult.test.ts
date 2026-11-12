@@ -35,12 +35,25 @@ test("a push that stopped after the edition went isn't shown as failed", () => {
   expect(notSent(report)).toEqual([{ name: "b.kfx", why: "the Kindle is no longer connected" }]);
 });
 
+test("a reader with another book unsent isn't named as missing the paper", () => {
+  // The Kindle missed the paper; the Kobo wasn't sent it and has an unrelated entry unsent.
+  const report = {
+    edition_sent: true,
+    outcome: {
+      edition_missed: true,
+      flush: { delivered: ["/K/documents/Emma.kfx"], failed: [["deckle-daily-2026-11-12.kfx", "the Kindle refused it"]] },
+    },
+    reader: { flush: { delivered: [], failed: [["broken.kepub.epub", "reading broken.epub: Is a directory"]] } },
+  };
+  expect(editionMissedOn({ ok: false, report, log: "" })).toEqual(["kindle"]);
+});
+
 test("a paper the Kindle refused while the Kobo took it isn't a clean success", () => {
   // digest run exits non-zero: a connected reader hasn't got the edition.
   const report = {
     build: { title: "The Daily" },
     edition_sent: true,
-    outcome: { flush: { delivered: [], failed: [["deckle-daily-2026-11-12.kfx", "the Kindle refused it"]] } },
+    outcome: { edition_missed: true, flush: { delivered: [], failed: [["deckle-daily-2026-11-12.kfx", "the Kindle refused it"]] } },
     reader: { edition_sent: true, flush: { delivered: ["/K/Deckle/deckle-daily-2026-11-12.kepub.epub"], failed: [] } },
   };
   const r = { ok: false, report, log: "" };
@@ -51,7 +64,7 @@ test("a paper the Kindle refused while the Kobo took it isn't a clean success", 
   const kobo = {
     ...report,
     outcome: { edition_sent: true, flush: { delivered: ["/K/documents/deckle-daily-2026-11-12.kfx"], failed: [] } },
-    reader: { flush: { delivered: [], failed: [["deckle-daily-2026-11-12.kepub.epub", "locked"]] } },
+    reader: { edition_missed: true, flush: { delivered: [], failed: [["deckle-daily-2026-11-12.kepub.epub", "locked"]] } },
   };
   expect(editionMissedOn({ ok: false, report: kobo, log: "" })).toEqual(["reader"]);
   expect(summary({ ok: false, report: kobo, log: "" }, true)).toContain("Sent to your Kindle.");

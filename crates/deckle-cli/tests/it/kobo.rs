@@ -193,6 +193,25 @@ fn a_push_sends_what_waits_in_the_kobo_outbox() {
     );
 }
 
+#[test]
+fn a_paper_the_kobo_refuses_fails_the_run_and_is_named() {
+    let (_tmp, home, root) = setup("sections = [\"horoscope\"]\n");
+    // A folder where the paper goes: the Kobo can't take it, though it's still connected.
+    std::fs::create_dir_all(root.join("Deckle/deckle-daily-2026-10-23.kepub.epub/x")).unwrap();
+    let o = deckle(&home, &root)
+        .args(["--json", "digest", "run", "--date", "2026-10-23"])
+        .output()
+        .unwrap();
+    assert!(
+        !o.status.success(),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v["reader"]["edition_missed"], true, "{v}");
+    assert_ne!(v["reader"]["edition_sent"], true, "{v}");
+}
+
 /// The EPUB outbox under `home`, as `digest run` finds it with the test's environment.
 fn epub_outbox(home: &Path) -> PathBuf {
     if cfg!(target_os = "macos") {

@@ -44,12 +44,13 @@ export function notSent(report: any): NotSent[] {
 
 /**
  * The readers that didn't get this run's edition while another did: the Kindle (`outcome`) and a
- * Kobo or PocketBook (`reader`). `digest run` then exits with an error, so its entry left unsent
- * on that reader is the one that failed it.
+ * Kobo or PocketBook (`reader`), each by its `edition_missed`: the edition itself is among what
+ * didn't go there, not just any book. `digest run` then exits with an error.
  */
 export function editionMissedOn(r: RunResult): ("kindle" | "reader")[] {
   if (r.ok || r.report?.edition_sent !== true) return [];
-  const missed = (o: any) => !!o?.flush && !o.edition_sent && (o.flush.failed?.length ?? 0) > 0;
+  // `digest run` says it per device, from the same check that fails the run.
+  const missed = (o: any) => o?.edition_missed === true;
   const out: ("kindle" | "reader")[] = [];
   if (missed(r.report?.outcome)) out.push("kindle");
   if (missed(r.report?.reader)) out.push("reader");

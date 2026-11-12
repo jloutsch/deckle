@@ -3565,10 +3565,11 @@ fn digest(
                 edition_sent: bool,
             }
             let stem = deckle_digest::edition_stem(&cfg, date);
-            outcome.edition_sent = outcome.sent(&stem);
+            // Per device, from the checks `edition_undelivered` uses, for the app to show.
             let mut reader = reader;
-            if let Some(o) = &mut reader {
+            for o in std::iter::once(&mut outcome).chain(reader.as_mut()) {
                 o.edition_sent = o.sent(&stem);
+                o.edition_missed = o.missed(&stem);
             }
             let readers: Vec<&DigestOutcome> = [Some(&outcome), reader.as_ref()]
                 .into_iter()
@@ -4120,6 +4121,10 @@ struct DigestOutcome {
     /// from it, not from whatever else went).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     edition_sent: bool,
+    /// `digest run`: the run's edition is among what didn't go to this device, which fails the
+    /// run ([`edition_undelivered`]); the app names the device from it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    edition_missed: bool,
     /// No Kindle connected: the edition waits in the outbox.
     queued: bool,
     /// Highlights exported in the same session (`[sync] clippings`).
