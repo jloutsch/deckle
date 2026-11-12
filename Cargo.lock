@@ -1398,6 +1398,7 @@ dependencies = [
  "deckle-docx",
  "deckle-fb2",
  "deckle-kfx",
+ "deckle-limits",
  "deckle-markdown",
  "deckle-mobi",
  "deckle-odt",

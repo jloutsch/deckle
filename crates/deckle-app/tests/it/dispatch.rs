@@ -251,7 +251,7 @@ fn web_mode_settings_mask_the_api_keys() {
         ..Default::default()
     };
     deckle_app::commands::save_settings_to(&web.state.settings_file, &stored).unwrap();
-    let load = || deckle_app::commands::load_settings_from(&web.state.settings_file);
+    let load = || deckle_app::commands::load_settings_from(&web.state.settings_file).unwrap();
 
     let v = dispatch(&web, "get_settings", Value::Null).unwrap();
     assert_eq!(v["llm_api_key"], json!(deckle_app::commands::MASKED_KEY));

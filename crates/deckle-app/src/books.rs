@@ -152,7 +152,7 @@ pub fn book_preflight(
     path: String,
     cover: Option<CoverChoice>,
 ) -> Result<PreflightView, String> {
-    let settings = load_settings_from(&state.settings_file);
+    let settings = load_settings_from(&state.settings_file)?;
     preflight_with(Path::new(&path), &settings, cover.as_ref())
 }
 
@@ -170,7 +170,7 @@ pub fn cover_candidates(
     author: String,
     isbn: Option<String>,
 ) -> Result<Vec<CoverOffer>, String> {
-    if !load_settings_from(&state.settings_file).metadata_fill {
+    if !load_settings_from(&state.settings_file)?.metadata_fill {
         return Err("Turn on Open Library in Settings → Books to look for covers there.".into());
     }
     let mut fetch = deckle_core::wordwise::http_get_bytes;
@@ -323,7 +323,7 @@ pub fn library_suggest_details(
     dir: String,
     asked: bool,
 ) -> Result<Option<Suggestions>, String> {
-    if !asked && !load_settings_from(&state.settings_file).metadata_fill {
+    if !asked && !load_settings_from(&state.settings_file)?.metadata_fill {
         return Err("Fill missing details is off in Settings → Books.".into());
     }
     let mut fetch = |url: &str| {
@@ -482,7 +482,7 @@ mod tests {
             deckle_core::preset::Preset::Academic,
         );
         crate::commands::save_settings_to(&file, &settings).unwrap();
-        let loaded = crate::commands::load_settings_from(&file);
+        let loaded = crate::commands::load_settings_from(&file).unwrap();
         let view = preflight_with(&source, &loaded, None).unwrap();
         assert!(view.typography.is_some() && view.notes.is_some());
         assert!(view.after.unwrap().css.contains("line-height: 1.45"));

@@ -785,33 +785,24 @@ fn md5ish(bytes: &[u8]) -> u64 {
     h
 }
 
-pub fn load_settings_from(file: &Path) -> Settings {
-    std::fs::read(file)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+/// The settings; the defaults when there is no file yet. A file that is there but does not parse
+/// or cannot be read is an error naming it (#26): it holds the API keys and the per-book presets.
+pub fn load_settings_from(file: &Path) -> Result<Settings, String> {
+    Ok(deckle_core::state_file::read(file)?.unwrap_or_default())
 }
 
+/// Saves the settings, private to the owner (0600). Refused while the file on disk is damaged or
+/// unreadable, so nothing is written over it.
 pub fn save_settings_to(file: &Path, s: &Settings) -> Result<(), String> {
-    if let Some(parent) = file.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    std::fs::write(
-        file,
-        serde_json::to_vec_pretty(s).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())
+    load_settings_from(file)?;
+    let bytes = serde_json::to_vec_pretty(s).map_err(|e| e.to_string())?;
+    deckle_core::state_file::save(file, &bytes, true).map_err(|e| e.to_string())
 }
 
 /// Changes the illustrations key and nothing else in the settings file. A file that is there but
 /// can't be read is left alone (the error says so) rather than rewritten from defaults.
 pub fn set_illustrations_key_at(file: &Path, key: &str) -> Result<(), String> {
-    let mut s = match std::fs::read(file) {
-        Ok(b) => serde_json::from_slice::<Settings>(&b)
-            .map_err(|e| format!("Can't read the settings file, so the key was not saved: {e}"))?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings::default(),
-        Err(e) => return Err(format!("Can't read the settings file: {e}")),
-    };
+    let mut s = load_settings_from(file).map_err(|e| format!("The key was not saved. {e}"))?;
     s.illustrations_api_key = key.trim().to_owned();
     save_settings_to(file, &s)
 }
@@ -1453,7 +1444,8 @@ pub fn plan_books(state: &AppState, books: Vec<RunRequest>, target: RunTarget) -
         .iter()
         .map(|b| (b.id.clone(), b.cde.clone(), b.asin.clone()))
         .collect();
-    let settings = load_settings_from(&state.settings_file);
+    // Only shown: a damaged file plans with the defaults, and the run itself refuses.
+    let settings = load_settings_from(&state.settings_file).unwrap_or_default();
     plan_rows(
         &ids,
         &class,
@@ -1464,7 +1456,8 @@ pub fn plan_books(state: &AppState, books: Vec<RunRequest>, target: RunTarget) -
 }
 
 pub fn previewer_status(state: &AppState) -> PreviewerStatus {
-    let settings = load_settings_from(&state.settings_file);
+    // Only shown: with a damaged file the Previewer is looked for in the usual places.
+    let settings = load_settings_from(&state.settings_file).unwrap_or_default();
     match previewer::locate(settings.previewer_path.as_deref().map(Path::new)) {
         Ok(p) => PreviewerStatus {
             found: true,
@@ -1484,8 +1477,27 @@ pub fn previewer_status(state: &AppState) -> PreviewerStatus {
 /// What the web app gets in place of a saved API key: the key never goes to the browser.
 pub const MASKED_KEY: &str = "••••••••";
 
-pub fn get_settings(state: &AppState) -> Settings {
-    load_settings_from(&state.settings_file)
+/// The settings as the Settings view shows them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ShownSettings {
+    #[serde(flatten)]
+    pub settings: Settings,
+    /// Set when the file is there but could not be read: the settings shown are the defaults,
+    /// and every save is refused until the owner fixes or removes the file.
+    pub damaged: Option<String>,
+}
+
+pub fn get_settings(state: &AppState) -> ShownSettings {
+    match load_settings_from(&state.settings_file) {
+        Ok(settings) => ShownSettings {
+            settings,
+            damaged: None,
+        },
+        Err(e) => ShownSettings {
+            settings: Settings::default(),
+            damaged: Some(e),
+        },
+    }
 }
 
 pub fn set_settings(state: &AppState, settings: Settings) -> Result<(), String> {
@@ -1493,21 +1505,21 @@ pub fn set_settings(state: &AppState, settings: Settings) -> Result<(), String> 
 }
 
 /// [`get_settings`] for the web app: a saved key reads as [`MASKED_KEY`].
-pub fn get_settings_masked(state: &AppState) -> Settings {
+pub fn get_settings_masked(state: &AppState) -> ShownSettings {
     let mask = |k: &mut String| {
         if !k.is_empty() {
             *k = MASKED_KEY.to_owned();
         }
     };
     let mut s = get_settings(state);
-    mask(&mut s.llm_api_key);
-    mask(&mut s.illustrations_api_key);
+    mask(&mut s.settings.llm_api_key);
+    mask(&mut s.settings.illustrations_api_key);
     s
 }
 
 /// [`set_settings`] for the web app: a key that comes back as [`MASKED_KEY`] keeps the saved one.
 pub fn set_settings_masked(state: &AppState, mut settings: Settings) -> Result<(), String> {
-    let saved = get_settings(state);
+    let saved = load_settings_from(&state.settings_file)?;
     let keep = |k: &mut String, saved: &str| {
         if k == MASKED_KEY {
             *k = saved.to_owned();
@@ -1535,7 +1547,7 @@ pub fn run_books(
     books: Vec<RunRequest>,
     target: RunTarget,
 ) -> Result<(), String> {
-    let settings = load_settings_from(&state.settings_file);
+    let settings = load_settings_from(&state.settings_file)?;
     let reg = DeviceRegistry::load(&state.devices_file);
     let profile = match &target {
         RunTarget::Device { root } => detect_mass_storage()
@@ -2116,7 +2128,7 @@ mod tests {
     fn settings_round_trip_through_json_and_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("settings.json");
-        let s = load_settings_from(&file);
+        let s = load_settings_from(&file).unwrap();
         assert_eq!(s.cde, "auto");
         assert!(s.pages_auto);
         assert_eq!(s.llm_provider, "off");
@@ -2156,7 +2168,7 @@ mod tests {
         changed.illustrations_api_key = "sk-image".into();
         changed.previewer_path = Some("/x/KindlePreviewer4CLI".into());
         save_settings_to(&file, &changed).unwrap();
-        assert_eq!(load_settings_from(&file), changed);
+        assert_eq!(load_settings_from(&file), Ok(changed));
     }
 
     #[test]
@@ -2164,7 +2176,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("settings.json");
         std::fs::write(&file, br#"{"llm_api_key":"sk-ant-x"}"#).unwrap();
-        let s = load_settings_from(&file);
+        let s = load_settings_from(&file).unwrap();
         assert_eq!(s.illustrations_api_key, "");
         assert_eq!(s.llm_api_key, "sk-ant-x");
         assert!(
@@ -2185,14 +2197,17 @@ mod tests {
         };
         save_settings_to(&file, &s).unwrap();
         set_illustrations_key_at(&file, "  sk-image ").unwrap();
-        let back = load_settings_from(&file);
+        let back = load_settings_from(&file).unwrap();
         assert_eq!(back.illustrations_api_key, "sk-image");
         assert_eq!(back.llm_api_key, "sk-ant-x");
         assert_eq!(back.cde, "ebok");
         // No file yet: one is started
         let fresh = dir.path().join("new").join("settings.json");
         set_illustrations_key_at(&fresh, "k").unwrap();
-        assert_eq!(load_settings_from(&fresh).illustrations_api_key, "k");
+        assert_eq!(
+            load_settings_from(&fresh).unwrap().illustrations_api_key,
+            "k"
+        );
     }
 
     #[test]
@@ -2203,6 +2218,75 @@ mod tests {
         let err = set_illustrations_key_at(&file, "k").unwrap_err();
         assert!(err.contains("not saved"), "{err}");
         assert_eq!(std::fs::read(&file).unwrap(), b"{ not json");
+    }
+
+    fn settings_state(dir: &Path) -> AppState {
+        AppState {
+            settings_file: dir.join("settings.json"),
+            devices_file: dir.join("devices.json"),
+            preload: Default::default(),
+            preload_target: Default::default(),
+            start_tab: "books",
+        }
+    }
+
+    /// #26: a truncated settings.json shows as defaults with a note, and no save replaces it.
+    #[test]
+    fn a_damaged_settings_file_shows_defaults_and_is_never_saved_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = settings_state(dir.path());
+        let file = &state.settings_file;
+        let truncated = br#"{"llm_api_key":"sk-made-up","cde":"eb"#;
+        std::fs::write(file, truncated).unwrap();
+
+        let shown = get_settings(&state);
+        assert_eq!(shown.settings, Settings::default());
+        let note = shown.damaged.expect("the damage is said");
+        assert!(note.contains(&file.display().to_string()), "{note}");
+        assert!(note.contains("settings.json.damaged-"), "{note}");
+
+        let welcome_closed = Settings {
+            welcome_seen: true,
+            ..shown.settings.clone()
+        };
+        for e in [
+            set_settings(&state, welcome_closed.clone()).unwrap_err(),
+            set_settings_masked(&state, welcome_closed).unwrap_err(),
+            set_illustrations_key_at(file, "k").unwrap_err(),
+            load_settings_from(file).unwrap_err(),
+        ] {
+            assert!(e.contains(&file.display().to_string()), "{e}");
+        }
+        assert_eq!(std::fs::read(file).unwrap(), truncated);
+    }
+
+    #[test]
+    fn a_settings_file_that_cannot_be_read_is_never_saved_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = settings_state(dir.path());
+        // A folder where the file should be: there, but not readable as a file.
+        std::fs::create_dir(&state.settings_file).unwrap();
+        assert!(get_settings(&state).damaged.is_some());
+        assert!(set_settings(&state, Settings::default()).is_err());
+        assert!(state.settings_file.is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn settings_are_saved_0600_whatever_the_old_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let state = settings_state(dir.path());
+        std::fs::write(&state.settings_file, b"{}").unwrap();
+        std::fs::set_permissions(&state.settings_file, std::fs::Permissions::from_mode(0o644))
+            .unwrap();
+        set_settings(&state, Settings::default()).unwrap();
+        let mode = std::fs::metadata(&state.settings_file)
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(get_settings(&state).damaged, None);
     }
 
     fn golden_kfx() -> PathBuf {

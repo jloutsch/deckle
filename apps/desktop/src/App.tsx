@@ -298,7 +298,9 @@ function Deckle() {
       .getSettings()
       .then((s) => {
         setSettings(s);
-        if (!s.welcome_seen) setWelcomeOpen(true);
+        // A damaged file shows the defaults: no welcome, whose close would try to save them.
+        if (s.damaged) setNotice(s.damaged);
+        else if (!s.welcome_seen) setWelcomeOpen(true);
       })
       .catch(() => {});
     api.previewerStatus().then(setPreviewer).catch(() => {});

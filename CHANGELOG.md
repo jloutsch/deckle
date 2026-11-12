@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A settings file that doesn't read is kept, not replaced.** A `settings.json` cut short by a
+  crash, or changed by hand with a stray comma, used to load as the defaults, and the next save
+  wrote the defaults over your API keys and per-book presets. Deckle now keeps a copy beside it
+  (`settings.json.damaged-<time>`), says so at the top of Settings, and saves nothing until the
+  file is fixed or removed. Settings are written to a temporary file and renamed into place, and
+  are always private to you (0600), also when an older copy was readable by others.
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in

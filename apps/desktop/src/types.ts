@@ -235,6 +235,8 @@ export interface Settings {
   popup_notes: boolean;
   /** The welcome has been seen or skipped once; Settings → About shows it again. */
   welcome_seen: boolean;
+  /** Only from `get_settings`: the file is there but could not be read. The settings shown are the defaults and every save is refused until the owner fixes or removes the file (#26). */
+  damaged?: string | null;
 }
 
 export interface PreviewerStatus {
