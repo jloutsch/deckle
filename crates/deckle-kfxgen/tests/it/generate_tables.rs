@@ -53,3 +53,41 @@ fn a_padding_kfxgen_cannot_write_is_a_model_error() {
         }
     }
 }
+
+/// A run that starts outside its cell's text is a model error: the positions map walked
+/// from the run's start, to a panic past the end and without limit before it (issue #4).
+#[test]
+fn a_cell_run_outside_the_text_is_a_model_error() {
+    let tcy = PyValue::Tuple(vec![
+        PyValue::Str("tcy".into()),
+        PyValue::Tuple(vec![PyValue::Int(0), PyValue::Str("12".into())]),
+    ]);
+    for (start, ok) in [
+        (0, true),
+        (4, true),
+        (5, false),
+        (2027, false),
+        (1 << 60, false),
+        (-1, false),
+        (-100_000_000, false),
+    ] {
+        let mut model = load_model(&deckle_kfx::fixtures::kfxgen("models/table_parts")).unwrap();
+        let chapter = item(entry(&mut model.args, "chapters"), 1);
+        let table = entry(item(entry(chapter, "blocks"), 1), "table");
+        let cell = item(entry(item(entry(table, "rows"), 0), "cells"), 0);
+        let run = PyValue::Tuple(vec![
+            PyValue::Int(start),
+            PyValue::Int(1),
+            PyValue::Set(vec![tcy.clone()]),
+        ]);
+        *cell = PyValue::Dict(vec![
+            (PyValue::Str("text".into()), PyValue::Str("Kept".into())),
+            (PyValue::Str("spans".into()), PyValue::List(vec![run])),
+        ]);
+        match generate(&model) {
+            Ok(_) => assert!(ok, "{start}"),
+            Err(GenerateError::Model(m)) => assert!(!ok && m.contains("spans"), "{start}: {m}"),
+            Err(e) => panic!("{start}: {e}"),
+        }
+    }
+}

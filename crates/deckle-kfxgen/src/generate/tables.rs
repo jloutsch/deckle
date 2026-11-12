@@ -293,8 +293,8 @@ fn read_cell(c: &PyValue, at: &str) -> Result<Cell, GenerateError> {
         }
     }
     Ok(Cell {
+        spans: read_cell_spans(c.get("spans"), &text, at)?,
         text,
-        spans: read_spans(c.get("spans"), at)?,
         anchors: Anchors::read(c, at)?,
         header: truthy(c.get("header")),
         not_bold: truthy(c.get("not_bold")),
@@ -317,6 +317,19 @@ fn read_cell(c: &PyValue, at: &str) -> Result<Cell, GenerateError> {
     })
 }
 
+/// A cell's runs. One that starts outside the text is refused: nothing cuts a cell's runs to
+/// its text, and the positions map walks from a run's start (DIVERGENCES.md).
+fn read_cell_spans(v: Option<&PyValue>, text: &str, at: &str) -> Result<Vec<Span>, GenerateError> {
+    let spans = read_spans(v, at)?;
+    let len = text.chars().count() as i64;
+    if spans.iter().any(|s| !(0..=len).contains(&s.start)) {
+        return Err(model_err(format!(
+            "{at}.spans: a run that starts within the cell's text"
+        )));
+    }
+    Ok(spans)
+}
+
 fn read_paragraph(p: &PyValue, at: &str) -> Result<Paragraph, GenerateError> {
     if p.get("type").and_then(PyValue::as_str) == Some("box") {
         return Err(Unsupported("boxes"));
@@ -337,7 +350,7 @@ fn read_paragraph(p: &PyValue, at: &str) -> Result<Paragraph, GenerateError> {
         return Err(Unsupported("pictures in a table cell"));
     }
     Ok(Paragraph {
-        spans: read_spans(p.get("spans"), at)?,
+        spans: read_cell_spans(p.get("spans"), &text, at)?,
         anchors: Anchors::read(p, at)?,
         heading: truthy(p.get("heading")),
         text,

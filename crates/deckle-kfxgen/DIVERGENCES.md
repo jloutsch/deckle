@@ -63,6 +63,13 @@ port holds them in an i64, subtracts text lengths from a run's ends (`_title_spa
 (`start + length`) is past ±2^61 is a `GenerateError::Model` naming the spans, where kfxgen
 writes a book. A run's offsets count characters of the paragraph, so no converted book has one.
 
+## Table cell runs that start outside the text
+
+A run in a table cell, or in a paragraph of one, that starts before the text or after its end
+is a `GenerateError::Model` naming the spans, where kfxgen writes a book. kfxgen cuts a
+paragraph's runs to its text but not a cell's, and the positions map walks from the run's
+start. No converted book has such a run: a run's offsets count characters of the cell.
+
 ## Run sizes and monospace families of another type
 
 The converter writes a run's size flag as `("size", px)`, px an int or float (`css_font_size`,
