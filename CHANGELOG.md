@@ -32,7 +32,7 @@
   unplugged mid-push, or one that can't be written to at all, stops it with one message instead
   of one per entry (one locked book on it costs only that book), and a reader mounted at a fixed folder that's been unplugged gets nothing
   written into that folder, whether by a push, a send, a put back or a restore. `digest push`
-  and `digest run` fail only when the push stopped or the run's own edition didn't go, so the
+  fails only when the push stopped, and `digest run` only when its own edition didn't go, so the
   scheduler no longer prints the paper again all day for another book's sake; the Daily tab
   lists what wasn't sent under the run's result. A failed prune after the deliveries is a warning beside them, not an error that hid
   them. A book and a PDF with the same name now both go; only a paper's dated edition queued in

@@ -3565,14 +3565,12 @@ fn digest(
                 edition_sent: bool,
             }
             let stem = deckle_digest::edition_stem(&cfg, date);
-            let readers = [Some(&outcome), reader.as_ref()];
-            let edition_sent = readers.iter().flatten().any(|o| o.sent(&stem));
-            // Exit non-zero when this run's own edition didn't go, or a push stopped; another
-            // entry that didn't go is a warning (the daemon would otherwise print again).
-            let undelivered = readers
-                .iter()
+            let readers: Vec<&DigestOutcome> = [Some(&outcome), reader.as_ref()]
+                .into_iter()
                 .flatten()
-                .any(|o| o.stopped() || o.missed(&stem));
+                .collect();
+            let edition_sent = readers.iter().any(|o| o.sent(&stem));
+            let undelivered = edition_undelivered(&readers, &stem);
             let all = DigestRun {
                 build: &built,
                 run: report.as_ref(),
@@ -4170,6 +4168,14 @@ fn remarkable_lines(p: &deckle_core::sync::RemarkablePush) -> String {
     lines.extend(p.notes.iter().map(|n| format!("      reMarkable: {n}")));
     lines.extend(p.errors.iter().map(|e| format!("      reMarkable: {e}")));
     lines.join("\n")
+}
+
+/// `digest run` exits non-zero: this run's own edition `stem` didn't go, or a push stopped
+/// before it went. A stop after it went, or another entry that didn't go, is a warning: the
+/// daemon takes a failed run as not printed and would send the edition again.
+fn edition_undelivered(outcomes: &[&DigestOutcome], stem: &str) -> bool {
+    let sent = outcomes.iter().any(|o| o.sent(stem));
+    outcomes.iter().any(|o| o.missed(stem)) || (!sent && outcomes.iter().any(|o| o.stopped()))
 }
 
 impl DigestOutcome {
@@ -6794,6 +6800,23 @@ mod tests {
         // Another paper's edition isn't this one.
         let kid = flush(&[], &["deckle-daily-kid-2026-10-23.kfx"], false);
         assert!(!kid.missed(stem));
+
+        // `digest run`: a stop after the edition went isn't the run's failure (the daemon
+        // would send that edition again); a stop before it went is.
+        assert!(!edition_undelivered(&[&stopped], stem));
+        let stopped_first = flush(&[], &["deckle-daily-2026-10-23.kfx"], true);
+        assert!(edition_undelivered(&[&stopped_first], stem));
+        let stopped_elsewhere = flush(&[], &["b.kfx"], true);
+        assert!(edition_undelivered(&[&stopped_elsewhere], stem));
+        // The edition went to the Kobo while the Kindle's push stopped.
+        let kobo = flush(
+            &["/K/Deckle/deckle-daily-2026-10-23.kepub.epub"],
+            &[],
+            false,
+        );
+        assert!(!edition_undelivered(&[&stopped_elsewhere, &kobo], stem));
+        assert!(!edition_undelivered(&[&other], stem));
+        assert!(edition_undelivered(&[&own], stem));
     }
 
     #[test]
