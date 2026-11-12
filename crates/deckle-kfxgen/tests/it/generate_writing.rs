@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Writing direction, language, ruby, tate-chu-yoko and vertical text against kfxgen's KFX
 //! (phase 1 plan, Task 12).
 use deckle_kfxgen::generate::{GenerateError, generate};

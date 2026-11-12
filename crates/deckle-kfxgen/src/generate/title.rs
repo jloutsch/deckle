@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Whether and how a chapter's title is already in its text: kfxgen's heading takes the title's
 //! place, so the text and blocks are cut of it (`_normalize_title` :827 and its callers).
 use super::boxes::{Line, box_title_lines, drop_box_lines, drop_edge_rules, unboxed};

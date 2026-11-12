@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! The values in kfxgen's `model.json`, as Python had them (kfxgen `plugin/kfxgen/model_dump.py`).
 //!
 //! A dict keeps its insertion order and its keys' types; a set or frozenset keeps the order the

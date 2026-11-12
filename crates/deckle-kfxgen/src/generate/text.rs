@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! A book's text: `_build_chapter_content` (`native_generator.py:5396`), the chapter loop that
 //! makes chunks of the chapters' titles, paragraphs and contents lines, their positions, and
 //! the `$145`, `$157` and `$259` fragments they fill. The pieces are `chapters`' (reading),

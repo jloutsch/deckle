@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Embedded fonts, monospace runs and runs of their own size against kfxgen's KFX (phase 1
 //! plan, Task 10).
 use deckle_kfxgen::generate::{GenerateError, generate};

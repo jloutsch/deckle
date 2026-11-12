@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! A table's `$157` styles, as Kindle Previewer writes them: the table's
 //! (`build_table_style_157`, `native_generator.py:3808`), a cell's (`build_cell_style_157`
 //! :4015, from `_cell_style` :7326) and a row's or row group's border (`build_part_style_157`

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! A paragraph's own style, the `block_style` the converter reads from the book's CSS, and the
 //! `$157` `_build_chapter_content` (`native_generator.py:5396`) makes of it: sizes against
 //! the book's main text size (#241), line heights against its main line (#463), the book's

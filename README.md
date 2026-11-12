@@ -422,4 +422,5 @@ The same card is in the app under **Settings → About**.
 
 ## License
 
-GPL-3.0-or-later. See [LICENSE](LICENSE).
+GPL-3.0-or-later. See [LICENSE](LICENSE). One crate, `crates/deckle-kfxgen`, is GPL-3.0-only,
+because it is a port of kfxgen: see its [NOTICE](crates/deckle-kfxgen/NOTICE).

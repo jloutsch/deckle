@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Embedded fonts (#15): the `FontTable` kfxgen is given (`font_table.py`), each face written
 //! as its `$418` bytes and a `$262` `@font-face` (`native_generator.py:4816`), and `_family`
 //! (:7233), the family a paragraph's, cell's or run's `$157` names in `$11`.

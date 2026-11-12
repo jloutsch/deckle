@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Native tables (#219): a table block read from the model, and what the chapter title cut
 //! (`native_generator.py:1187` and on) reads of its rows. `table_chunks` makes its
 //! storyline entries, `table_styles` their `$157` styles.

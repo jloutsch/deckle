@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! A chapter's entries: [`Chunk`], one per paragraph, picture or contents line, and
 //! `_emit_paragraph`'s dispatch.
 

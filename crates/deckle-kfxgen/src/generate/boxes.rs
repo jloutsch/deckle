@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Boxes and rules: a bordered or filled block around paragraphs (#238) and an `<hr>` (#230),
 //! read from the model, their chunks (`_emit_box_chunks` `native_generator.py:5946`,
 //! `_rule_chunk` :1105) and `$157` styles (`build_box_style_157` :3853,

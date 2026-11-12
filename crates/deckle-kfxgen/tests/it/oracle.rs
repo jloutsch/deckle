@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Compare generated fragments with kfxgen's KFX, type by type (phase 1 plan, Tasks 5–13).
 use std::path::Path;
 

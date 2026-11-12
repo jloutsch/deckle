@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! The navigation, `$389` (`build_fragment_389_toc`, `native_generator.py:3066`): the book's
 //! headings, its contents, its pages, its cover and its landmarks.
 use std::collections::BTreeMap;

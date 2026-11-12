@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Pop-up notes (#445): a noteref link to a footnote, which Kindle Previewer marks, its link
 //! `$616: $617` and the note's entry `$615: $281` (`native_generator.py:6786`, :4403, :4474).
 use std::collections::BTreeSet;

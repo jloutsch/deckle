@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! `generate` against kfxgen's KFX for the same model (phase 1 plan, Task 5).
 use std::path::{Path, PathBuf};
 

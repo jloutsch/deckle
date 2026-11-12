@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! The `$145` content, `$259` storyline and `$260` section fragments a chapter's chunks make,
 //! and the `$157` names a storyline uses.
 use std::collections::BTreeSet;

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! The Gutenberg corpus against kfxgen (phase 1 plan, Task 13). Its models stay outside git:
 //! `DECKLE_KFXGEN_CORPUS=gutenberg/models cargo test -p deckle-kfxgen --test it corpus -- --ignored`
 //! (a relative path is taken from the workspace root).

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Loading kfxgen's generator input (`model.json`, phase 1 plan Task 4).
 use std::path::PathBuf;
 

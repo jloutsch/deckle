@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: GPL-3.0-only
 # From kfxgen 8f55440 (research/generate_from_model.py), taking the kfxgen tree as an argument.
 """Make a KFX from a model dump: the generator alone, with no EPUB and no Calibre.
 

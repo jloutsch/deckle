@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: GPL-3.0-only
 """Put the model-dump hook into an export of kfxgen: python3 inject.py <kfxgen_tree>
 
 Copies model_dump.py into plugin/kfxgen/ and makes generate_full_book call it first (the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! A picture among a paragraph's words in the storyline (`native_generator.py` at kfxgen
 //! `4b81651`): its id (:6683), its `$259` entry (`_inline_picture_entry` :2419) and `s_ipic`
 //! style (#529, #565), and the positions of the paragraph holding it (:3383).

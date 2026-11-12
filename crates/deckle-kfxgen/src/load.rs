@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Loads kfxgen's generator input: the `model.json` and `resources/` its `KFXGEN_DUMP_MODEL`
 //! hook writes (kfxgen `plugin/kfxgen/model_dump.py`). Test input only: the oracle the port is
 //! checked against.

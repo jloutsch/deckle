@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! The book's own landmarks and page list, where their links land (`generate_full_book`,
 //! `native_generator.py:5016`), else kfxlib's approximate pages.
 use super::inline::{IdMaps, id_maps};

@@ -3,7 +3,8 @@ name = "deckle-kfxgen"
 description = "EPUB → KFX without Kindle Previewer: a Rust port of kfxgen"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+# kfxgen, which this ports, is GPL v3 only (NOTICE).
+license = "GPL-3.0-only"
 repository.workspace = true
 
 [dependencies]

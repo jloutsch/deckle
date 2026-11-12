@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! The book's page list and landmarks against kfxgen's KFX (phase 1 plan, Task 11).
 use deckle_kfxgen::generate::{GenerateError, generate};
 use deckle_kfxgen::load::{Model, load_model};

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Runs inside a paragraph: a block's spans and anchors as kfxgen moves them onto its chunks,
 //! the `$266` anchors links land on, and the `$142` runs of a `$259` entry with their `$157`
 //! styles (`_build_chapter_content`, `native_generator.py:5396`; `inline_style.py`).

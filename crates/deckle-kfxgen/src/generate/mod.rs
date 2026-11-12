@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! kfxgen's generator, `NativeKFXGenerator.generate_full_book` (`native_generator.py:4549`):
 //! a model's book to the bytes of a KFX, byte for byte as kfxgen writes them.
 //!

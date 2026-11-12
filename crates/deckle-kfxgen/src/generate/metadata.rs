@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! The book's metadata, `$490` (`build_fragment_490`, `native_generator.py:2859`).
 use deckle_kfx::fragment::Fragment;
 use deckle_kfx::ion::Value;

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! A chapter of the model's `chapters` argument, read into what `_build_chapter_content` works
 //! from. What kfxgen does with a chapter or block key not ported yet is
 //! [`GenerateError::Unsupported`], so a book needing it fails rather than coming out different.
