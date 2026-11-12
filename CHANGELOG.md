@@ -11,6 +11,11 @@
   to what it holds (an index claiming four billion entries took minutes; a string length
   panicked), its text stops unpacking at its stated length, at most 256 MB, and its fonts at 32
   MB each and 256 MB together.
+- **Word documents, CBRs and text files have limits too.** A `.docx` that unpacks past 50 MB,
+  pictures included, is refused. A CBR is now read through bsdtar as a stream, each page at
+  most 256 MB and the comic 4 GB, instead of unpacked whole to a temp folder first; a page
+  with an absolute path, a `..` or a link is refused. A text file with more than 10,000
+  headings keeps the rest in its last chapter.
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in

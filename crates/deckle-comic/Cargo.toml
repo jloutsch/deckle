@@ -17,6 +17,8 @@ image = { workspace = true, features = ["gif"] }
 # The reMarkable's image-only PDF (fixed-layout spec §12).
 pdf-writer = "0.15"
 flate2 = "1"
+# A CBR, converted by bsdtar to a pax tar stream and read member by member (size-limits design).
+tar = { version = "0.4", default-features = false }
 
 [dev-dependencies]
 deckle-kfx.workspace = true

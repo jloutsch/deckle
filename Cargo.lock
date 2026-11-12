@@ -1384,6 +1384,7 @@ dependencies = [
  "pdf-writer",
  "roxmltree",
  "sha2 0.11.1",
+ "tar",
  "tempfile",
  "thiserror 2.0.21",
  "zip 9.0.5",
@@ -1506,6 +1507,8 @@ dependencies = [
 name = "deckle-docx"
 version = "0.13.0"
 dependencies = [
+ "deckle-kfx",
+ "deckle-limits",
  "roxmltree",
  "sha2 0.11.1",
  "tempfile",
@@ -1781,6 +1784,7 @@ dependencies = [
 name = "deckle-txt"
 version = "0.13.0"
 dependencies = [
+ "deckle-limits",
  "encoding_rs",
  "roxmltree",
  "sha2 0.11.1",
