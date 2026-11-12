@@ -7,6 +7,10 @@
   past a limit is now refused with an error that names the limit: 256 MB for one file inside, 1
   GB for a whole book, 4 GB for a comic. Real books are far inside them; the limits are in
   [docs/books.md](docs/books.md#size-limits).
+- **A hostile MOBI or AZW3 can no longer hang or crash an import.** Counts in the file are held
+  to what it holds (an index claiming four billion entries took minutes; a string length
+  panicked), its text stops unpacking at its stated length, at most 256 MB, and its fonts at 32
+  MB each and 256 MB together.
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in

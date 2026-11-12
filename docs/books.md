@@ -80,6 +80,9 @@ the limit, instead of slowing the computer or crashing. Real books are far insid
 | EPUB, KPF: the whole archive, unpacked | 1 GB |
 | CBZ: the whole archive, unpacked | 4 GB |
 | CBZ: one page | 256 MB |
+| MOBI, AZW3: one embedded font, unpacked | 32 MB |
+| MOBI, AZW3: all embedded fonts, unpacked | 256 MB |
+| MOBI, AZW3: the text, unpacked | 256 MB |
 
 The numbers are in one place, `crates/deckle-limits`.
 

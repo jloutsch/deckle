@@ -1622,6 +1622,7 @@ dependencies = [
 name = "deckle-mobi"
 version = "0.13.0"
 dependencies = [
+ "deckle-limits",
  "dom_query",
  "encoding_rs",
  "flate2",
