@@ -126,7 +126,28 @@ calibre's bundled fonts. The faces of `font_faces` are TrueType fonts of one emp
 `kfxgen_models.py` makes with fontTools (`_tiny_font`), holding no other font's data. No fixture
 contains MathML.
 
-The 9-book Gutenberg corpus is dumped the same way, outside git:
+The 9-book Gutenberg corpus is dumped the same way, outside git (`gutenberg/` is in
+`.gitignore`). Its books are Project Gutenberg's EPUB 2 with images ("EPUB (older E-readers)"),
+saved as `gutenberg/pg<id>.epub` from `https://www.gutenberg.org/ebooks/<id>.epub.images`
+(which serves `https://www.gutenberg.org/cache/epub/<id>/pg<id>-images.epub`):
+
+| File | Title | sha256 of the copy used |
+|---|---|---|
+| pg11.epub | Alice's Adventures in Wonderland | `51e684a97bc63fb1007e433d6eee6d07508cec4c234080281a1483868f4696ae` |
+| pg23.epub | Narrative of the Life of Frederick Douglass, an American Slave | `4ff2ebe464657f9e98a25056e0beb92fea2e70ee54b958baa16e04ea0910d7b3` |
+| pg43.epub | The strange case of Dr. Jekyll and Mr. Hyde | `2fb4cc132937360fedf1548e815188a5ac27cf5b383f523bc181e0234e1eb5c8` |
+| pg55.epub | The Wonderful Wizard of Oz | `b397de9e62c1f12bf597f5775d11bd9f1bfb8517b605f6df203290972bcfa61e` |
+| pg74.epub | The Adventures of Tom Sawyer, Complete | `f7ec56a0768b0a202a98aa4bf8ff1fc54c738ac36c0d6c2ea853154474c1b12d` |
+| pg76.epub | Adventures of Huckleberry Finn | `ba2554e8bb1b33a3c6b8813abf20a306d76036b38be128622efe112fd62c139a` |
+| pg84.epub | Frankenstein; or, the modern prometheus | `8959a5fdc05e48c83574427a9ffe81b5303cffe5457d4279736f236ffea5a157` |
+| pg86.epub | A Connecticut Yankee in King Arthur's Court | `c48f96b05cc2753556b9885d55d256556bc97bb80482b37d41f136c4e150dc82` |
+| pg98.epub | A Tale of Two Cities | `75fdf6049eca262f24ec95f9fbeae8aef97438fd1e545436c7072fc23f4b38a7` |
+
+Project Gutenberg rebuilds these files from time to time (the copies used say they were converted
+on 2026-08-01), so a fresh download can differ from them: on 2026-11-11 `pg11-images.epub` was
+187,950 bytes, not 187,952. A different copy still makes a valid corpus, since the dump and the
+test both start from whatever is in `gutenberg/`; it just isn't the same books byte for byte.
+To dump them:
 `DECKLE_KFXGEN_CORPUS_OUT=gutenberg/models tools/ref/kfxgen_models.sh --corpus gutenberg/*.epub`
 (28 s on an M-series Mac, 174 MB). `crates/deckle-kfxgen` makes every corpus book byte for
 byte: `DECKLE_KFXGEN_CORPUS=gutenberg/models cargo test -p deckle-kfxgen --test it corpus -- --ignored`.
@@ -151,4 +172,8 @@ goal is checked in phase 3.
 | pg84 | 0.5 MB | 30.3 | 2.61 |
 | pg86 | 26.1 MB | 112.4 | 6.54 |
 | pg98 | 7.9 MB | 94.0 | 8.20 |
-| total | | 511.1 | 39.22 |
+| total of the rows | | 511.1 | 39.02 |
+
+Whole run (from `gutenberg/kfxgen/timings.csv`, its `TOTAL` line): 39.22 s. That is 0.20 s more
+than the rows; the script that wrote the file isn't in the repo, so what the difference is (most
+likely the time between books) isn't recorded.
