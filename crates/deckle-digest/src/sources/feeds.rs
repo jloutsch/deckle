@@ -40,6 +40,34 @@ pub fn google_news_url(query: &str, max_age_hours: u32) -> String {
     )
 }
 
+thread_local! {
+    /// Set while [`quietly`] runs on this thread: a panic here is caught and reported as an
+    /// unreadable feed, so the panic hook stays silent.
+    static QUIET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `f`, with a panic caught and not printed.
+///
+/// The app shows the last lines of a Daily run's stderr as its log, so a parser panic Deckle
+/// catches must not print there. The global hook is replaced once, by one that stays silent on
+/// a thread inside `quietly` and passes every other panic to the hook it replaced. Swapping the
+/// hook around each call instead would race with feeds parsed on other threads at once.
+fn quietly<T>(f: impl FnOnce() -> T + std::panic::UnwindSafe) -> std::thread::Result<T> {
+    static HOOK: std::sync::Once = std::sync::Once::new();
+    HOOK.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if !QUIET.with(std::cell::Cell::get) {
+                previous(info);
+            }
+        }));
+    });
+    let was = QUIET.with(|q| q.replace(true));
+    let result = std::panic::catch_unwind(f);
+    QUIET.with(|q| q.set(was));
+    result
+}
+
 /// Why `feed-rs` must not read this feed, or `None` (nesting-depth design, feeds).
 ///
 /// `feed-rs` recurses once per element level before it rejects anything, so the depth is
@@ -64,7 +92,7 @@ fn refusal(bytes: &[u8]) -> Option<String> {
     if first != Some(b'<') {
         return None;
     }
-    let read = std::panic::catch_unwind(move || {
+    let read = quietly(move || {
         let mut reader =
             quick_xml::NsReader::from_reader(quick_xml::encoding::DecodingReader::new(input));
         let config = reader.config_mut();
@@ -130,7 +158,7 @@ pub fn parse(
     }
     // A panic in the parser (quick-xml asserts on some declarations) costs this feed, not the
     // edition.
-    let feed = std::panic::catch_unwind(|| feed_rs::parser::parse(bytes))
+    let feed = quietly(|| feed_rs::parser::parse(bytes))
         .map_err(|_| "this feed could not be read".to_owned())?
         .map_err(|e| e.to_string())?;
     let cutoff = now - chrono::Duration::hours(i64::from(max_age_hours));
@@ -1183,6 +1211,40 @@ mod tests {
         );
         let e = titles(feed).unwrap_err();
         assert!(e.contains("could not be read"), "{e}");
+    }
+
+    /// The caught panic prints nothing (the app shows a Daily run's last stderr lines as its
+    /// log), while a panic anywhere else still reaches the usual hook. Run in a child process
+    /// of this test binary, so its stderr can be read.
+    #[test]
+    fn a_caught_parser_panic_prints_nothing() {
+        const NAME: &str = "sources::feeds::tests::a_caught_parser_panic_prints_nothing";
+        if std::env::var_os("DECKLE_QUIET_PANIC_CHILD").is_some() {
+            let feed = utf16(
+                &format!(
+                    "<?xml version=\"1.0\" encoding=\"UTF-16\"?>{}",
+                    rss("Panics", 0)
+                ),
+                false,
+            );
+            assert!(titles(feed).is_err());
+            let elsewhere = std::panic::catch_unwind(|| panic!("a panic outside the feed parse"));
+            assert!(elsewhere.is_err());
+            return;
+        }
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([NAME, "--exact", "--nocapture", "--test-threads=1"])
+            .env("DECKLE_QUIET_PANIC_CHILD", "1")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{stderr}");
+        assert!(
+            stderr.contains("a panic outside the feed parse"),
+            "{stderr}"
+        );
+        assert_eq!(stderr.matches("panicked").count(), 1, "{stderr}");
+        assert!(!stderr.contains("quick-xml"), "{stderr}");
     }
 
     /// Shallow feeds in the encodings feeds use load with the titles `feed-rs` reads.
