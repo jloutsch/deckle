@@ -2,7 +2,6 @@
 //! PDFium: finding the library, reading a document into [`Page`]s and cutting pictures out of a
 //! rendered page (PDF spec §3).
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -70,8 +69,10 @@ pub fn pdfium() -> Result<&'static Pdfium, PdfError> {
 /// An open document and the pages it renders, kept for cutting pictures.
 pub struct Document<'a> {
     doc: PdfDocument<'a>,
-    /// Each with the scale it was rendered at: [`RENDER_SCALE`], or less for a huge page.
-    rendered: HashMap<usize, (image::DynamicImage, f32)>,
+    /// The page last rendered for its pictures, with the scale it was rendered at
+    /// ([`RENDER_SCALE`], or less for a huge page). One page only: figures are cut in page
+    /// order, and each rendering can be up to 100 megapixels.
+    rendered: Option<(usize, image::DynamicImage, f32)>,
 }
 
 /// Title and author from the document's info, when they look like a person wrote them.
@@ -114,7 +115,7 @@ impl<'a> Document<'a> {
         })?;
         Ok(Document {
             doc,
-            rendered: HashMap::new(),
+            rendered: None,
         })
     }
 
@@ -197,7 +198,9 @@ impl<'a> Document<'a> {
     /// for it).
     pub fn picture(&mut self, index: usize, rect: Rect) -> Result<Vec<u8>, PdfError> {
         let err = |e: PdfiumError| PdfError::Unreadable(e.to_string());
-        if !self.rendered.contains_key(&index) {
+        if self.rendered.as_ref().is_none_or(|(at, ..)| *at != index) {
+            // The last page's picture goes first, so only one is ever held.
+            self.rendered = None;
             let page = self.doc.pages().get(index as PdfPageIndex).map_err(err)?;
             let scale = fitting_scale(page.width().value, page.height().value, RENDER_SCALE);
             let config = PdfRenderConfig::new()
@@ -209,9 +212,9 @@ impl<'a> Document<'a> {
                 .map_err(err)?
                 .as_image()
                 .map_err(err)?;
-            self.rendered.insert(index, (image, scale));
+            self.rendered = Some((index, image, scale));
         }
-        let (image, scale) = &self.rendered[&index];
+        let (_, image, scale) = self.rendered.as_ref().expect("rendered above");
         let px = |v: f32| (v.max(0.0) * scale).round() as u32;
         let x = px(rect.x0).min(image.width().saturating_sub(1));
         let y = px(rect.y0).min(image.height().saturating_sub(1));
@@ -378,7 +381,32 @@ fn read_page(page: &PdfPage) -> Result<Page, PdfiumError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{fitting_scale, math_font};
+    use super::{Document, Rect, fitting_scale, math_font, pdfium};
+
+    #[test]
+    fn only_the_page_being_cut_stays_rendered() {
+        // Figures come in page order, so one rendered page is kept at a time, not one a page
+        // (each up to 100 megapixels).
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/pdf/book.pdf");
+        let pdfium = pdfium().expect("run tools/fetch-pdfium.sh first");
+        let mut doc = Document::open(pdfium, &path).unwrap();
+        assert!(doc.page_count() >= 2, "{}", doc.page_count());
+        let rect = Rect {
+            x0: 10.0,
+            y0: 10.0,
+            x1: 60.0,
+            y1: 40.0,
+        };
+        for page in [0, 0, 1] {
+            doc.picture(page, rect).unwrap();
+            assert_eq!(doc.rendered.iter().count(), 1, "after page {page}");
+        }
+        // A page cut again after another is rendered again, the same.
+        let again = doc.picture(1, rect).unwrap();
+        assert_eq!(again, doc.picture(1, rect).unwrap());
+        assert_eq!(doc.rendered.iter().count(), 1);
+    }
 
     #[test]
     fn a_page_renders_within_the_pixel_limit() {

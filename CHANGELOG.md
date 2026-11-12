@@ -18,7 +18,8 @@
   headings keeps the rest in its last chapter.
 - **Huge pages and pictures no longer exhaust memory.** A PDF page box wider than the PDF
   specification allows (a 2 KB file asked for 20 GB and aborted) is laid out as 14,400 pt wide,
-  and a page rendered as a picture is held to 100 megapixels, rendered smaller when it's bigger.
+  and a page rendered as a picture is held to 100 megapixels, rendered smaller when it's bigger;
+  one rendered page is kept while its figures are cut, not every page of the book.
   A picture in a book, a chosen cover or a web photo over 100 megapixels is refused before it
   is decoded; comic pages keep `image`'s own limit.
 - **A hostile KFX or KPF is refused instead of filling memory.** A symbol table claiming more
