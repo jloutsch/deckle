@@ -311,12 +311,14 @@ pub fn deliver_named_on(
     let name = name.to_owned();
     match conn.target {
         Target::Folder(dir) => {
+            remove_leftovers(dir);
             let path = write_file(&dir.join(&name), kfx)?;
             write_sidecars(&path, &opts.sidecars)?;
             write_system_files(dir, &opts.system_files)?;
             Ok(path)
         }
         Target::MassStorage(dev) => {
+            remove_leftovers(&dev.root.join("documents"));
             let path = write_file(&dev.root.join("documents").join(&name), kfx)?;
             write_sidecars(&path, &opts.sidecars)?;
             write_system_files(&dev.root, &opts.system_files)?;
@@ -367,18 +369,83 @@ fn write_sidecars(book: &Path, sidecars: &[(String, Vec<u8>)]) -> Result<(), Del
     Ok(())
 }
 
-fn write_file(path: &Path, data: &[u8]) -> Result<PathBuf, DeliverError> {
-    let io = |source: std::io::Error| DeliverError::Io {
+/// [`write_beside`], its error naming `path`.
+pub(crate) fn write_file(path: &Path, data: &[u8]) -> Result<PathBuf, DeliverError> {
+    write_beside(path, data).map_err(|source| DeliverError::Io {
         path: path.to_path_buf(),
         source,
-    };
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(io)?;
-    }
-    let mut f = std::fs::File::create(path).map_err(io)?;
-    f.write_all(data).map_err(io)?;
-    f.sync_all().map_err(io)?;
+    })?;
     Ok(path.to_path_buf())
+}
+
+/// Writes `data` to `path` so that `path` only ever holds the old file or the whole new one: the
+/// bytes go to a hidden `.<name>.<pid>.part` beside it, flushed to the drive, then renamed over
+/// it in one step. On any error the `.part` file is removed and the old file was never touched.
+/// The process id keeps two Deckle processes off one temporary file.
+pub(crate) fn write_beside(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let dir = path.parent().unwrap_or(Path::new(""));
+    if !dir.as_os_str().is_empty() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let name = path
+        .file_name()
+        .ok_or_else(|| std::io::Error::other("no file name"))?
+        .to_string_lossy();
+    let part = dir.join(format!(".{name}.{}.part", std::process::id()));
+    let written = (|| {
+        let mut f = std::fs::File::create(&part)?;
+        write_data(&mut f, data)?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&part, path)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&part);
+    }
+    written
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: the next writes stop with an error after this many bytes (a full drive, a pulled
+    /// cable).
+    pub(crate) static FAIL_WRITE_AFTER: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
+}
+
+fn write_data(f: &mut std::fs::File, data: &[u8]) -> std::io::Result<()> {
+    #[cfg(test)]
+    if let Some(n) = FAIL_WRITE_AFTER.with(std::cell::Cell::get) {
+        f.write_all(&data[..n.min(data.len())])?;
+        return Err(std::io::Error::other("the write stopped half-way"));
+    }
+    f.write_all(data)
+}
+
+/// A temporary file [`write_beside`] (`.<name>.<pid>.part`) or an older Deckle (`.<name>.tmp`)
+/// left in `dir` when a cable was pulled, older than an hour, so another Deckle's live write is
+/// spared. Run at the start of a delivery to that folder.
+pub(crate) fn remove_leftovers(dir: &Path) {
+    const AGE: std::time::Duration = std::time::Duration::from_secs(3600);
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if !(name.starts_with('.') && (name.ends_with(".part") || name.ends_with(".tmp"))) {
+            continue;
+        }
+        let old = e
+            .metadata()
+            .ok()
+            .filter(|m| m.is_file())
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > AGE);
+        if old {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
 }
 
 /// `XRAY.entities.<ASIN>.asc`
@@ -665,6 +732,87 @@ mod tests {
             SENT.with(|s| s.borrow().clone()),
             vec![op::OPEN_SESSION, op::CLOSE_SESSION]
         );
+    }
+
+    /// What's in `dir`, sorted.
+    fn names(dir: &Path) -> Vec<String> {
+        let mut n: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        n.sort();
+        n
+    }
+
+    #[test]
+    fn a_write_that_fails_half_way_leaves_the_old_file_whole() {
+        let tmp = tempfile::tempdir().unwrap();
+        let book = tmp.path().join("A - Book.kfx");
+        std::fs::write(&book, b"the old copy").unwrap();
+        FAIL_WRITE_AFTER.with(|f| f.set(Some(4)));
+        let r = write_file(&book, b"the new copy, longer");
+        FAIL_WRITE_AFTER.with(|f| f.set(None));
+        assert!(matches!(r, Err(DeliverError::Io { .. })), "{r:?}");
+        assert_eq!(std::fs::read(&book).unwrap(), b"the old copy");
+        assert_eq!(names(tmp.path()), ["A - Book.kfx"], "no .part is left");
+        // A write that goes through replaces it, again with nothing left beside it.
+        write_file(&book, b"the new copy").unwrap();
+        assert_eq!(std::fs::read(&book).unwrap(), b"the new copy");
+        assert_eq!(names(tmp.path()), ["A - Book.kfx"]);
+    }
+
+    #[test]
+    fn a_failed_resend_to_a_folder_keeps_the_old_copy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = Target::Folder(tmp.path().to_path_buf());
+        let mut conn = Conn::new(&target);
+        let opts = DeliverOptions::default();
+        deliver_named_on(b"edition one", "paper.kfx", &mut conn, &opts).unwrap();
+        FAIL_WRITE_AFTER.with(|f| f.set(Some(3)));
+        let r = deliver_named_on(b"edition two", "paper.kfx", &mut conn, &opts);
+        FAIL_WRITE_AFTER.with(|f| f.set(None));
+        assert!(r.is_err());
+        assert_eq!(
+            std::fs::read(tmp.path().join("paper.kfx")).unwrap(),
+            b"edition one"
+        );
+        assert_eq!(names(tmp.path()), ["paper.kfx"]);
+    }
+
+    #[test]
+    fn a_delivery_clears_temporary_files_older_than_an_hour() {
+        let tmp = tempfile::tempdir().unwrap();
+        let docs = tmp.path().join("documents");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::create_dir_all(tmp.path().join("system")).unwrap();
+        let hours_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+        for n in [
+            ".a.kfx.123.part",
+            ".b.kepub.epub.tmp",
+            ".live.kfx.9.part",
+            "keep.part",
+        ] {
+            let f = std::fs::File::create(docs.join(n)).unwrap();
+            if n != ".live.kfx.9.part" {
+                f.set_modified(hours_ago).unwrap();
+            }
+        }
+        let target = Target::MassStorage(Device {
+            root: tmp.path().to_path_buf(),
+            model_hint: "Kindle".into(),
+            thumbnails_writable: false,
+            firmware: None,
+            serial: None,
+        });
+        deliver_named_on(
+            b"x",
+            "c.kfx",
+            &mut Conn::new(&target),
+            &DeliverOptions::default(),
+        )
+        .unwrap();
+        // Another Deckle's live write is spared, and so is a name that isn't Deckle's.
+        assert_eq!(names(&docs), [".live.kfx.9.part", "c.kfx", "keep.part"]);
     }
 
     #[test]

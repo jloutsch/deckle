@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **A failed re-send keeps the book already on the reader.** Sending a book again to a Kindle
+  that mounts as a drive, a folder, or putting a kept copy back emptied the old file before
+  writing the new one, so a full drive or a pulled cable left half a book under its name. The
+  new copy is now written beside the old one under a hidden `.part` name and swapped in only
+  when it's whole, as Kobo and PocketBook deliveries already were. A `.part` file a pulled
+  cable leaves is removed on a later delivery once it's an hour old. A re-send needs room for
+  one more copy for that moment (#74).
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in

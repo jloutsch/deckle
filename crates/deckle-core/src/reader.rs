@@ -214,21 +214,14 @@ pub fn any_seen(file: &Path) -> bool {
 }
 
 /// Writes `bytes` to `Deckle/<name>` through a hidden temporary file, flushed to the drive
-/// before it's renamed, so an unplugged reader never holds half a book.
+/// before it's renamed, so an unplugged reader never holds half a book
+/// ([`crate::deliver::write_beside`]). Temporary files an earlier pulled cable left go first.
 pub fn deliver(reader: &Reader, bytes: &[u8], name: &str) -> std::io::Result<PathBuf> {
-    use std::io::Write;
     let dir = reader.folder();
     std::fs::create_dir_all(&dir)?;
+    crate::deliver::remove_leftovers(&dir);
     let to = dir.join(name);
-    let tmp = dir.join(format!(".{name}.tmp"));
-    {
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(bytes)?;
-        f.sync_all()?;
-    }
-    std::fs::rename(&tmp, &to).inspect_err(|_| {
-        let _ = std::fs::remove_file(&tmp);
-    })?;
+    crate::deliver::write_beside(&to, bytes)?;
     Ok(to)
 }
 

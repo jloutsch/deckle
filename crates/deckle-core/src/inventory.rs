@@ -805,16 +805,12 @@ pub fn copy_in(conn: &mut Conn<'_>, src: &Path, file: &str) -> Result<(), Delive
         }
     };
     let path: PathBuf = parts.iter().fold(docs, |p, s| p.join(s));
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(io(dir.to_path_buf()))?;
-    }
-    std::fs::write(&path, &book).map_err(io(path.clone()))?;
+    // Written beside and renamed: a failed copy leaves what was there.
+    crate::deliver::write_file(&path, &book)?;
     if !sdr.is_empty() {
         let dir = path.with_extension("sdr");
-        std::fs::create_dir_all(&dir).map_err(io(dir.clone()))?;
         for (n, bytes) in &sdr {
-            let p = dir.join(n);
-            std::fs::write(&p, bytes).map_err(io(p.clone()))?;
+            crate::deliver::write_file(&dir.join(n), bytes)?;
         }
     }
     Ok(())
@@ -823,6 +819,27 @@ pub fn copy_in(conn: &mut Conn<'_>, src: &Path, file: &str) -> Result<(), Delive
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_copy_in_that_fails_half_way_leaves_the_book_there() {
+        let tmp = tempfile::tempdir().unwrap();
+        let kept = tmp.path().join("kept");
+        std::fs::create_dir_all(&kept).unwrap();
+        std::fs::write(kept.join("Old.azw3"), b"the kept copy").unwrap();
+        let shelf = tmp.path().join("shelf");
+        std::fs::create_dir_all(&shelf).unwrap();
+        std::fs::write(shelf.join("Old.azw3"), b"on the Kindle").unwrap();
+        let target = Target::Folder(shelf.clone());
+        crate::deliver::FAIL_WRITE_AFTER.with(|f| f.set(Some(2)));
+        let r = copy_in(&mut Conn::new(&target), &kept, "Old.azw3");
+        crate::deliver::FAIL_WRITE_AFTER.with(|f| f.set(None));
+        assert!(r.is_err());
+        assert_eq!(
+            std::fs::read(shelf.join("Old.azw3")).unwrap(),
+            b"on the Kindle"
+        );
+        assert_eq!(names_in(&shelf), ["Old.azw3"]);
+    }
 
     #[test]
     fn only_books_inside_documents_can_be_removed() {

@@ -27,6 +27,17 @@ says whether `system/thumbnails` is writable over that transport, which decides 
 | Fixed-layout AZW3 (comics, manga, picture books) | any Kindle | mass storage, MTP | n/a | 2026-11-01 (Scribe) | **Kindle Scribe 2024 over MTP, 2026-11-01: works** (owner's check, #278). Three books went over as PDOC `.azw3`, fitted to the Scribe's screen: Pepper&Carrot ep. 6 (colour comic, CC BY 4.0, looked the best), *Hokusai Manga* vol. 6 (right to left, public domain) and *The Tale of Peter Rabbit* (1916 scan, public domain). Each was made with Kindle Previewer 4.0.3, and `deckle kindle books` lists all three with their titles. Kindle Previewer caps comic pages at 1920 px tall. Still to do: a mass-storage Paperwhite (EBOK and the thumbnail), and each item below on its own. Originally pending (fixed-layout spec §9, #20): a CBZ and a fixed-layout EPUB go out as a KF8-only `.azw3` cut from Kindle Previewer 4.0.3's joint MOBI and stamped with EXTH 501/113. To check on a Paperwhite and a Scribe: the book opens with every page, a right-to-left manga turns pages the right way, the cover shows (PDOC and EBOK, and the thumbnail on mass storage), and the Kindle doesn't re-download or replace it. Checked so far only against Previewer's real output in `fixtures/comic/` |
 | Simulated mass-storage Kindle (FAT32 disk image with `documents/`, `system/thumbnails`) | n/a | mass storage | yes | 2026-10-19 | EBOK + thumbnail + restore copy delivered by CLI and GUI; M4: X-Ray + Word Wise sidecars and Deckle's `system/kll/kll.en.zh.klld` delivered by the GUI, dictionary not rewritten on a second send |
 
+## Re-sending over a book already there
+
+On a Kindle that mounts as a drive, a Kobo, a PocketBook or a folder, a book is written beside
+the old copy as `.<name>.<process id>.part` and renamed over it only when it's whole, so a full
+drive or a pulled cable leaves the old copy. A `.part` (or an older Deckle's `.<name>.tmp`) more
+than an hour old is removed at the start of the next delivery to `documents/` or `Deckle/`.
+
+- **To check on a real Kindle:** that it ignores a dot-file in `documents/` (no empty book on
+  the home screen while a send is under way, or after a pulled cable). Checked so far only
+  against FAT32, exFAT and APFS disk images on macOS; Linux vfat and Windows are not tested.
+
 ## Reading position (`.yjf`)
 
 Every book the Kindle has opened gets `documents/<stem>.sdr/<stem><suffix>.yjf`, where `<suffix>`
