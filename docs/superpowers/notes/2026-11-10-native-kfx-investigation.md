@@ -14,7 +14,7 @@ Date: 2026-11-10. Status: **design and phase 1 plan written; nothing built; noth
 
 ## The question
 
-Can Deckle drop Kindle Previewer and use kfxgen (`/Users/justin/GitHub/kfxgen-public`) instead?
+Can Deckle drop Kindle Previewer and use kfxgen (the kfxgen repository) instead?
 
 **Why (your words):** Previewer is slow, it can't be used in a container, and it needs a
 separate download.
