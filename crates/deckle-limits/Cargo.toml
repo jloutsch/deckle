@@ -9,7 +9,7 @@ repository.workspace = true
 # With default features this crate depends on nothing, so every importer can use it.
 [features]
 default = []
-# `xml_depth_over` and `parse_xml`, the depth check before `roxmltree` parses.
+# `parse_xml`, the depth check before `roxmltree` parses.
 xml = ["dep:roxmltree"]
 # `state_file`: load and save state files without silently replacing them.
 state = ["dep:tempfile", "dep:serde", "dep:serde_json"]

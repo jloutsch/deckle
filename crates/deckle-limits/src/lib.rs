@@ -4,7 +4,7 @@
 //!   below, [`read_capped`] and [`Budget`]. A file over a limit gives a [`TooLarge`] error that
 //!   names the limit, not a crash.
 //! - Nesting depth (`2026-11-12-nesting-depth-limits-design.md`): [`MAX_DEPTH`],
-//!   [`MAX_ION_DEPTH`], and with the `xml` feature `xml_depth_over` and `parse_xml`.
+//!   [`MAX_ION_DEPTH`], and with the `xml` feature `parse_xml`.
 //! - State files (`2026-11-12-state-file-safety-design.md`): with the `state` feature, the
 //!   `state_file` module.
 //!
@@ -19,7 +19,7 @@ mod xml;
 #[cfg(feature = "xml")]
 pub use roxmltree;
 #[cfg(feature = "xml")]
-pub use xml::{XmlError, parse_xml, xml_depth_over};
+pub use xml::{XmlError, parse_xml};
 
 #[cfg(feature = "state")]
 pub mod state_file;

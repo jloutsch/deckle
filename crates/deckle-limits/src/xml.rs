@@ -25,10 +25,16 @@ use crate::MAX_DEPTH;
 /// `name="value"` pairs or names `encoding` twice; and when it names Shift_JIS, Big5, GBK or
 /// gb18030 (or an alias) and a `[` or `]` follows a byte of 0x80 or above.
 ///
-/// The result is only guaranteed for UTF-8 input, and for the UTF-16 it detects. A caller
-/// whose parser honours other declared encodings must decode the text to UTF-8 first and scan
-/// that.
-pub fn xml_depth_over(xml: &[u8], limit: usize) -> bool {
+/// The answer is for UTF-8 input and for the UTF-16 it detects. For other multibyte encodings
+/// it errs toward "over" and can refuse ordinary text in them: in Shift_JIS, `ー` is the bytes
+/// `81 5B`, a high byte followed by `[`. Feeds must not be scanned with it; the feed code checks
+/// depth with its own quick-xml pass. A caller whose parser honours other declared encodings
+/// decodes the text to UTF-8 first and uses [`parse_xml`] or that pass.
+///
+/// Crate-private: nothing outside this crate calls it, and [`parse_xml`] runs the same scan
+/// directly, with the encoding check off.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn xml_depth_over(xml: &[u8], limit: usize) -> bool {
     let utf16 = |bytes, little| Utf16 { bytes, little };
     let verdict = match xml {
         [0xFE, 0xFF, rest @ ..] => Scan::new(utf16(rest, false), true).run(limit),
