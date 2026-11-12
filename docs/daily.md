@@ -88,7 +88,10 @@ can't be written to at all (a drive mounted read-only) or a lost MTP session sto
 with one message, and what wasn't sent stays queued. A single book on the reader that's locked
 or read-only only costs that book: it's named, with "unlock or delete it". `digest push` exits with an error only then;
 `digest run` only when its own edition didn't go (a stop before it went counts, one after
-doesn't), so the scheduler doesn't print the paper again for another book's sake. When a
+doesn't), so the scheduler doesn't print the paper again for another book's sake. A run also
+counts as failed while any connected reader hasn't got the edition, even if another has: the
+scheduler's next run is what sends it again, and it sends it again, in place of the copy
+already there, to the readers that have it too. When a
 paper's edition is queued both as a Kindle book and as a PDF and the one this Kindle takes
 fails, the other goes in its place and the failed one leaves the outbox.
 

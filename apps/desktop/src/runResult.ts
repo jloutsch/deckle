@@ -42,7 +42,24 @@ export function notSent(report: any): NotSent[] {
     .map(([name, why]) => ({ name: String(name), why: String(why) }));
 }
 
-/** Red only when the run failed and its own edition didn't go: another entry is a warning. */
+/**
+ * The readers that didn't get this run's edition while another did: the Kindle (`outcome`) and a
+ * Kobo or PocketBook (`reader`). `digest run` then exits with an error, so its entry left unsent
+ * on that reader is the one that failed it.
+ */
+export function editionMissedOn(r: RunResult): ("kindle" | "reader")[] {
+  if (r.ok || r.report?.edition_sent !== true) return [];
+  const missed = (o: any) => !!o?.flush && !o.edition_sent && (o.flush.failed?.length ?? 0) > 0;
+  const out: ("kindle" | "reader")[] = [];
+  if (missed(r.report?.outcome)) out.push("kindle");
+  if (missed(r.report?.reader)) out.push("reader");
+  return out;
+}
+
+/**
+ * Red when `digest run` failed: its edition didn't go, a push stopped before it went, or a
+ * connected reader didn't get it while another did. Another entry left unsent doesn't fail it.
+ */
 export function runFailed(r: RunResult): boolean {
-  return !r.ok && r.report?.edition_sent !== true;
+  return !r.ok;
 }

@@ -77,5 +77,7 @@
   "settings.language.draft": "Ogni traduzione nasce come bozza dell’IA, poi corretta dai lettori.",
   "settings.language.help": "Aiuta a tradurre",
   "daily.run.notSent": "Non inviato: {name} ({why})",
-  "daily.run.notSentNote": "Restano in coda di uscita e partono con il prossimo invio."
+  "daily.run.notSentNote": "Restano in coda di uscita e partono con il prossimo invio.",
+  "daily.run.missedKindle": "Questo giornale non è arrivato al tuo Kindle. Resta in coda di uscita e parte con il prossimo invio.",
+  "daily.run.missedReader": "Questo giornale non è arrivato al tuo Kobo o PocketBook. Resta in coda di uscita e parte con il prossimo invio."
 }

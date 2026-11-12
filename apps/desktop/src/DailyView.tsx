@@ -33,7 +33,7 @@ import { keepUnfinished, savable } from "./subscriptions";
 import type { ExportConfig, PressSetupStatus, DailyConfig, DailyState, Day, EditionPreview, EmailConfig, EmailStatus, NextPaper, PagePlanRow, PapersView, ReadershipView, ReadingEntry, RunResult } from "./types";
 import { DEFAULT_EMAIL } from "./types";
 import { useT } from "./i18n";
-import { notSent, runFailed, summary } from "./runResult";
+import { editionMissedOn, notSent, runFailed, summary } from "./runResult";
 
 /** Amazon's Manage Your Content and Devices: the approved-sender list and the emailed Docs. */
 const MYCD = "https://www.amazon.com/mycd";
@@ -591,6 +591,10 @@ export default function DailyView({
                 {result && (
                   <div className={`run-result ${runFailed(result.r) ? "fail" : "ok"}`}>
                     <div>{summary(result.r, result.send)}</div>
+                    {result.send &&
+                      editionMissedOn(result.r).map((d) => (
+                        <p key={d}>{t(d === "kindle" ? "daily.run.missedKindle" : "daily.run.missedReader")}</p>
+                      ))}
                     {result.send && notSent(result.r.report).length > 0 && (
                       <div className="not-sent">
                         <ul>

@@ -6824,6 +6824,11 @@ mod tests {
             false,
         );
         assert!(!edition_undelivered(&[&stopped_elsewhere, &kobo], stem));
+        // The Kindle refused the edition (not a stop) while the Kobo took it: the run fails, so
+        // the daemon's re-run is a retry for a Kindle that stays plugged in.
+        let kindle_missed = flush(&[], &["deckle-daily-2026-10-23.kfx"], false);
+        assert!(kobo.sent(stem));
+        assert!(edition_undelivered(&[&kindle_missed, &kobo], stem));
         assert!(!edition_undelivered(&[&other], stem));
         assert!(edition_undelivered(&[&own], stem));
     }

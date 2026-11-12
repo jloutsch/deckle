@@ -34,7 +34,9 @@
   written into that folder, whether by a push, a send, a put back or a restore. `digest push`
   fails only when the push stopped, and `digest run` only when its own edition didn't go, so the
   scheduler no longer prints the paper again all day for another book's sake; the Daily tab
-  lists what wasn't sent under the run's result. A failed prune after the deliveries is a warning beside them, not an error that hid
+  lists what wasn't sent under the run's result. A run still counts as failed while any connected
+  reader hasn't got the edition, even if another has, and the scheduler's re-run then sends it
+  again, replacing the copy, to the readers that already have it. A failed prune after the deliveries is a warning beside them, not an error that hid
   them. A book and a PDF with the same name now both go; only a paper's dated edition queued in
   both forms sends just one, and if that one fails the other goes in its place. A book whose
   X-Ray, Word Wise or thumbnail couldn't be written is now counted as delivered with a warning,
