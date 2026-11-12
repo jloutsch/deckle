@@ -47,6 +47,14 @@ pub fn parse(
     now: DateTime<Utc>,
     max_age_hours: u32,
 ) -> Result<(Option<String>, Vec<Item>), String> {
+    // `feed-rs` recurses once per element level before it rejects anything (nesting-depth
+    // design): check the raw bytes first, whatever their encoding.
+    if deckle_limits::xml_depth_over(bytes, deckle_limits::MAX_DEPTH) {
+        return Err(format!(
+            "unreadable feed: its markup nests too deep (more than {} levels) or is unfinished",
+            deckle_limits::MAX_DEPTH
+        ));
+    }
     let feed = feed_rs::parser::parse(bytes).map_err(|e| e.to_string())?;
     let cutoff = now - chrono::Duration::hours(i64::from(max_age_hours));
     let mut items: Vec<Item> = feed
@@ -920,5 +928,83 @@ mod tests {
         assert_eq!(a.extra.access, crate::publisher::Access::Open);
         assert!(a.body.contains("word word"));
         assert!(!a.body.contains("Subscriber story"));
+    }
+
+    /// An RSS feed of one item whose description holds `levels` nested `media:group`, in
+    /// Latin-1 (`é` as one byte) or UTF-8.
+    fn grouped_feed(levels: usize, latin1: bool) -> Vec<u8> {
+        let e: &[u8] = if latin1 { b"\xe9" } else { "é".as_bytes() };
+        let encoding = if latin1 { "ISO-8859-1" } else { "UTF-8" };
+        let mut out = format!(
+            "<?xml version=\"1.0\" encoding=\"{encoding}\"?><rss version=\"2.0\" \
+             xmlns:media=\"http://search.yahoo.com/mrss/\"><channel><title>Deep</title><item>\
+             <title>Caf"
+        )
+        .into_bytes();
+        out.extend_from_slice(e);
+        out.extend_from_slice(b"</title><link>https://x/a</link>");
+        out.extend_from_slice(&b"<media:group>".repeat(levels));
+        out.extend_from_slice(&b"</media:group>".repeat(levels));
+        out.extend_from_slice(b"</item></channel></rss>");
+        out
+    }
+
+    fn utf16(feed: &[u8], little: bool) -> Vec<u8> {
+        // Without the declaration: quick-xml 0.42 panics on `encoding="UTF-16"` after a BOM
+        // ("set_encoding() called after prefix buffer was drained"), deep or not.
+        let text = String::from_utf8(feed.to_vec())
+            .unwrap()
+            .replace("<?xml version=\"1.0\" encoding=\"UTF-8\"?>", "");
+        std::iter::once(0xFEFF)
+            .chain(text.encode_utf16())
+            .flat_map(|u| {
+                if little {
+                    u.to_le_bytes()
+                } else {
+                    u.to_be_bytes()
+                }
+            })
+            .collect()
+    }
+
+    /// Parsed on a 1 MiB stack: the depth check runs before `feed-rs` recurses, so a parse that
+    /// came first would abort the process.
+    fn parse_small_stack(feed: Vec<u8>) -> Result<Vec<String>, String> {
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(move || {
+                let now = "2026-10-20T22:00:00Z".parse().unwrap();
+                parse(&feed, now, 72).map(|(_, items)| items.into_iter().map(|i| i.title).collect())
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_feed_nested_5_000_deep_is_refused_without_an_abort() {
+        let e = parse_small_stack(grouped_feed(5_000, false)).unwrap_err();
+        assert!(e.contains("nests too deep"), "{e}");
+        assert_eq!(parse_small_stack(grouped_feed(3, false)).unwrap(), ["Café"]);
+    }
+
+    #[test]
+    fn a_deep_latin1_feed_is_refused_and_a_shallow_one_loads() {
+        assert!(parse_small_stack(grouped_feed(5_000, true)).is_err());
+        assert_eq!(parse_small_stack(grouped_feed(3, true)).unwrap(), ["Café"]);
+    }
+
+    #[test]
+    fn a_deep_utf16_feed_is_refused_and_a_shallow_one_loads() {
+        for little in [true, false] {
+            let deep = utf16(&grouped_feed(5_000, false), little);
+            assert!(parse_small_stack(deep).is_err(), "little {little}");
+            let shallow = utf16(&grouped_feed(3, false), little);
+            assert_eq!(
+                parse_small_stack(shallow).unwrap(),
+                ["Café"],
+                "little {little}"
+            );
+        }
     }
 }
