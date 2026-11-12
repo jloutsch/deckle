@@ -1377,6 +1377,8 @@ dependencies = [
 name = "deckle-comic"
 version = "0.13.0"
 dependencies = [
+ "deckle-kfx",
+ "deckle-limits",
  "flate2",
  "image",
  "pdf-writer",
@@ -1398,6 +1400,7 @@ dependencies = [
  "deckle-docx",
  "deckle-fb2",
  "deckle-kfx",
+ "deckle-limits",
  "deckle-markdown",
  "deckle-mobi",
  "deckle-odt",
@@ -1537,6 +1540,7 @@ dependencies = [
 name = "deckle-kfx"
 version = "0.13.0"
 dependencies = [
+ "deckle-limits",
  "rand 0.9.5",
  "roxmltree",
  "rusqlite",
@@ -1570,6 +1574,7 @@ dependencies = [
  "deckle-docx",
  "deckle-fb2",
  "deckle-kfx",
+ "deckle-limits",
  "deckle-markdown",
  "deckle-mobi",
  "deckle-odt",
@@ -1633,6 +1638,7 @@ version = "0.13.0"
 dependencies = [
  "chrono",
  "deckle-digest",
+ "deckle-limits",
  "deckle-readership",
  "deunicode",
  "html-escape",
@@ -1701,6 +1707,7 @@ dependencies = [
  "deckle-highlights",
  "deckle-kfx",
  "deckle-library",
+ "deckle-limits",
  "roxmltree",
  "serde",
  "serde_json",

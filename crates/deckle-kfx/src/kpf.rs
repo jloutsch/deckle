@@ -3,8 +3,9 @@
 //! Port of kfxlib's `kpf_container.py`.
 
 use std::collections::HashMap;
-use std::io::Read;
 use std::path::Path;
+
+use deckle_limits::{Budget, MAX_BOOK_BYTES, MAX_ENTRY_BYTES, TooLarge};
 
 use crate::fragment::{Fragment, FragmentList, is_root_type};
 use crate::ion::{BVM, IonError, Struct, Sym, Value, decode_annotated, decode_single};
@@ -40,6 +41,10 @@ pub enum KpfError {
     MissingResource(String),
     #[error("invalid book.kcb: {0}")]
     Kcb(#[from] serde_json::Error),
+    #[error("this book unpacks to {0}")]
+    TooLarge(deckle_limits::TooLarge),
+    #[error("a file in this book unpacks to {0}")]
+    EntryTooLarge(deckle_limits::TooLarge),
 }
 
 /// A KPF read into memory, before any fix-ups.
@@ -53,6 +58,9 @@ pub struct Kpf {
     pub source_epub: Option<Vec<u8>>,
     /// True unless `$490` already carries ASIN/asset_id/cde_content_type/content_id.
     pub is_prepub: bool,
+    /// The KPF's unpacked-size budget after reading it: `source_epub` is read through what is
+    /// left, not a new one.
+    pub budget: Budget,
 }
 
 /// Removes the 1024-byte fingerprint records Amazon injects into the KDF SQLite file (one at
@@ -96,8 +104,29 @@ struct Row {
 
 /// Reads a `.kpf` file into fragments.
 pub fn read_kpf(path: &Path) -> Result<Kpf, KpfError> {
+    read_kpf_with(path, MAX_ENTRY_BYTES, MAX_BOOK_BYTES)
+}
+
+fn read_kpf_with(path: &Path, entry_limit: u64, book_limit: u64) -> Result<Kpf, KpfError> {
+    let too_large = |e: TooLarge| {
+        if e.limit == entry_limit {
+            KpfError::EntryTooLarge(e)
+        } else {
+            KpfError::TooLarge(e)
+        }
+    };
     let file = std::fs::File::open(path)?;
     let mut zip = zip::ZipArchive::new(file)?;
+    // `zip` stops each entry at its declared size, so this bounds the reads below.
+    let mut declared = Budget::new(book_limit);
+    for i in 0..zip.len() {
+        let size = zip.by_index_data(i).map(|e| e.size()).unwrap_or(0);
+        if size > entry_limit {
+            return Err(too_large(TooLarge { limit: entry_limit }));
+        }
+        declared.add(size).map_err(too_large)?;
+    }
+    let mut budget = Budget::new(book_limit);
     let mut kdf = None;
     let mut kcb: serde_json::Value = serde_json::Value::Object(Default::default());
     let mut kcb_dir = String::new();
@@ -109,8 +138,12 @@ pub fn read_kpf(path: &Path) -> Result<Kpf, KpfError> {
             continue;
         }
         let name = entry.name()?.into_owned();
-        let mut data = Vec::with_capacity(entry.size() as usize);
-        entry.read_to_end(&mut data)?;
+        let data = budget
+            .read(&mut entry, entry_limit)
+            .map_err(|e| match TooLarge::in_io(&e) {
+                Some(t) => too_large(t),
+                None => KpfError::Io(e),
+            })?;
         if name.ends_with(".kdf") {
             kdf = Some((name.clone(), data.clone()));
         } else if name.ends_with(".kcb") {
@@ -260,6 +293,7 @@ pub fn read_kpf(path: &Path) -> Result<Kpf, KpfError> {
         kcb,
         source_epub,
         is_prepub,
+        budget,
     })
 }
 
@@ -451,4 +485,66 @@ fn has_publication_metadata(fragments: &FragmentList) -> bool {
         break;
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fixtures::stored_zip;
+
+    fn kpf(entries: &[(&str, &[u8], u64)]) -> tempfile::NamedTempFile {
+        let f = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(f.path(), stored_zip(entries)).unwrap();
+        f
+    }
+
+    #[test]
+    fn an_entry_declaring_2_pow_60_bytes_is_refused() {
+        let f = kpf(&[("resources/book.kdf", b"tiny", 1 << 60)]);
+        let e = read_kpf(f.path()).unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            "a file in this book unpacks to more than 256 MB"
+        );
+    }
+
+    #[test]
+    fn reading_stops_at_the_entry_and_book_limits() {
+        let k = vec![0u8; 600];
+        let f = kpf(&[("a", &k, 600), ("b", &k, 600)]);
+        let e = read_kpf_with(f.path(), 500, 10_000).unwrap_err();
+        assert!(
+            matches!(e, KpfError::EntryTooLarge(t) if t.limit == 500),
+            "{e}"
+        );
+        let e = read_kpf_with(f.path(), 1100, 1000).unwrap_err();
+        assert!(matches!(e, KpfError::TooLarge(t) if t.limit == 1000), "{e}");
+        // Within both, it fails later, for want of a KDF.
+        assert!(matches!(
+            read_kpf_with(f.path(), 1000, 10_000),
+            Err(KpfError::NoKdf)
+        ));
+    }
+
+    #[test]
+    fn an_entry_longer_than_it_declares_is_not_read_whole() {
+        let k = vec![0u8; 5000];
+        let f = kpf(&[("a", &k, 10)]);
+        assert!(matches!(
+            read_kpf_with(f.path(), 1000, 10_000),
+            Err(KpfError::Io(_))
+        ));
+    }
+
+    #[test]
+    fn the_budget_left_over_comes_back_with_the_book() {
+        let path = crate::fixtures::path("deckle-mini.kpf");
+        let k = read_kpf(&path).unwrap();
+        let unpacked: u64 = {
+            let mut z = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
+            (0..z.len()).map(|i| z.by_index(i).unwrap().size()).sum()
+        };
+        assert_eq!(k.budget.used(), unpacked);
+        assert_eq!(k.budget.limit(), deckle_limits::MAX_BOOK_BYTES);
+    }
 }

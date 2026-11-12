@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 thiserror.workspace = true
 zip.workspace = true
+deckle-limits.workspace = true
 sha2.workspace = true
 roxmltree.workspace = true
 tempfile.workspace = true
@@ -18,6 +19,7 @@ pdf-writer = "0.15"
 flate2 = "1"
 
 [dev-dependencies]
+deckle-kfx.workspace = true
 tempfile.workspace = true
 roxmltree.workspace = true
 zip.workspace = true

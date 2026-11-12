@@ -30,6 +30,7 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 zip.workspace = true
+deckle-limits.workspace = true
 roxmltree.workspace = true
 image.workspace = true
 csv.workspace = true

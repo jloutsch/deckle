@@ -69,6 +69,20 @@ styles.
   contents: a course packet, a week of long reads, a report in pieces.
 - A finished `.kfx` is sent as it is.
 
+## Size limits
+
+A file that would make Deckle use more memory than these is refused, with an error that names
+the limit, instead of slowing the computer or crashing. Real books are far inside them.
+
+| What | Limit |
+|---|---|
+| EPUB, KPF, CBZ: one file inside the archive, unpacked | 256 MB |
+| EPUB, KPF: the whole archive, unpacked | 1 GB |
+| CBZ: the whole archive, unpacked | 4 GB |
+| CBZ: one page | 256 MB |
+
+The numbers are in one place, `crates/deckle-limits`.
+
 ## The library
 
 **The library is a plain folder** (`Author/Title/` plus a `deckle.json`), no database. Deckle shows

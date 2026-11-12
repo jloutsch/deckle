@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A hostile zip can no longer crash Deckle or fill its memory.** An EPUB, KPF or CBZ whose
+  entries claim an impossible size (a 1 KB file declaring 2^60 bytes aborted the app) or unpack
+  past a limit is now refused with an error that names the limit: 256 MB for one file inside, 1
+  GB for a whole book, 4 GB for a comic. Real books are far inside them; the limits are in
+  [docs/books.md](docs/books.md#size-limits).
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in
