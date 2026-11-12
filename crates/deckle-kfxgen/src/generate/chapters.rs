@@ -179,7 +179,7 @@ fn read_chapter(ch: &PyValue, at: &str) -> Result<Chapter, GenerateError> {
                 .ok_or_else(|| model_err(format!("{at}.blocks: a list")))?
                 .iter()
                 .enumerate()
-                .map(|(j, b)| read_block(b, &format!("{at}.blocks[{j}]")))
+                .map(|(j, b)| read_block(b, &format!("{at}.blocks[{j}]"), 0))
                 .collect::<Result<Vec<_>, _>>()?,
         ),
     };
@@ -256,7 +256,12 @@ fn ems(b: &PyValue, key: &str, at: &str) -> Result<Option<f64>, GenerateError> {
     }
 }
 
-pub(crate) fn read_block(b: &PyValue, at: &str) -> Result<Block, GenerateError> {
+/// `boxes_around` counts the boxes the block is in.
+pub(crate) fn read_block(
+    b: &PyValue,
+    at: &str,
+    boxes_around: usize,
+) -> Result<Block, GenerateError> {
     let kind = match b.get("type") {
         None | Some(PyValue::None) => None,
         Some(PyValue::Str(t)) if t == "text" => None,
@@ -286,7 +291,7 @@ pub(crate) fn read_block(b: &PyValue, at: &str) -> Result<Block, GenerateError> 
             });
         }
         Some(_) => {
-            let boxed = read_box(b, at)?;
+            let boxed = read_box(b, at, boxes_around + 1)?;
             let text = match b.get("text") {
                 Some(PyValue::Str(s)) => s.clone(),
                 _ => return Err(model_err(format!("{at}.text: a string"))),

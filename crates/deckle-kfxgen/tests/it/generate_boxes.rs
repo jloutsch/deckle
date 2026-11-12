@@ -89,3 +89,32 @@ fn a_length_kfxgen_cannot_hold_is_a_model_error() {
         }
     }
 }
+
+/// `boxes` with its second chapter's box nested `depth` deep, built in the model directly:
+/// JSON can't carry it (serde_json stops at 128 levels, 27 boxes).
+fn nested_boxes(depth: usize) -> Result<(), GenerateError> {
+    let mut model = load_model(&deckle_kfx::fixtures::kfxgen("models/boxes")).unwrap();
+    let chapter = item(entry(&mut model.args, "chapters"), 1);
+    let boxed = item(entry(chapter, "blocks"), 2);
+    let outer = boxed.clone();
+    for _ in 1..depth {
+        let inner = std::mem::replace(boxed, outer.clone());
+        *entry(boxed, "blocks") = PyValue::List(vec![inner]);
+    }
+    generate(&model).map(|_| ())
+}
+
+/// Boxes nested past 32 levels are unsupported, before the port recurses into them: an EPUB's
+/// boxes could otherwise overflow the stack (a debug build on a 2 MiB thread did at 60).
+#[test]
+fn boxes_nested_past_32_levels_are_unsupported() {
+    nested_boxes(32).unwrap();
+    for depth in [33, 1_000] {
+        assert!(matches!(
+            nested_boxes(depth),
+            Err(GenerateError::Unsupported(
+                "boxes nested more than 32 levels deep"
+            ))
+        ));
+    }
+}

@@ -164,3 +164,15 @@ recursively too, and a debug build on a 2 MiB thread overflowed its stack, abort
 process, at 80 levels (72 passed). So contents nested more than 32 levels deep are
 `GenerateError::Unsupported`, checked before any recursion: a book kfxgen writes at 33 to 162
 levels is refused. No fixture or corpus book nests more than 3.
+
+## Boxes nested more than 32 levels deep
+
+kfxgen reads and writes a box's blocks recursively; called directly under Python's default
+recursion limit (1,000), it writes the `boxes` fixture's box nested up to 245 deep and raises
+`RecursionError` at 246. The port reads and writes them recursively too (`read_block` and
+`read_box`), and a debug build on a 2 MiB thread overflowed its stack, aborting the process,
+at about 60 levels (55 passed; a release build at about 250). So boxes nested more than 32
+levels deep are `GenerateError::Unsupported`, checked while the model is read, before any
+deeper recursion: a book kfxgen writes at 33 to 245 levels is refused. No fixture nests more
+than 2, no corpus book more than 1. A model loaded from JSON can't reach the limit:
+serde_json stops at 128 levels, which `load_model` reaches at 27 nested boxes.

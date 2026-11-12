@@ -178,8 +178,13 @@ pub(crate) struct BoxBlock {
     pub opened: bool,
 }
 
-/// A box block's `box` and `blocks`.
-pub(crate) fn read_box(b: &PyValue, at: &str) -> Result<BoxBlock, GenerateError> {
+/// A box block's `box` and `blocks`; `depth` is 1 for a box in no other.
+pub(crate) fn read_box(b: &PyValue, at: &str, depth: usize) -> Result<BoxBlock, GenerateError> {
+    // Reading and writing boxes recurse once a level: stop before an EPUB's boxes can
+    // overflow the stack (DIVERGENCES.md).
+    if depth > MAX_BOX_DEPTH {
+        return Err(Unsupported("boxes nested more than 32 levels deep"));
+    }
     let at_box = format!("{at}.box");
     let d = match b.get("box") {
         Some(d @ PyValue::Dict(_)) => d,
@@ -213,7 +218,7 @@ pub(crate) fn read_box(b: &PyValue, at: &str) -> Result<BoxBlock, GenerateError>
         .ok_or_else(|| model_err(format!("{at}.blocks: a list of blocks")))?
         .iter()
         .enumerate()
-        .map(|(j, kid)| read_block(kid, &format!("{at}.blocks[{j}]")))
+        .map(|(j, kid)| read_block(kid, &format!("{at}.blocks[{j}]"), depth))
         .collect::<Result<_, _>>()?;
     Ok(BoxBlock {
         spec,
@@ -221,6 +226,9 @@ pub(crate) fn read_box(b: &PyValue, at: &str) -> Result<BoxBlock, GenerateError>
         opened: false,
     })
 }
+
+/// The deepest boxes the port writes, as for contents (`nav.rs`).
+const MAX_BOX_DEPTH: usize = 32;
 
 /// A box's `open` (:5952): its look, and its margins spaced as a paragraph's, in its ems.
 #[derive(Clone)]
