@@ -1146,10 +1146,12 @@ impl PressJournal {
     pub(crate) fn forget_old(
         &mut self,
         now: DateTime<Utc>,
+        skip: &std::collections::HashSet<PathBuf>,
         mut remove_status: impl FnMut(&PressBinding, Uuid) -> Result<(), PressError>,
     ) -> Result<(), PressError> {
         self.ensure_healthy()?;
         let mut data = self.data.clone();
+        let before = (data.entries.len(), data.outputs.len(), data.jobs.len());
         // A refusal (no job) is forgotten sooner and keeps its status file: the scan never
         // journals a request whose status file exists, so it cannot come back.
         let refusals: std::collections::HashSet<_> = data
@@ -1181,6 +1183,7 @@ impl PressJournal {
                 self.binding_for_request(e.request.request_id)
                     .map(|b| (b, e.request.request_id))
             })
+            .filter(|(b, _)| !skip.contains(&b.root))
             .collect();
         let mut error = None;
         let mut completed = refusals;
@@ -1209,7 +1212,10 @@ impl PressJournal {
                 || data.entries.iter().any(|e| e.status.job_id == Some(j.id))
                 || data.outputs.iter().any(|o| o.lease.job_id == j.id)
         });
-        self.commit(data)?;
+        // Nothing to forget is the usual case on every tick: no commit then.
+        if (data.entries.len(), data.outputs.len(), data.jobs.len()) != before {
+            self.commit(data)?;
+        }
         error.map_or(Ok(()), Err)
     }
 }

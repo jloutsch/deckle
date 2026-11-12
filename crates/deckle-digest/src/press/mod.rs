@@ -296,7 +296,7 @@ pub use publish::{
     archived_artifact, flush_changed, flush_statuses, publish_result, recover_result,
     status_written, write_unjournaled_status,
 };
-pub use retention::prune_results;
+pub use retention::{prune_results, prune_results_except};
 
 pub mod scan;
 

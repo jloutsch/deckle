@@ -238,12 +238,24 @@ fn remove_bundle(
 /// Keep seven newest per folder, every result under 48 hours, and all unpublished
 /// intents. Tombstones are committed and shared before deleting either owned copy.
 pub fn prune_results(j: &mut PressJournal, now: DateTime<Utc>) -> Result<(), PressError> {
+    prune_results_except(j, now, &std::collections::HashSet::new())
+}
+/// `prune_results`, leaving alone the folders in `skip` (a folder whose configured paper
+/// could not be registered: its outputs still belong to the paper bound there).
+pub fn prune_results_except(
+    j: &mut PressJournal,
+    now: DateTime<Utc>,
+    skip: &std::collections::HashSet<std::path::PathBuf>,
+) -> Result<(), PressError> {
     j.ensure_healthy()?;
     let mut error = None;
     let mut outputs = j.outputs();
     outputs.sort_by_key(|o| std::cmp::Reverse((o.published_at, o.result.edition_id)));
     let mut counts = std::collections::HashMap::new();
-    for o in outputs {
+    for o in outputs
+        .into_iter()
+        .filter(|o| !skip.contains(&o.lease.root))
+    {
         let outcome = (|| -> Result<(), PressError> {
             let active = j.active();
             for stage in &o.stages {
@@ -330,7 +342,7 @@ pub fn prune_results(j: &mut PressJournal, now: DateTime<Utc>) -> Result<(), Pre
             error.get_or_insert(e);
         }
     }
-    let expired = j.forget_old(now, |b, id| {
+    let expired = j.forget_old(now, skip, |b, id| {
         check_binding(b)?;
         remove_status(b, id)
     });

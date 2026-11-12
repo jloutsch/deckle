@@ -104,15 +104,23 @@ impl PressSupervisor {
                 let stepped = engine.step(&papers, &version, rev);
                 // A folder's policy error does not block other folders and needs no fresh
                 // journal; it is reported when it changes, not on every tick.
-                if stepped.is_ok() {
-                    let report = engine.folder_report();
-                    if report != reported
-                        && (report.is_empty() || tx.try_send(report.clone()).is_ok())
-                    {
-                        reported = report;
-                    }
+                let report = engine.folder_report();
+                if let Ok(()) = stepped
+                    && report != reported
+                    && (report.is_empty() || tx.try_send(report.clone()).is_ok())
+                {
+                    reported = report.clone();
                 }
                 if let Err(error) = stepped {
+                    // A step error must not hide a folder's own explanation: send both.
+                    let message = if report != reported && !report.is_empty() {
+                        format!("{error}; {report}")
+                    } else {
+                        error.to_string()
+                    };
+                    if tx.try_send(message).is_ok() {
+                        reported = report;
+                    }
                     // Any uncertain snapshot commit requires a fresh locked journal. Stop the
                     // child first, keep run.lock until the next reconciliation or shutdown.
                     let live = engine.running.as_ref().is_some_and(|r| {
@@ -126,7 +134,6 @@ impl PressSupervisor {
                         engine.journal = None;
                         engine.registered.clear();
                     }
-                    let _ = tx.try_send(error.to_string());
                 }
             }
         });
@@ -343,6 +350,12 @@ struct Engine {
     /// flush error drops and reopens the journal.
     flushed: HashMap<Uuid, PressStatus>,
     full_flush_at: Option<DateTime<Utc>>,
+    /// Folders whose configured paper could not be registered this step. Their journaled
+    /// statuses and outputs belong to the paper still bound there and are left alone, so a
+    /// blocked move is a folder error, not a step error that reopens the journal.
+    blocked: HashSet<PathBuf>,
+    /// A refused registration and when it may be tried again.
+    held: HashMap<PathBuf, (PressBinding, DateTime<Utc>, PressError)>,
 }
 impl Engine {
     fn folder_report(&self) -> String {
@@ -371,6 +384,8 @@ impl Engine {
             full: HashSet::new(),
             flushed: HashMap::new(),
             full_flush_at: None,
+            blocked: HashSet::new(),
+            held: HashMap::new(),
         }
     }
     fn stop_child(&mut self) -> Result<(), PressError> {
@@ -553,15 +568,36 @@ impl Engine {
                 let policy = (binding.clone(), enabled, stopped);
                 if self.registered.get(&binding.root) != Some(&policy) {
                     // A folder still bound to another paper (or otherwise refused) is left
-                    // out: its old binding is disabled below, and other folders go on.
+                    // out: its old binding is disabled below, and other folders go on. A
+                    // refused registration is retried once a minute, not on every tick: a
+                    // blocked move re-checks the old paper's editions each time.
+                    if let Some((held, until, error)) = self.held.get(&binding.root)
+                        && *held == binding
+                        && now < *until
+                    {
+                        self.folder_errors
+                            .insert(binding.root.clone(), error.clone());
+                        self.blocked.insert(binding.root.clone());
+                        continue;
+                    }
                     if let Err(e) = self.journal.as_mut().unwrap().register_binding(
                         binding.clone(),
                         enabled,
                         stopped,
                     ) {
+                        self.held.insert(
+                            binding.root.clone(),
+                            (
+                                binding.clone(),
+                                now + deckle_digest::chrono::Duration::minutes(1),
+                                e.clone(),
+                            ),
+                        );
                         self.folder_errors.insert(binding.root.clone(), e);
+                        self.blocked.insert(binding.root.clone());
                         continue;
                     }
+                    self.held.remove(&binding.root);
                     self.registered.insert(policy.0.root.clone(), policy);
                 }
                 bindings.push((binding, paper.clone(), index));
@@ -587,6 +623,7 @@ impl Engine {
         rev: u64,
     ) -> Result<(), PressError> {
         self.folder_errors.clear();
+        self.blocked.clear();
         if !self.initialize(papers)? {
             return Ok(());
         }
@@ -864,9 +901,16 @@ impl Engine {
             self.flushed.clear();
             self.full_flush_at = Some(now);
         }
-        let statuses = press::flush_changed(self.journal.as_mut().unwrap(), &mut self.flushed);
-        let retention =
-            press::prune_results(self.journal.as_mut().unwrap(), (self.options.clock)());
+        let statuses = press::flush_changed(
+            self.journal.as_mut().unwrap(),
+            &mut self.flushed,
+            &self.blocked,
+        );
+        let retention = press::prune_results_except(
+            self.journal.as_mut().unwrap(),
+            (self.options.clock)(),
+            &self.blocked,
+        );
         statuses.and(retention)?;
         if let Some(error) = policy_error {
             return Err(error);

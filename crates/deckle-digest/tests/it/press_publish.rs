@@ -694,22 +694,22 @@ fn press_status_flush_writes_only_changed_statuses_while_a_folder_is_offline() {
         .unwrap();
     let mut flushed = std::collections::HashMap::new();
     fs::rename(&other.root, d.path().join("offline")).unwrap();
-    assert!(flush_changed(&mut j, &mut flushed).is_err());
+    assert!(flush_changed(&mut j, &mut flushed, &Default::default()).is_err());
     assert!(status_path(&b, here.request_id).exists());
     // A file removed after a successful write is not rewritten by an incremental flush:
     // each of 100 ticks writes only the offline folder's unwritten status.
     fs::remove_file(status_path(&b, here.request_id)).unwrap();
     for _ in 0..100 {
-        assert!(flush_changed(&mut j, &mut flushed).is_err());
+        assert!(flush_changed(&mut j, &mut flushed, &Default::default()).is_err());
     }
     assert!(!status_path(&b, here.request_id).exists());
     fs::rename(d.path().join("offline"), &other.root).unwrap();
-    flush_changed(&mut j, &mut flushed).unwrap();
+    flush_changed(&mut j, &mut flushed, &Default::default()).unwrap();
     assert!(status_path(&other, away.request_id).exists());
     assert!(!status_path(&b, here.request_id).exists());
     // A full flush (an empty record of what was written) writes it again.
     flushed.clear();
-    flush_changed(&mut j, &mut flushed).unwrap();
+    flush_changed(&mut j, &mut flushed, &Default::default()).unwrap();
     assert!(status_path(&b, here.request_id).exists());
 }
 #[test]
@@ -899,4 +899,82 @@ fn press_replace_binding_removes_unpublished_intents_and_stages() {
     drop(j);
     let j = PressJournal::open(&d.path().join("journal")).unwrap();
     assert_eq!(j.bindings(), vec![b]);
+}
+#[test]
+fn press_status_files_never_carry_an_error_detail() {
+    let d = tempfile::tempdir().unwrap();
+    let (mut j, a) = setup(d.path());
+    let published = publish_editions(d.path(), &mut j, &a, 1);
+    let refused = request_at(&a, now(), now() + Duration::hours(24));
+    j.reject_in(&a, refused, "busy", PressErrorCode::Busy, now())
+        .unwrap();
+    let created = now() - Duration::days(4);
+    let late = request_at(&a, created, created + Duration::hours(24));
+    let status = j
+        .reject_in(&a, late, "late", PressErrorCode::Expired, now())
+        .unwrap();
+    write_unjournaled_status(&a, &status).unwrap();
+    let mut flushed = std::collections::HashMap::new();
+    flush_changed(&mut j, &mut flushed, &Default::default()).unwrap();
+    flush_statuses(&mut j).unwrap();
+    // An error with a local explanation naming a path in this folder.
+    let b = reconnect(&mut j, &a);
+    fs::write(published[0].0.join(".DS_Store"), b"finder").unwrap();
+    let error = j.register_binding(b, true, false).unwrap_err();
+    let detail = error.detail.clone().expect("a local explanation");
+    assert_eq!(error.to_string(), detail);
+    let local = a.root.to_string_lossy().into_owned();
+    assert!(detail.contains(&local));
+    let statuses: Vec<_> = fs::read_dir(a.root.join(".deckle-press/status"))
+        .unwrap()
+        .map(|e| fs::read_to_string(e.unwrap().path()).unwrap())
+        .collect();
+    assert_eq!(statuses.len(), 3);
+    for text in statuses {
+        assert!(!text.contains(&detail), "{text}");
+        assert!(!text.contains(&local), "{text}");
+    }
+}
+fn sequence(d: &Path) -> u64 {
+    let snapshot: serde_json::Value =
+        serde_json::from_slice(&fs::read(d.join("journal/journal.json")).unwrap()).unwrap();
+    snapshot["sequence"].as_u64().unwrap()
+}
+#[test]
+fn press_publish_succeeds_while_another_folders_status_cannot_be_written() {
+    let d = tempfile::tempdir().unwrap();
+    let (mut j, b) = setup(d.path());
+    let other_root = d.path().join("other");
+    fs::create_dir(&other_root).unwrap();
+    let other = PressBinding {
+        root: fs::canonicalize(&other_root).unwrap(),
+        producer_id: b.producer_id,
+        paper_id: Uuid::new_v4(),
+    };
+    setup::write_manifest(&other, &manifest(&other)).unwrap();
+    j.register_binding(other.clone(), true, false).unwrap();
+    let waiting = request_at(&other, now(), now() + Duration::hours(24));
+    j.reject_in(&other, waiting, "other", PressErrorCode::Busy, now())
+        .unwrap();
+    fs::rename(&other.root, d.path().join("offline")).unwrap();
+    let (l, id) = admit(&mut j, &b, now());
+    let a = artifact(d.path(), &l);
+    let s = publish_result(&mut j, &l, &a, now).unwrap();
+    assert_eq!(s.state, PressState::Published);
+    assert!(status_path(&b, id).exists());
+}
+#[test]
+fn press_retention_with_nothing_to_forget_does_not_rewrite_the_journal() {
+    let d = tempfile::tempdir().unwrap();
+    let (mut j, b) = setup(d.path());
+    let refused = request_at(&b, now(), now() + Duration::hours(24));
+    j.reject_in(&b, refused, "busy", PressErrorCode::Busy, now())
+        .unwrap();
+    let before = sequence(d.path());
+    for minutes in 0..10 {
+        prune_results(&mut j, now() + Duration::minutes(minutes)).unwrap();
+    }
+    assert_eq!(sequence(d.path()), before);
+    prune_results(&mut j, now() + Duration::hours(73)).unwrap();
+    assert_eq!(sequence(d.path()), before + 1);
 }

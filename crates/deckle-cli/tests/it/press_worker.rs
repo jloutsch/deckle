@@ -1973,3 +1973,145 @@ fn press_worker_one_folder_in_conflict_does_not_block_another_paper() {
         "the conflicting folder's error is reported"
     );
 }
+fn journal_sequence(f: &Fixture) -> u64 {
+    let snapshot: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(f.root.join("journal/journal.json")).unwrap())
+            .unwrap();
+    snapshot["sequence"].as_u64().unwrap()
+}
+/// Status files go to reader plugins: they never carry a local explanation or path.
+fn assert_statuses_carry_no_local_text(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root.join(".deckle-press/status")) else {
+        return;
+    };
+    for entry in entries {
+        let text = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+        assert!(!text.contains("fresh-paper folder"), "{text}");
+        assert!(!text.contains(&*root.to_string_lossy()), "{text}");
+    }
+}
+fn shared_manifest(b: &PressBinding, name: &str) -> ProducerManifest {
+    ProducerManifest {
+        format: "deckle-press".into(),
+        version: 1,
+        producer_id: b.producer_id,
+        paper_id: b.paper_id,
+        paper_name: name.into(),
+        enabled: true,
+        operations: vec![PressOperation::FreshFull],
+        reading_editions: true,
+        updated_at: Utc::now(),
+    }
+}
+#[test]
+fn press_worker_blocked_folder_move_is_reported_without_reopening_the_journal() {
+    let mut f = fixture("Moving paper");
+    let clock = clocked(&mut f);
+    // Paper A published an edition into the folder; a stray .DS_Store sits in it.
+    let mut j = press::PressJournal::open(&f.root.join("journal")).unwrap();
+    let (lease, artifact) = prepare_artifact(&f, &mut j);
+    let published = press::publish_result(&mut j, &lease, &artifact, Utc::now).unwrap();
+    drop(j);
+    let bundle = f.binding.root.join(published.result.unwrap().bundle);
+    let stray = bundle.join(".DS_Store");
+    std::fs::write(&stray, b"finder").unwrap();
+    // The folder is reconnected to paper B; A's statuses are still in the journal.
+    let current: ProducerManifest = serde_json::from_slice(
+        &std::fs::read(f.binding.root.join(".deckle-press/producer.json")).unwrap(),
+    )
+    .unwrap();
+    press::setup::disconnect_manifest(&f.binding.root, &current).unwrap();
+    let b = PressBinding {
+        paper_id: Uuid::new_v4(),
+        ..f.binding.clone()
+    };
+    press::setup::write_manifest(&b, &shared_manifest(&b, "Paper B")).unwrap();
+    f.cfg.paper_id = Some(b.paper_id);
+    deckle_digest::config::save(&f.options.config_path, &f.cfg).unwrap();
+    // A second paper, in its own folder, with a request waiting.
+    let base = f.root.parent().unwrap().to_owned();
+    std::fs::create_dir(base.join("second")).unwrap();
+    let second_binding = PressBinding {
+        root: base.join("second").canonicalize().unwrap(),
+        producer_id: f.binding.producer_id,
+        paper_id: Uuid::new_v4(),
+    };
+    let mut second = f.cfg.clone();
+    second.title = "Second paper".into();
+    second.paper_id = Some(second_binding.paper_id);
+    second.paper = Some(deckle_digest::config::PaperRef {
+        slug: "second".into(),
+        state_dir: base.join("second-state"),
+    });
+    second.export[0].dir = second_binding.root.display().to_string();
+    let second_path = deckle_digest::papers::paper_path(&f.options.config_path, "second");
+    std::fs::create_dir_all(second_path.parent().unwrap()).unwrap();
+    deckle_digest::config::save(&second_path, &second).unwrap();
+    press::setup::write_manifest(&second_binding, &shared_manifest(&second_binding, "Second"))
+        .unwrap();
+    let mut request = f.request.clone();
+    request.request_id = Uuid::new_v4();
+    request.paper_id = second_binding.paper_id;
+    let request_path = second_binding.root.join(format!(
+        ".deckle-press/requests/{}/{}.json",
+        request.reader_id, request.request_id
+    ));
+    std::fs::create_dir_all(request_path.parent().unwrap()).unwrap();
+    std::fs::write(&request_path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let second_status = second_binding
+        .root
+        .join(format!(".deckle-press/status/{}.json", request.request_id));
+
+    let papers = [f.cfg.clone(), second.clone()];
+    let mut w = PressSupervisor::with_options(f.options.clone());
+    let mut errors = Vec::new();
+    let tick = |w: &mut PressSupervisor, errors: &mut Vec<String>| {
+        if let Err(e) = w.tick(&papers, Utc::now()) {
+            errors.push(e);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    // The other paper is still admitted and built.
+    let end = Instant::now() + Duration::from_secs(30);
+    while !std::fs::read(&second_status).is_ok_and(|bytes| {
+        serde_json::from_slice::<press::PressStatus>(&bytes)
+            .is_ok_and(|s| s.state == PressState::Published)
+    }) {
+        assert!(Instant::now() < end, "second paper blocked: {errors:?}");
+        tick(&mut w, &mut errors);
+    }
+    // The folder's own error, naming the bundle, reaches the report channel.
+    let named = bundle.display().to_string();
+    let end = Instant::now() + Duration::from_secs(10);
+    while !errors.iter().any(|e| e.contains(&named)) {
+        assert!(Instant::now() < end, "no error names {named}: {errors:?}");
+        tick(&mut w, &mut errors);
+    }
+    // Ten more ticks change nothing durable: no reopen, no re-registering, no retry.
+    let before = journal_sequence(&f);
+    for _ in 0..10 {
+        tick(&mut w, &mut errors);
+    }
+    assert_eq!(journal_sequence(&f), before, "{errors:?}");
+    assert_eq!(std::fs::read(&stray).unwrap(), b"finder");
+    assert_statuses_carry_no_local_text(&f.binding.root);
+    assert_statuses_carry_no_local_text(&second_binding.root);
+    // Once the owner removes the stray file, the move is retried within a minute.
+    std::fs::remove_file(&stray).unwrap();
+    // Not before: a refused move is tried at most once a minute (press clock), so the
+    // bundle is checked (hashed) at most once a minute while blocked.
+    for _ in 0..5 {
+        tick(&mut w, &mut errors);
+    }
+    assert!(bundle.exists());
+    *clock.lock().unwrap() += deckle_digest::chrono::Duration::seconds(61);
+    let end = Instant::now() + Duration::from_secs(30);
+    while bundle.exists() {
+        assert!(Instant::now() < end, "move not retried: {errors:?}");
+        tick(&mut w, &mut errors);
+    }
+    drop(w);
+    let j = press::PressJournal::open(&f.root.join("journal")).unwrap();
+    assert!(j.bindings().contains(&b));
+    assert!(j.status(f.request.request_id).is_none());
+}

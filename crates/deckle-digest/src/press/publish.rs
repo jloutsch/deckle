@@ -321,7 +321,7 @@ pub fn publish_result(
         pinned.validate()
     })?;
     let status = j.job_status(l.job_id).ok_or_else(conflict)?;
-    flush_statuses(j)?;
+    flush_job_statuses(j, l)?;
     Ok(status)
 }
 /// Reconcile only an already-existing, completely verified output using the journal's
@@ -356,8 +356,20 @@ pub fn recover_result(
         Ok(())
     })?;
     let s = j.job_status(l.job_id).ok_or_else(conflict)?;
-    flush_statuses(j)?;
+    flush_job_statuses(j, l)?;
     Ok(Some(s))
+}
+/// Only this job's statuses: another folder's trouble is not this publication's failure.
+/// The worker's own flush writes the rest.
+fn flush_job_statuses(j: &PressJournal, l: &JobLease) -> Result<(), PressError> {
+    for s in j
+        .statuses()
+        .into_iter()
+        .filter(|s| s.job_id == Some(l.job_id))
+    {
+        flush_status(j, s)?;
+    }
+    Ok(())
 }
 /// Retry every committed snapshot independently. An unavailable/foreign folder cannot
 /// block healthy folders; return the first failure after attempting all status writes.
@@ -374,16 +386,22 @@ pub fn flush_statuses(j: &mut PressJournal) -> Result<(), PressError> {
 /// Write only statuses that changed since their last successful write. `flushed` records
 /// what was written; the caller keeps it across journal reopens and clears it for a full
 /// flush, which rewrites a status file removed by hand or by a sync tool.
+/// Statuses of folders in `skip` (a folder whose configured paper could not be registered)
+/// are left for later.
 pub fn flush_changed(
     j: &mut PressJournal,
     flushed: &mut std::collections::HashMap<Uuid, PressStatus>,
+    skip: &std::collections::HashSet<PathBuf>,
 ) -> Result<(), PressError> {
     j.ensure_healthy()?;
     let statuses = j.statuses();
     flushed.retain(|id, _| statuses.iter().any(|s| s.request_id == *id));
     let mut error = None;
     for s in statuses {
-        if flushed.get(&s.request_id) == Some(&s) {
+        if flushed.get(&s.request_id) == Some(&s)
+            || j.binding_for_request(s.request_id)
+                .is_some_and(|b| skip.contains(&b.root))
+        {
             continue;
         }
         match flush_status(j, s.clone()) {
