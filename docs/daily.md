@@ -81,6 +81,13 @@ bookmarklet drops its link there too. See [the cookbook](cookbook.md).
 No Kindle plugged in at build time? The edition waits in the outbox and goes over on the next
 `push`, or as soon as you plug in while `watch` is running.
 
+One entry that won't go doesn't hold up the rest: the push sends everything else and prints
+`not sent: <name>: <why>` for it. It stays in the outbox and is tried again, and named again,
+on every push until it goes or you remove it. Only a reader that's unplugged mid-push (or a
+lost MTP session) stops the push, with one message, and what wasn't sent stays queued. When a
+paper's edition is queued both as a Kindle book and as a PDF and the one this Kindle takes
+fails, the other goes in its place and the failed one leaves the outbox.
+
 Long reads and Inbox books are finished for the Kindle that takes them: the slow Previewer step
 runs when they're queued, and the push picks PDOC or EBOK for that Kindle (and the per-Kindle
 mode you set in the app), adding X-Ray and Word Wise where it ships as EBOK. That step stays

@@ -115,6 +115,52 @@ pub enum DeliverError {
     /// Not a book Deckle may touch, or not there (inventory remove).
     #[error("{0}")]
     Refused(String),
+    /// The device is gone: the MTP session or cable failed, or the drive was unplugged. A push
+    /// stops here instead of failing once per entry.
+    #[error("{0}")]
+    Gone(String),
+}
+
+impl DeliverError {
+    /// The device itself is gone, so nothing more can go this session; any other error belongs
+    /// to one file (the Kindle refused it or is full, the entry can't be read).
+    pub fn stops_push(&self) -> bool {
+        matches!(self, DeliverError::Gone(_))
+    }
+
+    /// [`From<MtpError>`] with the step and file it failed on.
+    fn mtp_at(what: &str, e: MtpError) -> Self {
+        match e {
+            MtpError::Response { .. } => DeliverError::Mtp(format!("{what}: {e}")),
+            _ => DeliverError::Gone(format!("MTP: {what}: {e}")),
+        }
+    }
+}
+
+/// An answer from the device (a refused file, a full Kindle) costs one file; anything else
+/// means the session or the cable is gone, or the Kindle has no `documents` folder.
+impl From<MtpError> for DeliverError {
+    fn from(e: MtpError) -> Self {
+        match e {
+            MtpError::Response { .. } => DeliverError::Mtp(e.to_string()),
+            _ => DeliverError::Gone(format!("MTP: {e}")),
+        }
+    }
+}
+
+/// A Kindle mounted as a drive is still there: `documents/` and `system/`, as [`detect_in`]
+/// finds it. A fixed mount point leaves an empty folder after unplugging, which a write would
+/// fill on the computer's own disk.
+fn kindle_present(root: &Path) -> bool {
+    root.join("documents").is_dir() && root.join("system").is_dir()
+}
+
+/// A delivered book: where it went, and what went wrong once it was in place (a sidecar, a
+/// system file or the thumbnail that couldn't be written). The book itself is delivered.
+#[derive(Clone, Debug)]
+pub struct Delivered {
+    pub path: PathBuf,
+    pub warnings: Vec<String>,
 }
 
 const MAX_FILENAME_LEN: usize = 120;
@@ -301,51 +347,88 @@ pub fn deliver_on(
     deliver_named_on(kfx, &device_filename(info), conn, opts)
 }
 
-/// [`deliver_on`] under a caller-chosen file name (dated editions use sortable names).
+/// [`deliver_on`] under a caller-chosen file name (dated editions use sortable names). What
+/// went wrong after the book was in place goes to stderr; [`deliver_named_reporting`] returns it.
 pub fn deliver_named_on(
     kfx: &[u8],
     name: &str,
     conn: &mut Conn<'_>,
     opts: &DeliverOptions,
 ) -> Result<PathBuf, DeliverError> {
+    let d = deliver_named_reporting(kfx, name, conn, opts)?;
+    for w in &d.warnings {
+        eprintln!("{name}: {w}");
+    }
+    Ok(d.path)
+}
+
+/// [`deliver_named_on`], returning what went wrong once the book was in place as warnings: an
+/// `Err` means the book itself didn't go, and the copy already there is as it was.
+pub fn deliver_named_reporting(
+    kfx: &[u8],
+    name: &str,
+    conn: &mut Conn<'_>,
+    opts: &DeliverOptions,
+) -> Result<Delivered, DeliverError> {
     let name = name.to_owned();
+    let mut warnings = Vec::new();
+    let mut warn = |r: Result<(), DeliverError>| {
+        if let Err(e) = r {
+            warnings.push(e.to_string());
+        }
+    };
     match conn.target {
         Target::Folder(dir) => {
             remove_leftovers(dir);
             let path = write_file(&dir.join(&name), kfx)?;
-            write_sidecars(&path, &opts.sidecars)?;
-            write_system_files(dir, &opts.system_files)?;
-            Ok(path)
+            warn(write_sidecars(&path, &opts.sidecars));
+            warn(write_system_files(dir, &opts.system_files));
+            Ok(Delivered { path, warnings })
         }
         Target::MassStorage(dev) => {
+            if !kindle_present(&dev.root) {
+                return Err(DeliverError::Gone(format!(
+                    "the Kindle at {} is no longer connected",
+                    dev.root.display()
+                )));
+            }
             remove_leftovers(&dev.root.join("documents"));
             let path = write_file(&dev.root.join("documents").join(&name), kfx)?;
-            write_sidecars(&path, &opts.sidecars)?;
-            write_system_files(&dev.root, &opts.system_files)?;
+            warn(write_sidecars(&path, &opts.sidecars));
+            warn(write_system_files(&dev.root, &opts.system_files));
             if let Some((thumb_name, jpeg)) = &opts.thumbnail {
-                crate::thumbnail::install(&dev.root, thumb_name, jpeg)
-                    .map_err(|e| DeliverError::Thumbnail(e.to_string()))?;
+                warn(
+                    crate::thumbnail::install(&dev.root, thumb_name, jpeg)
+                        .map(|_| ())
+                        .map_err(|e| DeliverError::Thumbnail(e.to_string())),
+                );
             }
             let _ = crate::thumbnail::sync(&dev.root);
-            Ok(path)
+            Ok(Delivered { path, warnings })
         }
         Target::Mtp(mtp) => {
             let serial = mtp.serial.clone();
             match conn.mtp() {
                 Some(Ok(dev)) => deliver_mtp(kfx, &name, serial, dev, opts),
-                Some(Err(e)) => Err(DeliverError::Mtp(e.to_string())),
+                Some(Err(e)) => Err(DeliverError::from(e)),
                 None => unreachable!("an MTP target always has a connection"),
             }
         }
     }
 }
 
+/// Writes each file it can; the first error is returned once all were tried.
 fn write_system_files(root: &Path, files: &[(Vec<String>, Vec<u8>)]) -> Result<(), DeliverError> {
+    let mut first = Ok(());
     for (parts, bytes) in files {
         let path = parts.iter().fold(root.to_path_buf(), |p, s| p.join(s));
-        write_file(&path, bytes)?;
+        if let Err(e) = write_file(&path, bytes)
+            && first.is_ok()
+        {
+            first = Err(e);
+        }
     }
-    Ok(())
+    first
 }
 
 /// `<book>.sdr/<name>` files beside a delivered KFX (book first, sidecars after).
@@ -466,32 +549,53 @@ fn deliver_mtp(
     serial: Option<String>,
     dev: &mut Mtp,
     opts: &DeliverOptions,
-) -> Result<PathBuf, DeliverError> {
-    let sidecars = &opts.sidecars;
-    let m = |e: &dyn std::fmt::Display| DeliverError::Mtp(e.to_string());
-    // The step and file in the error: the Kindle answers a refused write with a bare code.
-    let step = |what: String| move |e: MtpError| DeliverError::Mtp(format!("{what}: {e}"));
-    let storages = dev.storages().map_err(|e| m(&e))?;
+) -> Result<Delivered, DeliverError> {
+    let m = DeliverError::from;
+    let storages = dev.storages().map_err(m)?;
     let storage = *storages
         .first()
         .ok_or_else(|| DeliverError::Mtp("device reports no storage".into()))?;
-    let docs = dev.find_documents(storage).map_err(|e| m(&e))?;
-    if let Some(existing) = dev.find_child(storage, docs, name).map_err(|e| m(&e))? {
-        dev.delete(existing).map_err(|e| m(&e))?;
+    let docs = dev.find_documents(storage).map_err(m)?;
+    if let Some(existing) = dev.find_child(storage, docs, name).map_err(m)? {
+        dev.delete(existing).map_err(m)?;
     }
     dev.send_file(storage, docs, name, kfx)
-        .map_err(step(format!("sending documents/{name}")))?;
+        .map_err(|e| DeliverError::mtp_at(&format!("sending documents/{name}"), e))?;
+    // The book is in place: what fails from here is a warning.
+    let warnings = match mtp_extras(dev, storage, docs, name, opts) {
+        Ok(()) => Vec::new(),
+        Err(e) => vec![e.to_string()],
+    };
+    Ok(Delivered {
+        path: PathBuf::from(format!(
+            "mtp://{}/documents/{name}",
+            serial.unwrap_or_else(|| "kindle".into())
+        )),
+        warnings,
+    })
+}
+
+/// The book's sidecars (yesterday's removed first) and the system files, after the book.
+fn mtp_extras(
+    dev: &mut Mtp,
+    storage: u32,
+    docs: u32,
+    name: &str,
+    opts: &DeliverOptions,
+) -> Result<(), DeliverError> {
+    let sidecars = &opts.sidecars;
+    let m = DeliverError::from;
+    // The step and file in the error: the Kindle answers a refused write with a bare code.
+    let step = |what: String| move |e: MtpError| DeliverError::mtp_at(&what, e);
     let sdr_name = Path::new(name)
         .with_extension("sdr")
         .to_string_lossy()
         .into_owned();
-    let existing_sdr = dev
-        .find_child(storage, docs, &sdr_name)
-        .map_err(|e| m(&e))?;
+    let existing_sdr = dev.find_child(storage, docs, &sdr_name).map_err(m)?;
     if let Some(sdr) = existing_sdr {
-        for (h, info) in dev.list(storage, sdr).map_err(|e| m(&e))? {
+        for (h, info) in dev.list(storage, sdr).map_err(m)? {
             if is_deckle_sidecar(&info.filename) {
-                dev.delete(h).map_err(|e| m(&e))?;
+                dev.delete(h).map_err(m)?;
             }
         }
     }
@@ -508,7 +612,7 @@ fn deliver_mtp(
         }
     }
     if !opts.system_files.is_empty() {
-        let root = dev.object_info(docs).map_err(|e| m(&e))?.parent;
+        let root = dev.object_info(docs).map_err(m)?.parent;
         for (parts, bytes) in &opts.system_files {
             let Some((file, folders)) = parts.split_last() else {
                 continue;
@@ -519,17 +623,14 @@ fn deliver_mtp(
                     .ensure_folder(storage, at, f)
                     .map_err(step(format!("creating {}", parts.join("/"))))?;
             }
-            if let Some(old) = dev.find_child(storage, at, file).map_err(|e| m(&e))? {
-                dev.delete(old).map_err(|e| m(&e))?;
+            if let Some(old) = dev.find_child(storage, at, file).map_err(m)? {
+                dev.delete(old).map_err(m)?;
             }
             dev.send_file(storage, at, file, bytes)
                 .map_err(step(format!("sending {}", parts.join("/"))))?;
         }
     }
-    Ok(PathBuf::from(format!(
-        "mtp://{}/documents/{name}",
-        serial.unwrap_or_else(|| "kindle".into())
-    )))
+    Ok(())
 }
 
 /// The names to remove so that only the `keep` greatest (by name) `<prefix>….kfx` files are
@@ -602,7 +703,7 @@ pub fn prune_named_on_except(
         Target::Mtp(_) => {
             return match conn.mtp() {
                 Some(Ok(dev)) => prune_mtp(dev, prefix, keep, exempt),
-                Some(Err(e)) => Err(DeliverError::Mtp(e.to_string())),
+                Some(Err(e)) => Err(DeliverError::from(e)),
                 None => unreachable!("an MTP target always has a connection"),
             };
         }
@@ -633,7 +734,7 @@ fn prune_mtp(
     keep: usize,
     exempt: &[String],
 ) -> Result<Vec<String>, DeliverError> {
-    let m = |e: MtpError| DeliverError::Mtp(e.to_string());
+    let m = DeliverError::from;
     let storage = *dev
         .storages()
         .map_err(m)?
@@ -655,7 +756,7 @@ fn prune_mtp(
         for (handle, info) in &children {
             if info.filename == *name || info.filename == sdr_name {
                 dev.delete(*handle).map_err(|e| {
-                    DeliverError::Mtp(format!("deleting documents/{}: {e}", info.filename))
+                    DeliverError::mtp_at(&format!("deleting documents/{}", info.filename), e)
                 })?;
             }
         }
@@ -777,6 +878,70 @@ mod tests {
             b"edition one"
         );
         assert_eq!(names(tmp.path()), ["paper.kfx"]);
+    }
+
+    fn kindle_at(root: &Path) -> Target {
+        Target::MassStorage(Device {
+            root: root.to_path_buf(),
+            model_hint: "Kindle".into(),
+            thumbnails_writable: true,
+            firmware: None,
+            serial: None,
+        })
+    }
+
+    #[test]
+    fn a_thumbnail_that_wont_write_is_a_warning_once_the_book_is_there() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("documents")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("system")).unwrap();
+        // A file where the thumbnails folder goes: the thumbnail can't be written.
+        std::fs::write(tmp.path().join("system/thumbnails"), b"").unwrap();
+        let opts = DeliverOptions {
+            thumbnail: Some(("thumbnail_X_PDOC_portrait.jpg".into(), b"jpg".to_vec())),
+            ..Default::default()
+        };
+        let target = kindle_at(tmp.path());
+        let d = deliver_named_reporting(b"book", "a.kfx", &mut Conn::new(&target), &opts).unwrap();
+        assert_eq!(d.path, tmp.path().join("documents/a.kfx"));
+        assert_eq!(std::fs::read(&d.path).unwrap(), b"book");
+        assert_eq!(d.warnings.len(), 1, "{:?}", d.warnings);
+        assert!(d.warnings[0].starts_with("thumbnail"), "{:?}", d.warnings);
+    }
+
+    #[test]
+    fn an_unplugged_kindle_at_a_fixed_mount_point_gets_nothing() {
+        // The mount point stays as an empty folder after the Kindle is unplugged.
+        let tmp = tempfile::tempdir().unwrap();
+        let target = kindle_at(tmp.path());
+        let e = deliver_named_on(b"x", "a.kfx", &mut Conn::new(&target), &Default::default())
+            .unwrap_err();
+        assert!(e.stops_push(), "{e}");
+        assert_eq!(names(tmp.path()), Vec::<String>::new(), "nothing written");
+    }
+
+    #[test]
+    fn a_lost_session_stops_a_push_and_a_refused_file_does_not() {
+        let gone = [
+            MtpError::Transport(TransportError::Timeout),
+            MtpError::NoDocumentsFolder,
+        ];
+        for e in gone {
+            let d = DeliverError::from(e);
+            assert!(d.stops_push(), "{d}");
+            assert!(d.to_string().starts_with("MTP: "), "{d}");
+        }
+        let refused = DeliverError::from(MtpError::Response {
+            op: op::SEND_OBJECT,
+            code: 0x200C,
+        });
+        assert!(!refused.stops_push());
+        assert!(refused.to_string().starts_with("MTP: "), "{refused}");
+        let io = DeliverError::Io {
+            path: "/x".into(),
+            source: std::io::Error::other("full"),
+        };
+        assert!(!io.stops_push());
     }
 
     #[test]

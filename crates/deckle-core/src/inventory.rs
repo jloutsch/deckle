@@ -406,7 +406,7 @@ fn space_of(root: &Path) -> Option<Space> {
 }
 
 fn mtp_err(e: MtpError) -> DeliverError {
-    DeliverError::Mtp(e.to_string())
+    DeliverError::from(e)
 }
 
 fn list_mtp(
@@ -551,7 +551,7 @@ fn walk(
         }),
         Target::Mtp(_) => match conn.mtp() {
             Some(Ok(dev)) => list_mtp(dev, want, cache, deep),
-            Some(Err(e)) => Err(DeliverError::Mtp(e.to_string())),
+            Some(Err(e)) => Err(DeliverError::from(e)),
             None => unreachable!("an MTP target always has a connection"),
         },
     }
@@ -587,7 +587,7 @@ pub fn remove_on(conn: &mut Conn<'_>, file: &str) -> Result<Vec<String>, Deliver
         Target::Mtp(_) => {
             return match conn.mtp() {
                 Some(Ok(dev)) => remove_mtp(dev, &parts),
-                Some(Err(e)) => Err(DeliverError::Mtp(e.to_string())),
+                Some(Err(e)) => Err(DeliverError::from(e)),
                 None => unreachable!("an MTP target always has a connection"),
             };
         }
@@ -670,7 +670,7 @@ pub fn read_book_on(conn: &mut Conn<'_>, file: &str) -> Result<BookFiles, Delive
         Target::Mtp(_) => {
             return match conn.mtp() {
                 Some(Ok(dev)) => read_book_mtp(dev, &parts),
-                Some(Err(e)) => Err(DeliverError::Mtp(e.to_string())),
+                Some(Err(e)) => Err(DeliverError::from(e)),
                 None => unreachable!("an MTP target always has a connection"),
             };
         }
@@ -780,7 +780,7 @@ pub fn copy_in(conn: &mut Conn<'_>, src: &Path, file: &str) -> Result<(), Delive
         Target::Mtp(_) => {
             let dev = match conn.mtp() {
                 Some(Ok(dev)) => dev,
-                Some(Err(e)) => return Err(DeliverError::Mtp(e.to_string())),
+                Some(Err(e)) => return Err(DeliverError::from(e)),
                 None => unreachable!("an MTP target always has a connection"),
             };
             let (_, folders) = parts.split_last().expect("checked");

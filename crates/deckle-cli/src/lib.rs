@@ -3608,7 +3608,8 @@ fn digest(
                 }
                 text
             })?;
-            Ok(if failed.is_some() {
+            let unsent = outcome.unsent() || reader.as_ref().is_some_and(|o| o.unsent());
+            Ok(if failed.is_some() || unsent {
                 ExitCode::from(EXIT_FAILURE)
             } else {
                 ExitCode::SUCCESS
@@ -3829,12 +3830,12 @@ fn digest(
                         }
                     }
                 })?;
-                return Ok(ExitCode::SUCCESS);
+                return Ok(outcome.exit_code());
             }
             let mut outcome = push_queued(&path, &queue, &papers, target)?;
             outcome.remarkable = remarkable;
             emit(json, &outcome, || outcome.describe(&queue))?;
-            Ok(ExitCode::SUCCESS)
+            Ok(outcome.exit_code())
         }
         cli::DigestCommand::Daemon { tick } => {
             let papers = all_papers(&path)?;
@@ -4153,6 +4154,21 @@ fn remarkable_lines(p: &deckle_core::sync::RemarkablePush) -> String {
 }
 
 impl DigestOutcome {
+    /// A push that left an entry unsent fails, as one that stopped at it did, though the rest
+    /// went.
+    fn exit_code(&self) -> ExitCode {
+        if self.unsent() {
+            ExitCode::FAILURE
+        } else {
+            ExitCode::SUCCESS
+        }
+    }
+
+    /// An outbox entry didn't go.
+    fn unsent(&self) -> bool {
+        self.flush.as_ref().is_some_and(|f| !f.failed.is_empty())
+    }
+
     fn describe(&self, queue: &deckle_core::queue::Queue) -> String {
         let main = self.describe_device(queue);
         match &self.remarkable {
@@ -4166,6 +4182,8 @@ impl DigestOutcome {
         match &self.flush {
             Some(f)
                 if f.delivered.is_empty()
+                    && f.failed.is_empty()
+                    && f.warnings.is_empty()
                     && f.pruned.is_empty()
                     && self.highlights.is_none()
                     && self.readership.is_none()
@@ -4182,6 +4200,17 @@ impl DigestOutcome {
                     .iter()
                     .map(|d| format!("      -> {}", d.display()))
                     .collect();
+                // Printed on every push while it waits, so its owner can remove it.
+                lines.extend(
+                    f.failed
+                        .iter()
+                        .map(|(name, why)| format!("      not sent: {name}: {why}")),
+                );
+                if f.stopped {
+                    lines.push("      the push stopped there; the rest stay queued".into());
+                } else if !f.failed.is_empty() {
+                    lines.push("      (still queued; the next push tries again)".into());
+                }
                 if !f.pruned.is_empty() {
                     lines.push(format!("      removed {} older edition(s)", f.pruned.len()));
                 }

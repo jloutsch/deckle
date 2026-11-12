@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::compat::{self, SendUse};
 use crate::cover_rule::{AsinChoice, Decision, DeviceClass, MatchResult, Override, decide};
-use crate::deliver::{Conn, DeliverError, DeliverOptions, Target, deliver_named_on, deliver_on};
+use crate::deliver::{Conn, DeliverError, DeliverOptions, Target, deliver_named_reporting};
 use crate::devices::TransportKind;
 use crate::inspect::{BookInfo, inspect};
 use crate::matcher::{Fetcher, MatchOutcome, match_book};
@@ -883,12 +883,20 @@ pub fn finish_with(
         report,
         on_stage,
         "deliver",
-        match &prepared.name {
-            Some(name) => deliver_named_on(&out.bytes, name, conn, &deliver_opts),
-            None => deliver_on(&out.bytes, &info, conn, &deliver_opts),
-        },
+        deliver_named_reporting(
+            &out.bytes,
+            &prepared
+                .name
+                .clone()
+                .unwrap_or_else(|| crate::deliver::device_filename(&info)),
+            conn,
+            &deliver_opts,
+        ),
         report
     );
+    // The book is on the Kindle: a sidecar or thumbnail that didn't go is a warning.
+    report.warnings.extend(delivered.warnings);
+    let delivered = delivered.path;
     replace_older_copies(
         conn,
         &mut report,
@@ -1037,9 +1045,11 @@ fn finish_fixed_layout(
         report,
         on_stage,
         "deliver",
-        deliver_named_on(&azw3, &name, conn, &deliver_opts),
+        deliver_named_reporting(&azw3, &name, conn, &deliver_opts),
         report
     );
+    report.warnings.extend(delivered.warnings);
+    let delivered = delivered.path;
     replace_older_copies(
         conn,
         &mut report,

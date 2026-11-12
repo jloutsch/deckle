@@ -9,6 +9,18 @@
   when it's whole, as Kobo and PocketBook deliveries already were. A `.part` file a pulled
   cable leaves is removed on a later delivery once it's an hour old. A re-send needs room for
   one more copy for that moment (#74).
+- **One bad outbox entry no longer stops the push.** An entry that couldn't be sent (an empty
+  prepared book, a file the Kindle refused) stopped every push at that entry, so nothing after
+  it went, ever. Now the rest go, and the push prints `not sent: <name>: <why>` for it on every
+  push while it waits in the outbox; this holds for Kindles, Kobos and PocketBooks. A reader
+  unplugged mid-push stops it with one message instead of one per entry, and a Kobo or
+  PocketBook mounted at a fixed folder that's been unplugged gets nothing written into that
+  folder. A failed prune after the deliveries is a warning beside them, not an error that hid
+  them. A book and a PDF with the same name now both go; only a paper's dated edition queued in
+  both forms sends just one, and if that one fails the other goes in its place. A book whose
+  X-Ray, Word Wise or thumbnail couldn't be written is now counted as delivered with a warning,
+  so `kindle upgrade` and `library reprocess` no longer say the old copy is still there when
+  the new one replaced it (#75).
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in

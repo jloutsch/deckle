@@ -247,15 +247,24 @@ pub fn run_with(
         false => (Vec::new(), None),
     };
     let mut report = if plan.push {
-        queue.flush_with(conn, None, finishing, progress)?
+        queue.flush_with(conn, None, prunes, finishing, progress)?
     } else {
         FlushReport::default()
     };
+    if report.stopped {
+        // The Kindle is gone: nothing more can be read or removed this session.
+        report.positions = positions;
+        report.positions_error = positions_error;
+        return Ok(report);
+    }
     if plan.prune {
         for p in prunes {
-            report
-                .pruned
-                .extend(prune_named_on_except(conn, &p.prefix, p.keep, &p.exempt)?);
+            match prune_named_on_except(conn, &p.prefix, p.keep, &p.exempt) {
+                Ok(pruned) => report.pruned.extend(pruned),
+                Err(e) => report
+                    .warnings
+                    .push(format!("old editions not removed: {e}")),
+            }
         }
     }
     // A failed read doesn't undo a delivery: it's reported beside it.
@@ -323,18 +332,54 @@ pub fn run_reader(
             .filter(|p| p.extension().is_some_and(|x| x == "epub"))
             .collect();
         let mut kept: Option<Vec<String>> = None;
+        let gone = || {
+            format!(
+                "the {} at {} is no longer connected; the push stopped",
+                reader.name(),
+                reader.root().display()
+            )
+        };
         for (i, entry) in pending.iter().enumerate() {
-            let io = |source| DeliverError::Io {
-                path: entry.clone(),
-                source,
-            };
             let file = entry.file_name().unwrap_or_default().to_string_lossy();
             let name = reader.file_name(reader::stem(&file));
             progress(i + 1, pending.len(), &name);
-            let bytes = std::fs::read(entry).map_err(io)?;
+            // Before each write: an unplugged reader would get one failure per entry, or a
+            // `Deckle/` folder on the computer's disk under a fixed mount point.
+            if !reader.present() {
+                report.failed.push((name, gone()));
+                report.stopped = true;
+                break;
+            }
+            let bytes = match std::fs::read(entry) {
+                Ok(b) => b,
+                Err(e) => {
+                    report
+                        .failed
+                        .push((name, format!("reading {}: {e}", entry.display())));
+                    continue;
+                }
+            };
             match reader.prepare(&bytes) {
                 Ok(ready) => {
-                    let path = reader::deliver(reader, &ready, &name).map_err(io)?;
+                    let path = match reader::deliver(reader, &ready, &name) {
+                        Ok(path) => path,
+                        Err(e) => {
+                            let gone_now = !reader.present();
+                            report.failed.push((
+                                name.clone(),
+                                if gone_now {
+                                    gone()
+                                } else {
+                                    format!("writing {name}: {e}")
+                                },
+                            ));
+                            if gone_now {
+                                report.stopped = true;
+                                break;
+                            }
+                            continue;
+                        }
+                    };
                     if !prune.prefix.is_empty() && name.starts_with(&prune.prefix) {
                         // KOReader may keep its sidecars away from the book (`docsettings/`):
                         // one there for this edition means it was read before.
@@ -353,13 +398,22 @@ pub fn run_reader(
                         }
                     }
                     report.delivered.push(path);
-                    std::fs::remove_file(entry).map_err(io)?;
+                    if let Err(e) = std::fs::remove_file(entry) {
+                        report.warnings.push(format!(
+                            "{file}: delivered, but not removed from the outbox, so a later \
+                             push sends it again: {e}"
+                        ));
+                    }
                 }
                 Err(e) => report
                     .warnings
                     .push(format!("{file}: not sent, it doesn't read as an EPUB: {e}")),
             }
         }
+    }
+    if report.stopped {
+        // The reader is gone: nothing more to read or prune.
+        return Ok(report);
     }
     // One read serves both; a failed read doesn't undo a delivery. A Kobo's database and
     // KOReader's sidecars are read together; a PocketBook has only KOReader's (KOReader reads
@@ -392,13 +446,13 @@ pub fn run_reader(
         }
     }
     if plan.prune {
-        report.pruned =
-            reader::prune(reader, &prune.prefix, prune.keep, &prune.exempt).map_err(|source| {
-                DeliverError::Io {
-                    path: reader.root().join(reader::FOLDER),
-                    source,
-                }
-            })?;
+        match reader::prune(reader, &prune.prefix, prune.keep, &prune.exempt) {
+            Ok(pruned) => report.pruned = pruned,
+            Err(e) => report.warnings.push(format!(
+                "old editions not removed from {}: {e}",
+                reader.root().join(reader::FOLDER).display()
+            )),
+        }
     }
     Ok(report)
 }
@@ -1260,6 +1314,83 @@ mod kobo_tests {
         assert!(r.positions.is_empty());
     }
 
+    const PUSH: Plan = Plan {
+        push: true,
+        prune: true,
+        clippings: false,
+        readership: false,
+        shelf: false,
+    };
+
+    fn three_queued(tmp: &std::path::Path) -> Queue {
+        let q = Queue::new(tmp.join("outbox-epub"));
+        std::fs::create_dir_all(&q.dir).unwrap();
+        std::fs::write(q.dir.join("a.epub"), epub("A.")).unwrap();
+        // A folder named like a book: it can't be read.
+        std::fs::create_dir_all(q.dir.join("b.epub")).unwrap();
+        std::fs::write(q.dir.join("c.epub"), epub("C.")).unwrap();
+        q
+    }
+
+    fn queued(q: &Queue) -> Vec<String> {
+        q.pending()
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_bad_entry_between_two_good_ones_costs_only_itself() {
+        let tmp = tempfile::tempdir().unwrap();
+        let kobo = Reader::Kobo(fake_kobo(&tmp.path().join("KOBOeReader"), ""));
+        let q = three_queued(tmp.path());
+        let r = run_reader(&q, &kobo, PUSH, &Prune::default(), &mut |_, _, _| {}).unwrap();
+        assert_eq!(r.delivered.len(), 2, "{r:?}");
+        assert_eq!(r.failed.len(), 1, "{r:?}");
+        assert_eq!(r.failed[0].0, "b.kepub.epub");
+        assert!(!r.stopped);
+        assert_eq!(queued(&q), ["b.epub"]);
+    }
+
+    #[test]
+    fn a_reader_unplugged_from_a_fixed_mount_point_gets_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("KOBOeReader");
+        let kobo = Reader::Kobo(fake_kobo(&root, ""));
+        // Unplugged: the mount point stays, as an empty folder.
+        std::fs::remove_dir_all(root.join(".kobo")).unwrap();
+        let q = three_queued(tmp.path());
+        let r = run_reader(&q, &kobo, PUSH, &Prune::default(), &mut |_, _, _| {}).unwrap();
+        assert!(r.stopped);
+        assert_eq!(r.failed.len(), 1, "{r:?}");
+        assert!(r.delivered.is_empty());
+        assert!(
+            !root.join(crate::reader::FOLDER).exists(),
+            "nothing written"
+        );
+        assert_eq!(queued(&q), ["a.epub", "b.epub", "c.epub"]);
+    }
+
+    #[test]
+    fn a_kobo_unplugged_mid_push_stops_with_one_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("KOBOeReader");
+        let kobo = Reader::Kobo(fake_kobo(&root, ""));
+        let q = three_queued(tmp.path());
+        std::fs::remove_dir_all(q.dir.join("b.epub")).unwrap();
+        std::fs::write(q.dir.join("b.epub"), epub("B.")).unwrap();
+        let r = run_reader(&q, &kobo, PUSH, &Prune::default(), &mut |i, _, _| {
+            if i == 2 {
+                std::fs::remove_dir_all(root.join(".kobo")).unwrap();
+            }
+        })
+        .unwrap();
+        assert!(r.stopped);
+        assert_eq!(r.delivered.len(), 1);
+        assert_eq!(r.failed.len(), 1, "one error, not one per entry: {r:?}");
+        assert_eq!(queued(&q), ["b.epub", "c.epub"]);
+    }
+
     #[test]
     fn a_failed_read_is_reported_beside_the_delivery() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1281,6 +1412,8 @@ mod pocketbook_tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("PB");
         std::fs::create_dir_all(&root).unwrap();
+        // What tells a mounted PocketBook from the empty folder an unplugged one leaves.
+        std::fs::create_dir_all(root.join("system/config")).unwrap();
         let pb = Reader::PocketBook(PocketBook { root: root.clone() });
         let q = Queue::new(tmp.path().join("outbox-epub"));
         std::fs::create_dir_all(&q.dir).unwrap();
@@ -1345,6 +1478,8 @@ mod pocketbook_tests {
             "return { [\"percent_finished\"] = 0.3 }",
         )
         .unwrap();
+        // What tells a mounted PocketBook from the empty folder an unplugged one leaves.
+        std::fs::create_dir_all(root.join("system/config")).unwrap();
         let pb = Reader::PocketBook(PocketBook { root: root.clone() });
         let q = Queue::new(tmp.path().join("outbox-epub"));
         std::fs::create_dir_all(&q.dir).unwrap();
@@ -1394,6 +1529,8 @@ mod pocketbook_tests {
              [\"doc_props\"] = { [\"title\"] = \"Walden\" }, [\"percent_finished\"] = 0.5 }",
         )
         .unwrap();
+        // What tells a mounted PocketBook from the empty folder an unplugged one leaves.
+        std::fs::create_dir_all(root.join("system/config")).unwrap();
         let pb = Reader::PocketBook(PocketBook { root });
         let q = Queue::new(tmp.path().join("outbox-epub"));
         let plan = Plan {
@@ -1433,6 +1570,8 @@ mod pocketbook_tests {
              [\"percent_finished\"] = 0.6 }",
         )
         .unwrap();
+        // What tells a mounted PocketBook from the empty folder an unplugged one leaves.
+        std::fs::create_dir_all(root.join("system/config")).unwrap();
         let pb = Reader::PocketBook(PocketBook { root });
         let q = Queue::new(tmp.path().join("outbox-epub"));
         let plan = Plan {

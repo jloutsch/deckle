@@ -97,6 +97,21 @@ impl Reader {
     fn folder(&self) -> PathBuf {
         self.root().join(FOLDER)
     }
+
+    /// The reader is still mounted: its own marker is there (a Kobo's `.kobo/version`, a
+    /// PocketBook's `system/explorer-3` or `system/config`), not just the root folder. A fixed
+    /// mount point leaves an empty folder after unplugging, and a delivery would then make
+    /// `Deckle/` on the computer's own disk.
+    pub fn present(&self) -> bool {
+        let root = self.root();
+        match self {
+            Reader::Kobo(_) => root.join(".kobo").join("version").is_file(),
+            Reader::PocketBook(_) => {
+                root.join("system").join("explorer-3").is_dir()
+                    || root.join("system").join("config").is_dir()
+            }
+        }
+    }
 }
 
 /// What the OPF of a fixed-layout EPUB says about it.
