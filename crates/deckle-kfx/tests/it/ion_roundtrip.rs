@@ -116,3 +116,13 @@ fn encodes_scalars_like_kfxlib() {
     assert_eq!(enc(Value::string(&s)), want);
     assert!(encode_single(&Value::sym("not-defined"), &st).is_err());
 }
+
+/// The decoder reads every int the encoder writes: i64::MIN's magnitude is one past i64::MAX.
+#[test]
+fn every_i64_roundtrips() {
+    let st = SymbolTable::yj_default();
+    for n in [i64::MIN, i64::MIN + 1, -1, 0, i64::MAX] {
+        let bytes = encode_single(&Value::Int(n), &st).unwrap();
+        assert_eq!(decode_single(&bytes, &st).unwrap(), Value::Int(n), "{n}");
+    }
+}

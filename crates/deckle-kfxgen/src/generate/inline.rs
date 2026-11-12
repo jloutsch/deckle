@@ -293,7 +293,7 @@ impl TocLink {
             v => int(v, "level")?,
         };
         // Its indent is `f"{6.25 * level:g}"`: Rust prints the same while it has 6 digits.
-        if level.abs() >= 1600 {
+        if level.unsigned_abs() >= 1600 {
             return Err(Unsupported("a contents line nested 1600 levels deep"));
         }
         Ok(TocLink {
@@ -416,7 +416,7 @@ pub(crate) fn heading_offsets(text: &str, anchors: &Anchors, title: &str) -> BTr
     anchors
         .offsets
         .iter()
-        .map(|(k, &off)| (k.clone(), (off - lead).max(0).min(last)))
+        .map(|(k, &off)| (k.clone(), off.saturating_sub(lead).max(0).min(last)))
         .collect()
 }
 

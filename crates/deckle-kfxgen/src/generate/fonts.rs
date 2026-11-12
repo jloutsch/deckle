@@ -77,7 +77,15 @@ impl Face {
                 _ => return Err(model_err(format!("{at}.data: bytes"))),
             },
             emitted_family: text("emitted_family")?,
-            location: text("location")?,
+            location: text("location")
+                .ok()
+                .filter(|l| {
+                    l.strip_prefix("resource/font")
+                        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+                })
+                // Its `$418`'s id: any other name can be one the book already has
+                // (DIVERGENCES.md).
+                .ok_or_else(|| model_err(format!("{at}.location: resource/font and a number")))?,
         })
     }
 
@@ -107,7 +115,10 @@ impl FontTable {
             .iter()
             .enumerate()
             .map(|(i, f)| Face::read(f, &format!("args.font_table.faces[{i}]")))
-            .collect::<Result<_, _>>()?;
+            .collect::<Result<Vec<Face>, _>>()?;
+        if (1..faces.len()).any(|i| faces[..i].iter().any(|f| f.location == faces[i].location)) {
+            return Err(model_err("args.font_table.faces: one location each"));
+        }
         Ok(FontTable { faces })
     }
 

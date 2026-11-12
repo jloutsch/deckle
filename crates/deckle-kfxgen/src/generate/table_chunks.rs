@@ -40,7 +40,8 @@ pub(crate) struct TableOpen {
 fn has_zoom(t: &Table) -> bool {
     t.rows
         .iter()
-        .map(|r| r.cells.iter().map(|c| c.colspan).sum::<i64>())
+        // In an i128: a model's colspans can sum past an i64.
+        .map(|r| r.cells.iter().map(|c| i128::from(c.colspan)).sum::<i128>())
         .max()
         .unwrap_or(0)
         >= 2

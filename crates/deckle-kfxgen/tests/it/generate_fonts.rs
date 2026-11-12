@@ -55,6 +55,12 @@ fn a_face_of_another_shape_is_a_model_error() {
         ("emitted_family", PyValue::Int(9)),
         ("emitted_family", PyValue::Str(String::new())),
         ("location", PyValue::Str(String::new())),
+        // Names the book can already have: a chapter's, a picture's, a KFX symbol (issue #12).
+        ("location", PyValue::Str("c0".into())),
+        ("location", PyValue::Str("resource/img_0".into())),
+        ("location", PyValue::Str("$270".into())),
+        // The next face's.
+        ("location", PyValue::Str("resource/font1".into())),
     ] {
         let mut model = font_faces();
         *entry(face(&mut model, 0), key) = value;

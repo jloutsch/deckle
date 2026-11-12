@@ -205,9 +205,12 @@ impl<'s> Decoder<'s> {
                 if body.is_empty() || body[0] == 0 {
                     return Err(IonError::Malformed("bad negative int".into()));
                 }
+                // i64::MIN's magnitude is one past i64::MAX: the encoder writes it.
                 Value::Int(
-                    -i64::try_from(unsigned_int(body)?)
-                        .map_err(|_| IonError::Malformed("integer exceeds i64".into()))?,
+                    u64::try_from(unsigned_int(body)?)
+                        .ok()
+                        .and_then(|m| 0i64.checked_sub_unsigned(m))
+                        .ok_or_else(|| IonError::Malformed("integer exceeds i64".into()))?,
                 )
             }
             4 => match body.len() {

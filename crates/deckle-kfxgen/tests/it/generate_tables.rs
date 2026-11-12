@@ -91,3 +91,20 @@ fn a_cell_run_outside_the_text_is_a_model_error() {
         }
     }
 }
+
+/// Colspans that sum past an i64 are no panic (issue #12): kfxgen's ints have no bound.
+#[test]
+fn colspans_past_an_i64_do_not_panic() {
+    let mut model = load_model(&deckle_kfx::fixtures::kfxgen("models/table_parts")).unwrap();
+    let chapter = item(entry(&mut model.args, "chapters"), 1);
+    let table = entry(item(entry(chapter, "blocks"), 1), "table");
+    let cells = entry(item(entry(table, "rows"), 0), "cells");
+    for (i, n) in [(0, i64::MAX), (1, i64::MAX)] {
+        let PyValue::Dict(cell) = item(cells, i) else {
+            panic!("not a dict")
+        };
+        cell.retain(|(k, _)| k.as_str() != Some("colspan"));
+        cell.push((PyValue::Str("colspan".into()), PyValue::Int(n)));
+    }
+    let _ = generate(&model);
+}
