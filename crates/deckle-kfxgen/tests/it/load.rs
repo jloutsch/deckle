@@ -77,17 +77,20 @@ fn another_schema_is_an_error() {
     assert!(matches!(load_model(dir.path()), Err(LoadError::Schema(2))));
 }
 
+/// The sha256 of the bytes 01 02: a resource's name.
+const ONE_TWO: &str = "a12871fee210fb8619291eaea194581cbd2531e4b23759d225f6806923f63222";
+
 #[test]
 fn pyvalue_reads_every_tag() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("ab12"), b"\x01\x02").unwrap();
+    std::fs::write(dir.path().join(ONE_TWO), b"\x01\x02").unwrap();
     let json = serde_json::json!([
         null, true, 7, 1.5, "a\u{0}b",
         {"$tuple": [1, "x"]},
         {"$set": ["b", "a"]},
         {"$frozenset": ["italic"]},
         {"$dict": [[{"$tuple": [1, 2]}, "v"]]},
-        {"$bytes": "ab12"},
+        {"$bytes": ONE_TWO},
         {"$obj": "kfxgen.font_table.Face", "state": {"$dict": [["weight", 400]]}}
     ]);
     let v = PyValue::from_json(&json, dir.path(), "t").unwrap();
@@ -130,5 +133,49 @@ fn floats_load_exactly() {
     assert_eq!(
         x.to_bits(),
         "12.219999999999999".parse::<f64>().unwrap().to_bits()
+    );
+}
+
+/// A resource is the regular file its sha256 names (issue #11): no shorter name, no other
+/// bytes, no link out of the folder.
+#[test]
+fn a_resource_is_the_file_its_hash_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let read =
+        |name: &str| PyValue::from_json(&serde_json::json!({"$bytes": name}), dir.path(), "t");
+    std::fs::write(dir.path().join("ab12"), b"\x01\x02").unwrap();
+    assert!(matches!(read("ab12"), Err(LoadError::Shape { .. })));
+
+    let other = "0".repeat(64);
+    std::fs::write(dir.path().join(&other), b"\x01\x02").unwrap();
+    assert!(matches!(read(&other), Err(LoadError::Resource { .. })));
+
+    #[cfg(unix)]
+    {
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("f"), b"\x01\x02").unwrap();
+        std::os::unix::fs::symlink(outside.path().join("f"), dir.path().join(ONE_TWO)).unwrap();
+        assert!(matches!(read(ONE_TWO), Err(LoadError::Resource { .. })));
+        std::fs::remove_file(dir.path().join(ONE_TWO)).unwrap();
+    }
+
+    std::fs::write(dir.path().join(ONE_TWO), b"\x01\x02").unwrap();
+    assert_eq!(read(ONE_TWO).unwrap().as_bytes().unwrap(), b"\x01\x02");
+}
+
+/// A resource named twice is read once and shared.
+#[test]
+fn a_resource_named_twice_is_read_once() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join(ONE_TWO), b"\x01\x02").unwrap();
+    let json = serde_json::json!([{"$bytes": ONE_TWO}, {"$tuple": [{"$bytes": ONE_TWO}]}]);
+    let v = PyValue::from_json(&json, dir.path(), "t").unwrap();
+    let PyValue::List(items) = v else { panic!() };
+    let PyValue::Tuple(inner) = &items[1] else {
+        panic!()
+    };
+    assert_eq!(
+        items[0].as_bytes().unwrap().as_ptr(),
+        inner[0].as_bytes().unwrap().as_ptr()
     );
 }
