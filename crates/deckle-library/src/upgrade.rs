@@ -506,6 +506,34 @@ mod tests {
     }
 
     #[test]
+    fn a_put_back_to_an_unplugged_kindle_writes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_, config) = upgraded(tmp.path(), "Emma.azw3", "Austen, Jane - Emma.kfx");
+        // The same upgrade, recorded for a mass-storage Kindle now unplugged from a fixed
+        // mount point.
+        let mount = tmp.path().join("mount");
+        std::fs::create_dir_all(&mount).unwrap();
+        let target = deckle_core::deliver::Target::MassStorage(deckle_core::deliver::Device {
+            root: mount.clone(),
+            model_hint: "Kindle".into(),
+            thumbnails_writable: false,
+            firmware: None,
+            serial: Some("G000TEST".into()),
+        });
+        let mut all = Upgrades::load(&config);
+        all.upgrades[0].device = crate::device_ref(&target).key;
+        all.save(&config).unwrap();
+        let e = put_back(&mut Conn::new(&target), &config, "Emma.azw3").unwrap_err();
+        let left: Vec<_> = std::fs::read_dir(&mount)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+        assert!(left.is_empty(), "{e}: {left:?}");
+        assert_eq!(Upgrades::load(&config).upgrades.len(), 1);
+    }
+
+    #[test]
     fn a_put_back_whose_reading_data_fails_keeps_the_record_for_a_retry() {
         let tmp = tempfile::tempdir().unwrap();
         let (target, config) = upgraded(tmp.path(), "Emma.azw3", "Austen, Jane - Emma.kfx");

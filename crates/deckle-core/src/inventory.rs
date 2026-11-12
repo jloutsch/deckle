@@ -774,7 +774,7 @@ pub fn copy_in_book(conn: &mut Conn<'_>, src: &Path, file: &str) -> Result<(), D
         path: book_path,
         source,
     })?;
-    let Some(docs) = docs_dir(conn.target) else {
+    let Some(docs) = docs_dir(conn.target)? else {
         let dev = match conn.mtp() {
             Some(Ok(dev)) => dev,
             Some(Err(e)) => return Err(DeliverError::from(e)),
@@ -812,7 +812,7 @@ pub fn copy_in_sdr(conn: &mut Conn<'_>, src: &Path, file: &str) -> Result<(), De
     if sdr.is_empty() {
         return Ok(());
     }
-    let Some(docs) = docs_dir(conn.target) else {
+    let Some(docs) = docs_dir(conn.target)? else {
         let dev = match conn.mtp() {
             Some(Ok(dev)) => dev,
             Some(Err(e)) => return Err(DeliverError::from(e)),
@@ -843,12 +843,16 @@ pub fn copy_in_sdr(conn: &mut Conn<'_>, src: &Path, file: &str) -> Result<(), De
     Ok(())
 }
 
-/// The `documents` folder on disk: a folder export or a mass-storage Kindle; `None` over MTP.
-fn docs_dir(target: &Target) -> Option<PathBuf> {
+/// The `documents` folder on disk to write into: a folder export, or a mass-storage Kindle that
+/// is still there (an error when it was unplugged); `None` over MTP.
+fn docs_dir(target: &Target) -> Result<Option<PathBuf>, DeliverError> {
     match target {
-        Target::Folder(dir) => Some(dir.clone()),
-        Target::MassStorage(dev) => Some(dev.root.join("documents")),
-        Target::Mtp(_) => None,
+        Target::Folder(dir) => Ok(Some(dir.clone())),
+        Target::MassStorage(dev) => {
+            crate::deliver::kindle_still_there(&dev.root)?;
+            Ok(Some(dev.root.join("documents")))
+        }
+        Target::Mtp(_) => Ok(None),
     }
 }
 
@@ -875,6 +879,46 @@ mod tests {
             b"on the Kindle"
         );
         assert_eq!(names_in(&shelf), ["Old.azw3"]);
+    }
+
+    #[test]
+    fn a_copy_in_to_an_unplugged_kindle_writes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let kept = tmp.path().join("kept");
+        std::fs::create_dir_all(kept.join("Old.sdr")).unwrap();
+        std::fs::write(kept.join("Old.azw3"), b"the kept copy").unwrap();
+        std::fs::write(kept.join("Old.sdr/old.yjf"), b"position").unwrap();
+        // A fixed mount point: the folder is there, the Kindle isn't.
+        let mount = tmp.path().join("Kindle");
+        std::fs::create_dir_all(&mount).unwrap();
+        let target = Target::MassStorage(crate::deliver::Device {
+            root: mount.clone(),
+            model_hint: "Kindle".into(),
+            thumbnails_writable: false,
+            firmware: None,
+            serial: None,
+        });
+        let mut conn = Conn::new(&target);
+        assert!(
+            copy_in_book(&mut conn, &kept, "Old.azw3")
+                .unwrap_err()
+                .stops_push()
+        );
+        assert!(
+            copy_in_sdr(&mut conn, &kept, "Old.azw3")
+                .unwrap_err()
+                .stops_push()
+        );
+        assert!(names_in(&mount).is_empty());
+        // A folder isn't a device: it's made as before.
+        let folder = tmp.path().join("export");
+        copy_in(
+            &mut Conn::new(&Target::Folder(folder.clone())),
+            &kept,
+            "Old.azw3",
+        )
+        .unwrap();
+        assert!(folder.join("Old.sdr/old.yjf").is_file());
     }
 
     #[test]

@@ -6727,6 +6727,20 @@ mod tests {
     use deckle_digest::reading::Outcome;
 
     #[test]
+    fn a_send_to_an_unplugged_reader_writes_nothing_and_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A PocketBook found earlier, unplugged since: its mount point is an empty folder.
+        let root = tmp.path().join("PB");
+        std::fs::create_dir_all(&root).unwrap();
+        let reader =
+            deckle_core::reader::Reader::PocketBook(deckle_core::reader::PocketBook { root });
+        let epub = deckle_kfx::fixtures::path("deckle-mini.epub");
+        let code = send_to_reader(&[epub], &reader, &Default::default(), true).unwrap();
+        assert_eq!(code, ExitCode::from(EXIT_FAILURE));
+        assert!(std::fs::read_dir(reader.root()).unwrap().next().is_none());
+    }
+
+    #[test]
     fn recaps_line_counts_chapters_and_pages() {
         let mut r = deckle_core::recaps::RecapSummary {
             chapters: 12,

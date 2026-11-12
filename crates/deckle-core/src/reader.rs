@@ -232,6 +232,18 @@ pub fn any_seen(file: &Path) -> bool {
 /// before it's renamed, so an unplugged reader never holds half a book
 /// ([`crate::deliver::write_beside`]). Temporary files an earlier pulled cable left go first.
 pub fn deliver(reader: &Reader, bytes: &[u8], name: &str) -> std::io::Result<PathBuf> {
+    // Before anything is made: unplugged from a fixed mount point, the root is an empty folder
+    // on the computer's own disk.
+    if !reader.present() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!(
+                "the {} at {} is no longer connected",
+                reader.name(),
+                reader.root().display()
+            ),
+        ));
+    }
     let dir = reader.folder();
     std::fs::create_dir_all(&dir)?;
     crate::deliver::remove_leftovers(&dir);
@@ -504,6 +516,16 @@ mod tests {
                 .join("deckle-daily-2026-09-01.kepub.epub")
                 .is_file()
         );
+    }
+
+    #[test]
+    fn an_unplugged_reader_at_a_fixed_mount_point_gets_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let k = Reader::Kobo(fake_kobo(tmp.path(), ""));
+        // Unplugged: the mount point stays, as an empty folder.
+        std::fs::remove_dir_all(tmp.path().join(".kobo")).unwrap();
+        assert!(deliver(&k, b"KEPUB", "a.kepub.epub").is_err());
+        assert!(std::fs::read_dir(tmp.path()).unwrap().next().is_none());
     }
 
     #[test]

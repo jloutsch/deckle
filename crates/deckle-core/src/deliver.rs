@@ -155,6 +155,19 @@ fn kindle_present(root: &Path) -> bool {
     root.join("documents").is_dir() && root.join("system").is_dir()
 }
 
+/// `Ok` while the mass-storage Kindle at `root` is still there; else the error that stops
+/// whatever was writing to it. Every write to a mass-storage Kindle asks this first.
+pub(crate) fn kindle_still_there(root: &Path) -> Result<(), DeliverError> {
+    if kindle_present(root) {
+        Ok(())
+    } else {
+        Err(DeliverError::Gone(format!(
+            "the Kindle at {} is no longer connected",
+            root.display()
+        )))
+    }
+}
+
 /// A delivered book: where it went, and what went wrong once it was in place (a sidecar, a
 /// system file or the thumbnail that couldn't be written). The book itself is delivered.
 #[derive(Clone, Debug)]
@@ -386,12 +399,7 @@ pub fn deliver_named_reporting(
             Ok(Delivered { path, warnings })
         }
         Target::MassStorage(dev) => {
-            if !kindle_present(&dev.root) {
-                return Err(DeliverError::Gone(format!(
-                    "the Kindle at {} is no longer connected",
-                    dev.root.display()
-                )));
-            }
+            kindle_still_there(&dev.root)?;
             remove_leftovers(&dev.root.join("documents"));
             let path = write_file(&dev.root.join("documents").join(&name), kfx)?;
             warn(write_sidecars(&path, &opts.sidecars));
