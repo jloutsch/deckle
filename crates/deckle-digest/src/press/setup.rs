@@ -33,6 +33,12 @@ struct Identity {
 /// The file appears under its name only once complete (temp file, then hard link), so a
 /// second process starting at the same time reads the winner's id, never a partial file.
 pub fn producer_identity(path: &Path) -> Result<Uuid, PressError> {
+    producer_identity_using(path, |from, to| fs::hard_link(from, to))
+}
+fn producer_identity_using(
+    path: &Path,
+    link: impl Fn(&Path, &Path) -> std::io::Result<()>,
+) -> Result<Uuid, PressError> {
     match fs::symlink_metadata(path) {
         Ok(_) => return read_identity(path),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
@@ -49,7 +55,7 @@ pub fn producer_identity(path: &Path) -> Result<Uuid, PressError> {
             .open(&temp)?;
         f.write_all(&serde_json::to_vec(&Identity { producer_id: id })?)?;
         f.sync_all()?;
-        fs::hard_link(&temp, path)
+        link(&temp, path)
     })();
     let _ = fs::remove_file(&temp);
     match written {
@@ -62,25 +68,57 @@ pub fn producer_identity(path: &Path) -> Result<Uuid, PressError> {
         }
         // Another process published first: use its identity.
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => read_identity(path),
+        // A file system without hard links (FAT, some network mounts): create the name
+        // itself. A reader can then see it briefly empty, which `read_identity` waits out.
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::Unsupported | std::io::ErrorKind::PermissionDenied
+            ) =>
+        {
+            write_identity_in_place(path, dir, id)
+        }
         Err(_) => Err(storage()),
     }
+}
+fn write_identity_in_place(path: &Path, dir: &Path, id: Uuid) -> Result<Uuid, PressError> {
+    let mut f = match OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return read_identity(path),
+        Err(_) => return Err(storage()),
+    };
+    f.write_all(&serde_json::to_vec(&Identity { producer_id: id }).map_err(|_| storage())?)
+        .and_then(|()| f.sync_all())
+        .map_err(|_| storage())?;
+    #[cfg(unix)]
+    fs::File::open(dir)
+        .and_then(|d| d.sync_all())
+        .map_err(|_| storage())?;
+    Ok(id)
 }
 
 /// Two processes repairing a damaged file at once could each write a different id, and a new
 /// id orphans every folder bound to the old one, so a damaged file is never replaced here.
+/// Without hard links a concurrent first start can show the file empty or part-written for
+/// a moment, so an unreadable file is read again a few times before it counts as damaged.
 fn read_identity(path: &Path) -> Result<Uuid, PressError> {
-    let bytes = bounded_regular(path)?;
-    match serde_json::from_slice::<Identity>(&bytes) {
-        Ok(identity) if !identity.producer_id.is_nil() => Ok(identity.producer_id),
-        _ => Err(PressError::with_detail(
-            PressErrorCode::Unsupported,
-            format!(
-                "{} is empty or damaged; if this machine has no press folders yet, \
-                 delete it and start Deckle again",
-                path.display()
-            ),
-        )),
+    for _ in 0..10 {
+        let bytes = bounded_regular(path)?;
+        if let Ok(identity) = serde_json::from_slice::<Identity>(&bytes)
+            && !identity.producer_id.is_nil()
+        {
+            return Ok(identity.producer_id);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
+    Err(PressError::with_detail(
+        PressErrorCode::Unsupported,
+        format!(
+            "{} is empty or damaged; if this machine has no press folders yet, \
+             delete it and start Deckle again",
+            path.display()
+        ),
+    ))
 }
 
 fn root_path(dir: &str) -> PathBuf {
@@ -431,6 +469,45 @@ mod tests {
         (binding, manifest)
     }
 
+    fn no_links(_: &Path, _: &Path) -> std::io::Result<()> {
+        Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
+    }
+    fn links_not_permitted(_: &Path, _: &Path) -> std::io::Result<()> {
+        Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+    }
+    #[test]
+    fn identity_without_hard_links_is_written_in_place_once() {
+        for link in [no_links, links_not_permitted] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("producer.json");
+            let id = producer_identity_using(&path, link).unwrap();
+            assert_eq!(producer_identity_using(&path, link).unwrap(), id);
+            assert_eq!(producer_identity(&path).unwrap(), id);
+            // No temporary file is left behind.
+            assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+        }
+    }
+    #[test]
+    fn identity_without_hard_links_is_one_id_across_concurrent_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        for round in 0..50 {
+            let path = dir.path().join(format!("producer-{round}.json"));
+            let start = std::sync::Barrier::new(8);
+            let ids: Vec<_> = std::thread::scope(|s| {
+                let handles: Vec<_> = (0..8)
+                    .map(|_| {
+                        s.spawn(|| {
+                            start.wait();
+                            producer_identity_using(&path, no_links)
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(|h| h.join().unwrap()).collect()
+            });
+            let first = ids[0].clone().unwrap();
+            assert!(ids.iter().all(|id| id.as_ref() == Ok(&first)), "{ids:?}");
+        }
+    }
     #[test]
     fn unsupported_atomic_publication_returns_storage_error_and_cleans_own_staging() {
         let dir = tempfile::tempdir().unwrap();
