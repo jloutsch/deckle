@@ -9,6 +9,13 @@
   when it's whole, as Kobo and PocketBook deliveries already were. A `.part` file a pulled
   cable leaves is removed on a later delivery once it's an hour old. A re-send needs room for
   one more copy for that moment (#74).
+- **Re-sending to an MTP Kindle checks the room first.** A book sent again to a Kindle Scribe,
+  Colorsoft or 2024 Paperwhite deleted the copy there and then sent the new one, so a full
+  Kindle ended up with neither. Now a send that won't fit is refused before anything is
+  deleted, and the message says the old copy is as it was. A Kindle that can rename over MTP
+  gets the new copy beside the old one and swapped in; whether any Kindle can is not known
+  yet, so the others still delete first, and a cable pulled mid-send there still loses the old
+  copy, which the error now says. Details in [docs/devices.md](docs/devices.md) (#74).
 - **A download from an MTP Kindle that stops short is an error.** A cable pulled while a book
   or its reading position was read off the Kindle returned the bytes so far as the whole file,
   so a kept copy could be cut off. Now it fails and says how much came (#32).

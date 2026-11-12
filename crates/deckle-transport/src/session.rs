@@ -4,8 +4,8 @@
 use std::any::Any;
 
 use crate::ptp::{
-    Container, ContainerKind, DeviceInfo, ObjectInfo, PtpError, StorageInfo, decode_u32_array, fmt,
-    op, rsp,
+    Container, ContainerKind, DeviceInfo, ObjectInfo, PtpError, StorageInfo, decode_u32_array,
+    encode_string, fmt, op, prop, rsp,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -366,6 +366,29 @@ impl Mtp {
             }
         }
         Ok(Some(at))
+    }
+
+    /// GetObjectPropDesc: whether property `code` of objects of `format` can be set (its
+    /// GetSet byte is 1).
+    pub fn object_prop_settable(&mut self, code: u16, format: u16) -> Result<bool, MtpError> {
+        let (data, _) = self.transact(
+            op::GET_OBJECT_PROP_DESC,
+            &[u32::from(code), u32::from(format)],
+            None,
+        )?;
+        let data = data.ok_or(MtpError::Missing("object property description"))?;
+        // Property code (u16), data type (u16), then GetSet (u8).
+        Ok(data.get(4).ok_or(PtpError::Truncated)? == &1)
+    }
+
+    /// Renames an object: SetObjectPropValue on its ObjectFileName.
+    pub fn rename(&mut self, handle: u32, name: &str) -> Result<(), MtpError> {
+        self.transact(
+            op::SET_OBJECT_PROP_VALUE,
+            &[handle, u32::from(prop::OBJECT_FILE_NAME)],
+            Some(&encode_string(name)),
+        )
+        .map(|_| ())
     }
 
     pub fn delete(&mut self, handle: u32) -> Result<(), MtpError> {

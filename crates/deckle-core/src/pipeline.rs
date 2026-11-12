@@ -1225,6 +1225,7 @@ mod tests {
                     model: "Kindle Scribe".into(),
                     device_version: "5.18.1.0.1".into(),
                     serial_number: "G0X1".into(),
+                    operations: Vec::new(),
                 };
                 self.0
                     .push(reply(ContainerKind::Data, c.code).encode(&info.encode()));

@@ -38,6 +38,25 @@ than an hour old is removed at the start of the next delivery to `documents/` or
   the home screen while a send is under way, or after a pulled cable). Checked so far only
   against FAT32, exFAT and APFS disk images on macOS; Linux vfat and Windows are not tested.
 
+Over MTP there is no rename-over, and a Kindle refuses two files with one name in a folder.
+Deckle first checks the room (the new book, its sidecars and 1 MB), and refuses before touching
+anything when it doesn't fit. Then:
+
+- **A Kindle that can rename** (its GetDeviceInfo lists SetObjectPropValue and
+  GetObjectPropDesc, and GetObjectPropDesc says a file's name can be set): the book goes as
+  `<name>.<n>.part`, the old copy is deleted, and the `.part` is renamed to `<name>`. A failed
+  send removes its `.part` and leaves the old copy. A failed rename leaves the new copy whole
+  under its `.part` name, says so, and the next send of that book cleans it up.
+- **A Kindle that can't rename** (the known limit): the old copy is deleted, then the book is
+  sent, as before. A full Kindle is caught by the room check, but a cable pulled mid-send loses
+  the old copy; the error says so, and sending the book again puts it back.
+- Word Wise system files and a put-back's `.sdr` files are always deleted, then sent: Word Wise
+  can be built again, and a put back keeps its copy on the computer until it succeeds.
+- **Not known:** whether any Kindle accepts the rename. No real Kindle has been tried; the
+  tests run against Deckle's fake MTP Kindle, both ways. To check on a Scribe:
+  `deckle send` a book twice and see that the second send leaves one `<name>` in `documents/`
+  and no `.part`.
+
 ## Reading position (`.yjf`)
 
 Every book the Kindle has opened gets `documents/<stem>.sdr/<stem><suffix>.yjf`, where `<suffix>`

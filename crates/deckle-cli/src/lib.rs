@@ -2104,6 +2104,16 @@ fn originals() -> deckle_library::sources::Sources {
     found
 }
 
+/// After a failed upgrade or reprocess: the old copy is still on the Kindle, unless the error
+/// says a Kindle that can't rename over MTP had it removed before the send failed.
+fn old_copy_note(error: &str) -> &'static str {
+    if error.contains(deckle_core::deliver::OLD_COPY_REMOVED) {
+        ""
+    } else {
+        " (the old copy is still there)"
+    }
+}
+
 /// `kindle upgrade`: books with an original on this computer, rebuilt and put in place of the
 /// Kindle's copy, which is kept (Books and Kindle design §6).
 fn kindle_upgrade(
@@ -2327,10 +2337,7 @@ fn kindle_upgrade(
         plan.iter()
             .zip(&reports)
             .map(|(s, r)| match &r.error {
-                Some(e) => format!(
-                    "FAIL  {}\n      {e} (the old copy is still there)",
-                    title(s)
-                ),
+                Some(e) => format!("FAIL  {}\n      {e}{}", title(s), old_copy_note(e)),
                 None => format!(
                     "OK    {}{}{}",
                     title(s),
@@ -2489,7 +2496,7 @@ fn reprocess(
         plan.iter()
             .zip(&reports)
             .map(|(u, r)| match &r.error {
-                Some(e) => format!("FAIL  {}\n      {e} (the old copy is still there)", u.title),
+                Some(e) => format!("FAIL  {}\n      {e}{}", u.title, old_copy_note(e)),
                 None => format!(
                     "OK    {}{}{}",
                     u.title,

@@ -541,6 +541,157 @@ pub fn is_deckle_sidecar(name: &str) -> bool {
     is_xray_sidecar(name) || (name.starts_with("LanguageLayer.") && name.ends_with(".kll"))
 }
 
+/// Room left free on an MTP Kindle beyond what a send needs: it writes its own index files after.
+const MTP_MARGIN: u64 = 1 << 20;
+
+/// In an error when the copy already on the Kindle was removed before the send failed, which
+/// happens only on a Kindle that can't rename over MTP.
+pub const OLD_COPY_REMOVED: &str = "the old copy had been removed first";
+
+/// `<name>.<n>.part`: a temporary name [`mtp_send_replacing`] gave a send.
+fn is_part_of(file: &str, name: &str) -> bool {
+    let lower = file.to_ascii_lowercase();
+    lower
+        .strip_prefix(&format!("{}.", name.to_ascii_lowercase()))
+        .and_then(|rest| rest.strip_suffix(".part"))
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// The Kindle can rename a file: it lists SetObjectPropValue and GetObjectPropDesc, and says
+/// a file's name can be set. Not known for any Kindle yet (`docs/devices.md`).
+fn can_rename(dev: &mut Mtp) -> bool {
+    use deckle_transport::ptp::{fmt, op, prop};
+    dev.device_info().is_ok_and(|i| {
+        i.supports(op::SET_OBJECT_PROP_VALUE) && i.supports(op::GET_OBJECT_PROP_DESC)
+    }) && dev
+        .object_prop_settable(prop::OBJECT_FILE_NAME, fmt::UNDEFINED)
+        .unwrap_or(false)
+}
+
+/// Deletes `parent/<name>` if it's there; for cleaning up after a failure, so errors are moot.
+fn remove_if_there(dev: &mut Mtp, storage: u32, parent: u32, name: &str) {
+    if let Ok(Some(h)) = dev.find_child(storage, parent, name) {
+        let _ = dev.delete(h);
+    }
+}
+
+fn megabytes(bytes: u64) -> String {
+    format!("{:.1} MB", bytes as f64 / 1_000_000.0)
+}
+
+/// Sends `bytes` as `parent/<name>`, replacing a file of that name so that a failed send leaves
+/// the old copy whole (device delivery safety design). `extra` is what's sent with it (the
+/// sidecars), for the room check. Returns warnings.
+///
+/// 0. Leftover `<name>.<n>.part` files are earlier failed sends when `<name>` is there, and
+///    are deleted; without `<name>` one may be the only copy, so they stay until the new copy
+///    is in place.
+/// 1. Not enough room fails before anything is touched. (Unknown free space doesn't.)
+/// 2. The book goes as `<name>.<n>.part`, a number no leftover has; 3. the old copy is
+///    deleted; 4. the `.part` is renamed to `<name>`.
+/// 5. A send that fails removes its `.part`: the old copy is as it was.
+/// 6. A rename that fails leaves the new copy whole under its `.part` name; the error says so.
+///
+/// A Kindle that can't rename gets the old way, with the room check: delete, then send. A
+/// failed send there has lost the old copy, and the error says [`OLD_COPY_REMOVED`].
+pub(crate) fn mtp_send_replacing(
+    dev: &mut Mtp,
+    storage: u32,
+    parent: u32,
+    name: &str,
+    bytes: &[u8],
+    extra: u64,
+) -> Result<Vec<String>, DeliverError> {
+    let m = DeliverError::from;
+    let mut warnings = Vec::new();
+    let children = dev.list(storage, parent).map_err(m)?;
+    let existing = children
+        .iter()
+        .find(|(_, i)| i.filename.eq_ignore_ascii_case(name))
+        .map(|(h, i)| (*h, u64::from(i.size)));
+    let leftovers: Vec<(u32, String)> = children
+        .iter()
+        .filter(|(_, i)| is_part_of(&i.filename, name))
+        .map(|(h, i)| (*h, i.filename.clone()))
+        .collect();
+    let part = (1..)
+        .map(|n| format!("{name}.{n}.part"))
+        .find(|p| !leftovers.iter().any(|(_, f)| f.eq_ignore_ascii_case(p)))
+        .expect("a free number");
+    let rename = can_rename(dev);
+    if let Ok(s) = dev.storage_info(storage) {
+        let need = bytes.len() as u64 + extra + MTP_MARGIN;
+        // Without a rename the old copy goes first, so its room counts.
+        let free = match (rename, existing) {
+            (false, Some((_, old))) => s.free_bytes.saturating_add(old),
+            _ => s.free_bytes,
+        };
+        if free < need {
+            return Err(DeliverError::Mtp(format!(
+                "not enough room on the Kindle for {name}: it needs {}, {} is free; the copy \
+                 already there is as it was",
+                megabytes(need),
+                megabytes(free)
+            )));
+        }
+    }
+    if existing.is_some() {
+        for (h, _) in &leftovers {
+            dev.delete(*h).map_err(m)?;
+        }
+    }
+    let at = |what: String| move |e: MtpError| DeliverError::mtp_at(&what, e);
+    if rename {
+        let sent = match dev.send_file(storage, parent, &part, bytes) {
+            Ok(h) => h,
+            Err(e) => {
+                remove_if_there(dev, storage, parent, &part);
+                return Err(at(format!("sending documents/{name}"))(e));
+            }
+        };
+        if let Some((old, _)) = existing
+            && let Err(e) = dev.delete(old)
+        {
+            remove_if_there(dev, storage, parent, &part);
+            return Err(at(format!("removing the old documents/{name}"))(e));
+        }
+        dev.rename(sent, name).map_err(at(format!(
+            "renaming documents/{part} to {name} (the new copy stays on the Kindle as {part} \
+             until this book is sent again{})",
+            if existing.is_some() {
+                format!("; {OLD_COPY_REMOVED}")
+            } else {
+                String::new()
+            }
+        )))?;
+    } else {
+        if let Some((old, _)) = existing {
+            dev.delete(old).map_err(m)?;
+        }
+        if let Err(e) = dev.send_file(storage, parent, name, bytes) {
+            // Half a book never keeps the book's name.
+            remove_if_there(dev, storage, parent, name);
+            let what = match existing {
+                Some(_) => format!(
+                    "sending documents/{name} ({OLD_COPY_REMOVED}: this Kindle can't rename \
+                     over MTP; send the book again)"
+                ),
+                None => format!("sending documents/{name}"),
+            };
+            return Err(at(what)(e));
+        }
+    }
+    // The new copy is in place: a leftover kept for want of `<name>` can go.
+    if existing.is_none() {
+        for (h, file) in leftovers {
+            if let Err(e) = dev.delete(h) {
+                warnings.push(format!("documents/{file} not removed: {e}"));
+            }
+        }
+    }
+    Ok(warnings)
+}
+
 /// Sends the book into the Kindle's `documents` folder over MTP, replacing a same-named file.
 /// Returns a pseudo path `mtp://<serial>/documents/<name>`.
 fn deliver_mtp(
@@ -556,16 +707,17 @@ fn deliver_mtp(
         .first()
         .ok_or_else(|| DeliverError::Mtp("device reports no storage".into()))?;
     let docs = dev.find_documents(storage).map_err(m)?;
-    if let Some(existing) = dev.find_child(storage, docs, name).map_err(m)? {
-        dev.delete(existing).map_err(m)?;
-    }
-    dev.send_file(storage, docs, name, kfx)
-        .map_err(|e| DeliverError::mtp_at(&format!("sending documents/{name}"), e))?;
+    let extras: usize = opts.sidecars.iter().map(|(_, b)| b.len()).sum::<usize>()
+        + opts
+            .system_files
+            .iter()
+            .map(|(_, b)| b.len())
+            .sum::<usize>();
+    let mut warnings = mtp_send_replacing(dev, storage, docs, name, kfx, extras as u64)?;
     // The book is in place: what fails from here is a warning.
-    let warnings = match mtp_extras(dev, storage, docs, name, opts) {
-        Ok(()) => Vec::new(),
-        Err(e) => vec![e.to_string()],
-    };
+    if let Err(e) = mtp_extras(dev, storage, docs, name, opts) {
+        warnings.push(e.to_string());
+    }
     Ok(Delivered {
         path: PathBuf::from(format!(
             "mtp://{}/documents/{name}",
@@ -984,6 +1136,130 @@ mod tests {
     fn a_folder_conn_has_no_mtp_session() {
         let target = Target::Folder(PathBuf::from("/nowhere"));
         assert!(Conn::new(&target).mtp().is_none());
+    }
+}
+
+#[cfg(test)]
+mod mtp_send_tests {
+    use deckle_transport::ptp::op;
+
+    use super::*;
+    use crate::fake_mtp as fake;
+
+    fn kindle() -> Target {
+        Target::Mtp(MtpInfo {
+            vendor_id: deckle_transport::usb::AMAZON_VENDOR_ID,
+            product_id: 1,
+            serial: Some("G0001".into()),
+            product: Some("Kindle".into()),
+            bus: 1,
+            address: 2,
+        })
+    }
+
+    fn send(bytes: &[u8]) -> Result<Delivered, DeliverError> {
+        let target = kindle();
+        let mut conn = Conn::with_opener(&target, fake::open);
+        deliver_named_reporting(bytes, "a.kfx", &mut conn, &DeliverOptions::default())
+    }
+
+    /// Sent since the last reset, not counting the session itself.
+    fn sent(code: u16) -> bool {
+        fake::ops().contains(&code)
+    }
+
+    #[test]
+    fn a_resend_goes_beside_the_old_copy_and_is_renamed_over_it() {
+        fake::reset(&[]);
+        fake::put_bytes("a.kfx", b"OLD");
+        send(b"NEW").unwrap();
+        assert_eq!(fake::documents(), ["a.kfx"]);
+        assert_eq!(fake::bytes("a.kfx").unwrap(), b"NEW");
+        assert!(sent(op::SET_OBJECT_PROP_VALUE));
+    }
+
+    #[test]
+    fn too_little_room_fails_before_anything_is_deleted() {
+        fake::reset(&[]);
+        fake::put_bytes("a.kfx", b"OLD");
+        fake::set_free(1000);
+        let e = send(&[7; 2000]).unwrap_err();
+        assert!(e.to_string().contains("not enough room"), "{e}");
+        assert!(!e.stops_push());
+        assert!(!sent(op::DELETE_OBJECT) && !sent(op::SEND_OBJECT_INFO));
+        assert_eq!(fake::bytes("a.kfx").unwrap(), b"OLD");
+    }
+
+    #[test]
+    fn a_send_that_fails_leaves_the_old_copy_and_no_part() {
+        fake::reset(&[]);
+        fake::put_bytes("a.kfx", b"OLD");
+        fake::fail_next_send();
+        let e = send(b"NEW COPY").unwrap_err();
+        assert!(!e.stops_push(), "{e}");
+        assert!(!e.to_string().contains(OLD_COPY_REMOVED), "{e}");
+        assert_eq!(fake::documents(), ["a.kfx"]);
+        assert_eq!(fake::bytes("a.kfx").unwrap(), b"OLD");
+    }
+
+    #[test]
+    fn a_kindle_that_cant_rename_gets_delete_then_send() {
+        fake::reset(&[]);
+        fake::no_rename();
+        fake::put_bytes("a.kfx", b"OLD");
+        send(b"NEW").unwrap();
+        assert_eq!(fake::documents(), ["a.kfx"]);
+        assert_eq!(fake::bytes("a.kfx").unwrap(), b"NEW");
+        assert!(!sent(op::SET_OBJECT_PROP_VALUE));
+
+        // A failed send there loses the old copy, and says so.
+        fake::reset(&[]);
+        fake::no_rename();
+        fake::put_bytes("a.kfx", b"OLD");
+        fake::fail_next_send();
+        let e = send(b"NEW COPY").unwrap_err();
+        assert!(e.to_string().contains(OLD_COPY_REMOVED), "{e}");
+        assert_eq!(fake::documents(), Vec::<String>::new(), "no half book");
+    }
+
+    #[test]
+    fn without_rename_the_old_copys_room_counts() {
+        fake::reset(&[]);
+        fake::no_rename();
+        fake::put_bytes("a.kfx", &[1; 3 << 20]);
+        fake::set_free(2 << 20);
+        // 3 MB and the margin go, 2 MB are free: it fits once the old 3 MB copy is gone.
+        send(&[2; 3 << 20]).unwrap();
+        assert_eq!(fake::bytes("a.kfx").unwrap(), [2; 3 << 20]);
+        // A Kindle that renames keeps the old copy during the send: the same is refused.
+        fake::reset(&[]);
+        fake::put_bytes("a.kfx", &[1; 3 << 20]);
+        fake::set_free(2 << 20);
+        assert!(send(&[2; 3 << 20]).is_err());
+    }
+
+    #[test]
+    fn a_leftover_part_beside_the_book_doesnt_block_the_next_send() {
+        fake::reset(&[]);
+        fake::put_bytes("a.kfx", b"OLD");
+        fake::put_bytes("a.kfx.1.part", b"HALF");
+        send(b"NEW").unwrap();
+        assert_eq!(fake::documents(), ["a.kfx"]);
+        assert_eq!(fake::bytes("a.kfx").unwrap(), b"NEW");
+    }
+
+    #[test]
+    fn a_leftover_part_without_its_book_is_kept_until_a_send_goes() {
+        fake::reset(&[]);
+        // Perhaps the only copy (a rename that failed), perhaps half of one.
+        fake::put_bytes("a.kfx.1.part", b"MAYBE");
+        fake::fail_next_send();
+        send(b"NEW").unwrap_err();
+        assert_eq!(fake::documents(), ["a.kfx.1.part"], "nothing under a.kfx");
+        assert_eq!(fake::bytes("a.kfx.1.part").unwrap(), b"MAYBE");
+        send(b"NEW").unwrap();
+        assert_eq!(fake::documents(), ["a.kfx"]);
+        assert_eq!(fake::bytes("a.kfx").unwrap(), b"NEW");
     }
 }
 

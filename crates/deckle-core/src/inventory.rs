@@ -782,11 +782,8 @@ pub fn copy_in_book(conn: &mut Conn<'_>, src: &Path, file: &str) -> Result<(), D
         };
         let (_, folders) = parts.split_last().expect("checked");
         let (storage, parent) = mtp_parent(dev, folders)?;
-        if let Some(h) = dev.find_child(storage, parent, name).map_err(mtp_err)? {
-            dev.delete(h).map_err(mtp_err)?;
-        }
-        dev.send_file(storage, parent, name, &book)
-            .map_err(mtp_err)?;
+        // A leftover that couldn't be removed is harmless: the next send tries again.
+        let _ = crate::deliver::mtp_send_replacing(dev, storage, parent, name, &book, 0)?;
         return Ok(());
     };
     let path: PathBuf = parts.iter().fold(docs, |p, s| p.join(s));
