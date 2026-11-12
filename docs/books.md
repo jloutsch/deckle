@@ -94,7 +94,9 @@ the limit, instead of slowing the computer or crashing. Real books are far insid
 | KFX, KPF: symbols in the symbol table | 1,000,000 |
 | KFX, KPF: positions and page ranges, all together | one a character of the book's text, one an element |
 
-The numbers are in one place, `crates/deckle-limits`.
+Comic pages have no pixel limit of their own: one page decodes to at most 512 MiB, and fitting
+it to a screen can briefly take about twice that. The numbers are in one place,
+`crates/deckle-limits`.
 
 ## The library
 

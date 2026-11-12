@@ -21,7 +21,8 @@
   and a page rendered as a picture is held to 100 megapixels, rendered smaller when it's bigger;
   one rendered page is kept while its figures are cut, not every page of the book.
   A picture in a book, a chosen cover or a web photo over 100 megapixels is refused before it
-  is decoded; comic pages keep `image`'s own limit.
+  is decoded. Comic pages keep `image`'s own 512 MiB limit on one decode; fitting a page to a
+  screen can briefly take about twice that.
 - **A hostile KFX or KPF is refused instead of filling memory.** A symbol table claiming more
   than a million symbols, an entity table whose rows add up to more than the file, and
   positions or page ranges past what the book's text can hold (one a character, one an

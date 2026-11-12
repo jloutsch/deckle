@@ -2,8 +2,10 @@
 //! Decoding a picture a file or a site gave us, held to
 //! [`MAX_IMAGE_PIXELS`](deckle_limits::MAX_IMAGE_PIXELS) (size-limits design): the size is read
 //! from the header first, so a small file claiming a huge picture is refused before anything is
-//! allocated or converted. Comic pages are not decoded through here; `image`'s own 512 MiB limit
-//! bounds them.
+//! allocated or converted. Comic pages are not decoded through here: `image`'s own 512 MiB limit
+//! bounds one page's decode, and fitting it to a screen (`deckle_comic::pages::fit`) briefly
+//! needs about as much again for the resize's floating-point copy, so a page can peak near twice
+//! that.
 
 use image::error::{LimitError, LimitErrorKind};
 use image::{DynamicImage, ImageError, ImageResult};
