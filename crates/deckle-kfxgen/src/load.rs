@@ -28,6 +28,11 @@ pub enum LoadError {
     Json(#[from] serde_json::Error),
     #[error("model.json is schema {0}, this crate reads {SCHEMA}")]
     Schema(u64),
+    #[error("{path}: {problem}")]
+    Resource {
+        path: PathBuf,
+        problem: &'static str,
+    },
     #[error("{path}: unknown tag {tag}")]
     UnknownTag { path: String, tag: String },
     #[error("{path}: expected {expected}")]
