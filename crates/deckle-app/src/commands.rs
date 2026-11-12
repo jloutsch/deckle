@@ -350,7 +350,12 @@ fn compat_messages(p: &DeviceProfile) -> Vec<String> {
 
 /// All connected Kindles, recorded in the device registry.
 pub fn device_rows(registry_file: &Path) -> Vec<DeviceRow> {
-    let mut reg = DeviceRegistry::load(registry_file);
+    // A damaged devices.json lists the Kindles without the owner's choices, said; its save is
+    // refused, so nothing is written over it.
+    let mut reg = DeviceRegistry::load(registry_file).unwrap_or_else(|e| {
+        eprintln!("devices: {e}");
+        DeviceRegistry::default()
+    });
     let names = deckle_digest::Config::load(&deckle_digest::config::default_path())
         .map(|c| c.sync)
         .unwrap_or_default();
@@ -1409,14 +1414,14 @@ pub fn set_device_options(
     cde_override: Option<String>,
     verified_real_asin: bool,
 ) -> Result<(), String> {
-    let mut reg = DeviceRegistry::load(&state.devices_file);
+    let mut reg = DeviceRegistry::load(&state.devices_file)?;
     reg.set_override(&key, cde_override.as_deref());
     reg.set_verified_real_asin(&key, verified_real_asin);
     reg.save(&state.devices_file)
 }
 
 pub fn plan_books(state: &AppState, books: Vec<RunRequest>, target: RunTarget) -> Vec<PlanRow> {
-    let reg = DeviceRegistry::load(&state.devices_file);
+    let reg = DeviceRegistry::load(&state.devices_file).unwrap_or_default();
     let (class, profile) = match &target {
         // A reMarkable gets no KFX, so the cover rule has nothing to decide: as a folder.
         RunTarget::Folder { .. } | RunTarget::Remarkable => (DeviceClass::Folder, None),
@@ -1548,7 +1553,7 @@ pub fn run_books(
     target: RunTarget,
 ) -> Result<(), String> {
     let settings = load_settings_from(&state.settings_file)?;
-    let reg = DeviceRegistry::load(&state.devices_file);
+    let reg = DeviceRegistry::load(&state.devices_file)?;
     let profile = match &target {
         RunTarget::Device { root } => detect_mass_storage()
             .into_iter()
@@ -1578,8 +1583,9 @@ pub fn run_books(
             },
         );
         // An MTP Kindle's firmware is only read by a send; keep it for the device card.
-        if let (Some(key), Some(fw)) = (key, firmware) {
-            let mut reg = DeviceRegistry::load(&devices_file);
+        if let (Some(key), Some(fw)) = (key, firmware)
+            && let Ok(mut reg) = DeviceRegistry::load(&devices_file)
+        {
             reg.set_firmware(&key, &fw);
             let _ = reg.save(&devices_file);
         }
@@ -2258,6 +2264,30 @@ mod tests {
             assert!(e.contains(&file.display().to_string()), "{e}");
         }
         assert_eq!(std::fs::read(file).unwrap(), truncated);
+    }
+
+    /// Damaged in a folder where no copy can be kept: every save is refused. Skipped as root.
+    #[cfg(unix)]
+    #[test]
+    fn no_settings_save_when_no_copy_could_be_kept() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let ro = dir.path().join("ro");
+        std::fs::create_dir(&ro).unwrap();
+        let state = settings_state(&ro);
+        let truncated = br#"{"llm_api_key":"sk-made-up","cde":"eb"#;
+        std::fs::write(&state.settings_file, truncated).unwrap();
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
+        if std::fs::write(ro.join("probe"), b"").is_ok() {
+            eprintln!("skipped: running as root");
+            return;
+        }
+        assert!(get_settings(&state).damaged.is_some());
+        assert!(set_settings(&state, Settings::default()).is_err());
+        assert!(set_illustrations_key_at(&state.settings_file, "k").is_err());
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(std::fs::read(&state.settings_file).unwrap(), truncated);
+        assert_eq!(std::fs::read_dir(&ro).unwrap().count(), 1);
     }
 
     #[test]

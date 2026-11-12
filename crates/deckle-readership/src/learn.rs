@@ -68,22 +68,17 @@ pub struct Learning {
 }
 
 impl Learning {
-    /// The file at `path`; a missing or unreadable file is an empty store.
-    pub fn load(path: &Path) -> Learning {
-        std::fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+    /// The file at `path`; a missing file is an empty store. One that is there but does not
+    /// parse or cannot be read is an error naming it: it holds the subjects the owner dismissed
+    /// and accepted.
+    pub fn load(path: &Path) -> Result<Learning, String> {
+        Ok(deckle_core::state_file::read(path)?.unwrap_or_default())
     }
 
+    /// Saves through a synced temp file, refused while the file on disk can't be loaded.
     pub fn save(&self, path: &Path) -> Result<(), String> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        }
         let body = serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?;
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
-        std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
+        deckle_core::state_file::save_owner::<Learning>(path, &body, false)
     }
 
     /// Moves a candidate and its acceptance or dismissal to a new key (a renamed interest).
@@ -706,7 +701,7 @@ pub fn on_connection_at(
     if !cfg.learning.enabled {
         return Ok(0);
     }
-    let mut learning = Learning::load(path);
+    let mut learning = Learning::load(path)?;
     let stop = stoplist(cfg);
     let mut added = record_taps(&mut learning, state, &stop);
     if let Some(bytes) = clippings {

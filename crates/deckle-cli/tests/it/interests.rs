@@ -243,7 +243,7 @@ fn a_candidate_the_editor_named_shows_that_name_and_accept_uses_its_search() {
     let h = setup();
     seed_noticed(&h);
     let path = h.config.with_file_name("interests.json");
-    let mut l = Learning::load(&path);
+    let mut l = Learning::load(&path).unwrap();
     l.candidates.get_mut("bryce young").unwrap().named = Some(Named {
         name: "Bryce Young (QB)".into(),
         query: "\"Bryce Young\" Panthers".into(),

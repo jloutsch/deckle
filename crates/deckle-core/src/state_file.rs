@@ -78,15 +78,16 @@ pub struct Rebuilt<T> {
 /// Rebuildable: a file that does not parse starts empty, with one line on stderr and a copy of
 /// it kept beside it.
 pub fn rebuildable<T: DeserializeOwned + Default>(path: &Path) -> Rebuilt<T> {
-    let (value, may_save, note) = match load(path) {
-        Loaded::Missing => (T::default(), true, None),
-        Loaded::Ok(v) => (v, true, None),
+    let loaded = load(path);
+    let may_save = loaded.may_replace();
+    let (value, note) = match loaded {
+        Loaded::Missing => (T::default(), None),
+        Loaded::Ok(v) => (v, None),
         Loaded::Damaged {
             kept_at: Some(copy),
             why,
         } => (
             T::default(),
-            true,
             Some(format!(
                 "{} could not be read ({why}); starting empty. A copy is at {}.",
                 path.display(),
@@ -95,7 +96,6 @@ pub fn rebuildable<T: DeserializeOwned + Default>(path: &Path) -> Rebuilt<T> {
         ),
         Loaded::Damaged { kept_at: None, why } => (
             T::default(),
-            false,
             Some(format!(
                 "{} could not be read ({why}) and no copy could be kept; going on without it and \
                  not saving over it.",
@@ -104,7 +104,6 @@ pub fn rebuildable<T: DeserializeOwned + Default>(path: &Path) -> Rebuilt<T> {
         ),
         Loaded::Unreadable(e) => (
             T::default(),
-            false,
             Some(format!(
                 "{} could not be read ({e}); going on without it and not saving over it.",
                 path.display()

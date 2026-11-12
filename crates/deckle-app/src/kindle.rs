@@ -96,6 +96,9 @@ pub struct HighlightsStatus {
     pub folder: Option<String>,
     /// `[sync] clippings` in `digest.toml`: `digest watch` exports on plug-in.
     pub clippings: bool,
+    /// `highlights.json` is there but could not be read: why, and where its copy is.
+    #[serde(default)]
+    pub damaged: Option<String>,
 }
 
 /// `highlights.json` beside the library's `library.json`.
@@ -331,7 +334,12 @@ pub fn shelf_on(
     // the shelf it draws on are stored.
     let _config_write = crate::config_write()?;
     if let Ok(cfg) = deckle_digest::Config::load(&digest) {
-        let state = deckle_readership::State::load(&config.with_file_name("readership.json"));
+        // A damaged readership.json is said and teaches nothing; nothing is saved over it.
+        let state = deckle_readership::State::load(&config.with_file_name("readership.json"))
+            .unwrap_or_else(|e| {
+                eprintln!("readership: {e}");
+                Default::default()
+            });
         // A damaged shelf.json is said, and the authors on it are left out of this lesson.
         let shelf = deckle_digest::shelf::store::Shelf::load(&config.with_file_name("shelf.json"))
             .inspect_err(|e| eprintln!("learning: {e}"))
@@ -349,10 +357,20 @@ pub fn shelf_on(
         }
         // a nudge tapped on the Kindle is an accept (interests design §7)
         let learning_path = config.with_file_name("interests.json");
-        let mut learning = deckle_readership::Learning::load(&learning_path);
+        // A damaged interests.json takes no nudges: the paper's interests and their acceptance
+        // are saved together or not at all.
+        let learned = deckle_readership::Learning::load(&learning_path)
+            .inspect_err(|e| eprintln!("learning: {e}"));
         let mut cfg = cfg;
         let today = deckle_digest::chrono::Local::now().date_naive();
-        let added = deckle_readership::learn::accept_nudges(&mut learning, &mut cfg, &state, today);
+        let (learning, added) = match learned {
+            Ok(mut learning) => {
+                let added =
+                    deckle_readership::learn::accept_nudges(&mut learning, &mut cfg, &state, today);
+                (learning, added)
+            }
+            Err(_) => Default::default(),
+        };
         if !added.is_empty() {
             match deckle_digest::config::save(&digest, &cfg) {
                 Ok(()) => {
@@ -473,7 +491,10 @@ fn highlights_from(clippings: &ClippingsRead, state: &Path) -> (Vec<Pending>, Op
         Err(e) => return (Vec::new(), Some(e.to_string())),
     };
     let parsed = deckle_highlights::parse(bytes);
-    let state = State::load(state);
+    let state = match State::load(state) {
+        Ok(state) => state,
+        Err(e) => return (Vec::new(), Some(e)),
+    };
     let rows = deckle_highlights::pending(
         &deckle_highlights::group(parsed.entries),
         state.folder.as_deref(),
@@ -486,11 +507,14 @@ fn highlights_from(clippings: &ClippingsRead, state: &Path) -> (Vec<Pending>, Op
 }
 
 pub fn highlights_status_at(state: &Path, digest: &Path) -> HighlightsStatus {
+    let (st, damaged) = match State::load(state) {
+        Ok(st) => (st, None),
+        Err(e) => (State::default(), Some(e)),
+    };
     HighlightsStatus {
-        folder: State::load(state)
-            .folder
-            .map(|f| f.to_string_lossy().into_owned()),
+        folder: st.folder.map(|f| f.to_string_lossy().into_owned()),
         clippings: deckle_digest::Config::load(digest).is_ok_and(|c| c.sync.clippings),
+        damaged,
     }
 }
 
@@ -502,7 +526,7 @@ pub fn highlights_set_at(
     folder: Option<String>,
     clippings: bool,
 ) -> Result<HighlightsStatus, String> {
-    let mut st = State::load(state);
+    let mut st = State::load(state)?;
     if let Some(folder) = folder {
         let folder = PathBuf::from(folder);
         std::fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
@@ -531,7 +555,7 @@ pub fn write_highlights_on(conn: &mut Conn<'_>, state: &Path) -> Result<Outcome,
         .map_err(|e| e.to_string())?
         .ok_or("No highlights on this Kindle yet.")?;
     deckle_highlights::export_clippings(&bytes, state, None).map_err(|e| {
-        if State::load(state).folder.is_none() {
+        if State::load(state).is_ok_and(|s| s.folder.is_none()) {
             "Choose a folder for your highlights first.".to_owned()
         } else {
             e
@@ -544,7 +568,7 @@ pub fn write_highlights_on(conn: &mut Conn<'_>, state: &Path) -> Result<Outcome,
 /// `.sdr` is kept either way.
 pub fn highlights_first(target: &Target, config: &Path) {
     let state = highlights_state(config);
-    if State::load(&state).folder.is_none() {
+    if State::load(&state).is_ok_and(|s| s.folder.is_none()) {
         return;
     }
     if let Err(e) = write_highlights_on(&mut Conn::new(target), &state) {
@@ -1040,7 +1064,8 @@ mod tests {
             highlights_status_at(&state, &digest),
             HighlightsStatus {
                 folder: None,
-                clippings: false
+                clippings: false,
+                damaged: None
             }
         );
         let notes = tmp.path().join("notes");

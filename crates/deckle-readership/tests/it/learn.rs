@@ -390,10 +390,10 @@ fn learning_file_round_trips_and_lives_beside_readership() {
     let path = tmp.path().join("deckle").join("interests.json");
     let l = seeded();
     l.save(&path).unwrap();
-    assert_eq!(Learning::load(&path), l);
+    assert_eq!(Learning::load(&path), Ok(l));
     assert_eq!(
         Learning::load(&tmp.path().join("none.json")),
-        Learning::default()
+        Ok(Learning::default())
     );
     let main = Learning::path_for(&cfg());
     assert!(main.ends_with("interests.json"), "{}", main.display());

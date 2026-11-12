@@ -805,6 +805,8 @@ export interface HighlightsStatus {
   folder: string | null;
   /** `[sync] clippings`: the morning schedule writes highlights on plug-in. */
   clippings: boolean;
+  /** highlights.json is there but could not be read: why, and where its copy is. */
+  damaged?: string | null;
 }
 
 export interface HighlightsReport {

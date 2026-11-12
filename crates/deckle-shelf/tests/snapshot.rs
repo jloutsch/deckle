@@ -520,6 +520,29 @@ fn a_failed_kobo_read_keeps_the_last_highlights() {
     assert_eq!(again.highlights, first.highlights);
 }
 
+/// Damaged in a folder where no copy can be kept: the record is refused. Skipped as root.
+#[cfg(unix)]
+#[test]
+fn no_shelf_save_when_no_copy_could_be_kept() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let ro = dir.path().join("ro");
+    std::fs::create_dir(&ro).unwrap();
+    let path = ro.join("shelf.json");
+    let truncated = br#"{"kindles": {"P": {"name": "Kindle Paperwhite", "seen": "2026-1"#;
+    std::fs::write(&path, truncated).unwrap();
+    std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
+    if std::fs::write(ro.join("probe"), b"").is_ok() {
+        eprintln!("skipped: running as root");
+        return;
+    }
+    assert!(record(&path, "S", KindleSnapshot::default()).is_err());
+    assert!(Shelf::default().save(&path).is_err());
+    std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), truncated);
+    assert_eq!(std::fs::read_dir(&ro).unwrap().count(), 1);
+}
+
 /// #93: a shelf.json that does not parse is not replaced by this connection's snapshot.
 #[test]
 fn a_damaged_shelf_file_is_never_saved_over() {

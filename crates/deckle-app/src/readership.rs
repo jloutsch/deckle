@@ -48,10 +48,10 @@ pub fn view_with_today(
     today: deckle_digest::chrono::NaiveDate,
 ) -> Result<ReadershipView, String> {
     let cfg = load_config(digest, paper)?;
-    let learning = deckle_readership::Learning::load(&learning_file(state));
+    let learning = deckle_readership::Learning::load(&learning_file(state))?;
     Ok(ReadershipView {
         enabled: cfg.sync.readership,
-        report: deckle_readership::report(&State::load(state), &cfg),
+        report: deckle_readership::report(&State::load(state)?, &cfg),
         noticed: deckle_readership::learn::suggest(&learning, &cfg, today),
     })
 }
@@ -77,7 +77,7 @@ pub fn accept_with_today(
     let _lock = crate::config_write()?;
     let mut cfg = load_config(digest, paper)?;
     let path = learning_file(state);
-    let mut learning = deckle_readership::Learning::load(&path);
+    let mut learning = deckle_readership::Learning::load(&path)?;
     deckle_readership::learn::accept(&mut learning, &mut cfg, key, today)?;
     deckle_digest::papers::save(digest, &cfg)?;
     learning.save(&path)?;
@@ -91,7 +91,7 @@ pub fn dismiss_noticed_at(
     key: &str,
 ) -> Result<ReadershipView, String> {
     let path = learning_file(state);
-    let mut learning = deckle_readership::Learning::load(&path);
+    let mut learning = deckle_readership::Learning::load(&path)?;
     deckle_readership::learn::dismiss(&mut learning, key, today())?;
     learning.save(&path)?;
     view_at(state, digest, paper)
@@ -125,7 +125,7 @@ pub fn apply_at(
     let mut cfg = load_config(digest, paper)?;
     deckle_readership::apply(&s, &mut cfg)?;
     deckle_digest::papers::save(digest, &cfg)?;
-    let mut st = State::load(state);
+    let mut st = State::load(state)?;
     deckle_readership::dismiss(&mut st, &s);
     st.save(state)?;
     view_at(state, digest, paper)
@@ -138,7 +138,7 @@ pub fn dismiss_at(
     id: &str,
 ) -> Result<ReadershipView, String> {
     let s = suggestion(state, digest, paper, id)?;
-    let mut st = State::load(state);
+    let mut st = State::load(state)?;
     deckle_readership::dismiss(&mut st, &s);
     st.save(state)?;
     view_at(state, digest, paper)
@@ -160,7 +160,10 @@ pub fn set_at(state: &Path, digest: &Path, on: bool) -> Result<ReadershipView, S
 pub fn record_on(conn: &mut Conn<'_>, state: &Path, digest: &Path) {
     let device = deckle_core::sync::device_id(conn.target);
     let on = load_config(digest, None).is_ok_and(|c| c.sync.for_device(&device).readership);
-    let mut st = State::load(state);
+    let mut st = match State::load(state) {
+        Ok(st) => st,
+        Err(e) => return eprintln!("readership: {e}"),
+    };
     let stems = st.stems();
     if !on || stems.is_empty() {
         return;
@@ -281,6 +284,7 @@ mod tests {
         );
         assert!(
             deckle_readership::Learning::load(&dir.path().join("interests.json"))
+                .unwrap()
                 .accepted
                 .contains_key("bryce young")
         );
@@ -458,7 +462,7 @@ mod tests {
         std::fs::write(sdr.join("deckle-daily-2026-10-219d6e5f44.yjf"), yjf).unwrap();
         let target = Target::Folder(docs);
         record_on(&mut Conn::new(&target), &state, &digest);
-        let st = State::load(&state);
+        let st = State::load(&state).unwrap();
         let reads = &st.reads[&date];
         let r = reads.values().next().unwrap();
         assert!(r.opened);

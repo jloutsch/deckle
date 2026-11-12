@@ -63,6 +63,63 @@ fn calibre_writeback_json_and_the_read_log() {
     kept(&log, &e.to_string());
 }
 
+/// `path` holds `CUT` in a folder where no copy can be made; `attempt` tries the save path.
+/// Skipped as root, where the folder stays writable.
+#[cfg(unix)]
+fn with_no_copy(name: &str, attempt: impl FnOnce(&Path)) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let ro = dir.path().join("ro");
+    std::fs::create_dir(&ro).unwrap();
+    let path = ro.join(name);
+    std::fs::write(&path, CUT).unwrap();
+    std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
+    if std::fs::write(ro.join("probe"), b"").is_ok() {
+        eprintln!("skipped: running as root");
+        return;
+    }
+    attempt(&path);
+    std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), CUT, "{name}");
+    assert_eq!(
+        std::fs::read_dir(&ro).unwrap().count(),
+        1,
+        "{name}: no copy, no temp"
+    );
+}
+
+/// Damaged and no copy could be kept (`may_replace` false): every save path is refused.
+#[cfg(unix)]
+#[test]
+fn no_save_when_no_copy_could_be_kept() {
+    with_no_copy("library.json", |p| {
+        assert!(LibraryConfig::load(p).is_err());
+        assert!(LibraryConfig::default().save(p).is_err());
+    });
+    with_no_copy("upgrades.json", |p| {
+        let config = p.with_file_name("library.json");
+        assert!(Upgrades::load(&config).is_err());
+        assert!(Upgrades::default().save(&config).is_err());
+    });
+    with_no_copy("calibre-shelves.json", |p| {
+        assert!(ShelvesConfig::load(p).is_err());
+        assert!(ShelvesConfig::default().save(p).is_err());
+    });
+    with_no_copy("calibre-writeback.json", |p| {
+        assert!(Writeback::load(p).is_err());
+        assert!(Writeback::default().save(p).is_err());
+    });
+    with_no_copy("reading-log.json", |p| {
+        assert!(ReadLog::load(p).is_err());
+        assert!(ReadLog::default().save(p).is_err());
+    });
+    with_no_copy("watched.json", |p| {
+        let lib = Library::new(p.with_file_name("Library"));
+        let watched = tempfile::tempdir().unwrap();
+        assert!(deckle_library::watch::scan(&lib, watched.path(), p).is_err());
+    });
+}
+
 /// Losing the seen list would add every EPUB in the folder again.
 #[test]
 fn the_watch_folders_seen_list() {

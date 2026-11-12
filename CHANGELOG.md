@@ -18,6 +18,10 @@
   are kept the same way. Settings → Library says when `library.json` doesn't read, the Books tab
   lists it with its warnings, and a watched folder whose list doesn't read stops (rather than
   adding every EPUB in it again) and says so beside the folder in Settings and once in the app.
+- **And for your Kindles, highlights and reading.** `devices.json` (your choices per Kindle),
+  `koreader-documents.json`, `highlights.json`, `readership.json` and `interests.json` are kept
+  the same way. Settings → Highlights and the Readership card show the message; a Kindle
+  connection still delivers and skips only what needs the file.
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in

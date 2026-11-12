@@ -1705,7 +1705,7 @@ fn highlights_cmd(
             if let Some(e) = &parsed.error {
                 eprintln!("warning: My Clippings.txt line {}: {}", e.line, e.message);
             }
-            let state = deckle_highlights::State::load(&state_path);
+            let state = deckle_highlights::State::load(&state_path)?;
             let books = deckle_highlights::group(parsed.entries);
             let rows: Vec<_> = deckle_highlights::pending(&books, state.folder.as_deref(), &state)
                 .into_iter()
@@ -2249,7 +2249,11 @@ fn kindle_upgrade(
     }
     // Highlights first, when there's a folder for them (design §6). The old .sdr is kept too.
     let state = highlights::state_path();
-    if deckle_highlights::State::load(&state).folder.is_some() {
+    // A damaged highlights.json is tried too: the export says why it stopped.
+    if deckle_highlights::State::load(&state)
+        .map(|s| s.folder.is_some())
+        .unwrap_or(true)
+    {
         let read =
             deckle_core::clippings::read_on(&mut Conn::new(target)).map_err(|e| e.to_string());
         match read.map(|b| b.map(|b| deckle_highlights::export_clippings(&b, &state, None))) {
@@ -2909,7 +2913,7 @@ fn digest_interests(
     };
     match action {
         None => {
-            let learning = Learning::load(&learning_path);
+            let learning = Learning::load(&learning_path)?;
             let noticed = learn::suggest(&learning, &cfg, today);
             #[derive(serde::Serialize)]
             struct Out<'a> {
@@ -2956,7 +2960,7 @@ fn digest_interests(
             Ok(ExitCode::SUCCESS)
         }
         Some(cli::InterestsCommand::Accept { phrase }) => {
-            let mut learning = Learning::load(&learning_path);
+            let mut learning = Learning::load(&learning_path)?;
             let key = find_key(&learning, &phrase)
                 .ok_or_else(|| format!("no suggestion \"{phrase}\""))?;
             let entry = learn::accept(&mut learning, &mut cfg, &key, today)?;
@@ -2966,7 +2970,7 @@ fn digest_interests(
             Ok(ExitCode::SUCCESS)
         }
         Some(cli::InterestsCommand::Dismiss { phrase }) => {
-            let mut learning = Learning::load(&learning_path);
+            let mut learning = Learning::load(&learning_path)?;
             let key = find_key(&learning, &phrase)
                 .ok_or_else(|| format!("no suggestion \"{phrase}\""))?;
             learn::dismiss(&mut learning, &key, today)?;
@@ -2977,7 +2981,7 @@ fn digest_interests(
             Ok(ExitCode::SUCCESS)
         }
         Some(cli::InterestsCommand::Why { name }) => {
-            let learning = Learning::load(&learning_path);
+            let learning = Learning::load(&learning_path)?;
             let key = find_key(&learning, &name)
                 .ok_or_else(|| format!("nothing noticed about \"{name}\""))?;
             let c = &learning.candidates[&key];
@@ -5260,7 +5264,13 @@ pub(crate) fn record_koreader(
     device: &str,
     found: &[deckle_core::koreader::Position],
 ) -> usize {
-    let mut state = deckle_readership::State::load(path);
+    let mut state = match deckle_readership::State::load(path) {
+        Ok(state) => state,
+        Err(e) => {
+            eprintln!("readership: {e}");
+            return 0;
+        }
+    };
     let mut n = 0;
     for p in found {
         let Some(date) = deckle_readership::koreader::edition_of(&state, &p.book) else {
@@ -5586,9 +5596,19 @@ fn gather_options_for(
     date: deckle_digest::chrono::NaiveDate,
 ) -> deckle_digest::GatherOptions {
     let mut opts = gather_options();
+    // A damaged interests.json leaves the naming and the nudges out of this edition, said once.
+    let learning = || {
+        deckle_readership::Learning::load(&deckle_readership::Learning::path_for(cfg))
+            .unwrap_or_default()
+    };
+    if (cfg.llm.enabled || cfg.learning.enabled && cfg.learning.nudges)
+        && let Err(e) =
+            deckle_readership::Learning::load(&deckle_readership::Learning::path_for(cfg))
+    {
+        eprintln!("learning: {e}");
+    }
     if cfg.llm.enabled {
-        let learning =
-            deckle_readership::Learning::load(&deckle_readership::Learning::path_for(cfg));
+        let learning = learning();
         opts.naming = deckle_readership::learn::naming_candidates(&learning, cfg, date)
             .into_iter()
             .map(|(key, phrase, headlines)| deckle_digest::NamingCandidate {
@@ -5599,8 +5619,7 @@ fn gather_options_for(
             .collect();
     }
     if cfg.learning.enabled && cfg.learning.nudges {
-        let learning =
-            deckle_readership::Learning::load(&deckle_readership::Learning::path_for(cfg));
+        let learning = learning();
         opts.nudges = deckle_readership::learn::nudges_for(&learning, cfg, date)
             .into_iter()
             .map(|(key, name, why)| deckle_digest::Nudge { key, name, why })
@@ -5617,7 +5636,10 @@ fn accept_tapped_nudges(
     state: &deckle_readership::State,
 ) {
     let path = deckle_readership::Learning::path_for(paper);
-    let mut learning = deckle_readership::Learning::load(&path);
+    let mut learning = match deckle_readership::Learning::load(&path) {
+        Ok(l) => l,
+        Err(e) => return eprintln!("learning: {e}"),
+    };
     // the file as it is now, not as it was when the connection began: the app may have saved
     let mut cfg = match deckle_digest::papers::load_one(main, paper.slug()) {
         Ok(c) => c,
@@ -5646,7 +5668,10 @@ fn record_naming(cfg: &deckle_digest::Config, gathered: &deckle_digest::Gathered
         return;
     }
     let path = deckle_readership::Learning::path_for(cfg);
-    let mut learning = deckle_readership::Learning::load(&path);
+    let mut learning = match deckle_readership::Learning::load(&path) {
+        Ok(l) => l,
+        Err(e) => return eprintln!("learning: {e}"),
+    };
     let names: Vec<(String, String, String)> = gathered
         .names
         .iter()
@@ -5678,7 +5703,11 @@ fn sync_to(
     // Prepared books are finished for this Kindle: its class from the connection, the owner's
     // choices for it from the app's devices.json (device-aware build §4.3).
     let registry =
-        deckle_core::devices::DeviceRegistry::load(&deckle_core::devices::default_registry_file());
+        deckle_core::devices::DeviceRegistry::load(&deckle_core::devices::default_registry_file())
+            .unwrap_or_else(|e| {
+                eprintln!("devices: {e}");
+                Default::default()
+            });
     let finishing = deckle_core::queue::Finishing {
         profile: deckle_core::devices::profile_for(target, &registry),
         paper_pdf: cfg.sync.for_device(&id).paper == deckle_digest::config::PaperFormat::Pdf,
@@ -5690,7 +5719,11 @@ fn sync_to(
         .iter()
         .map(|p| {
             let path = readership_path(p);
-            let state = deckle_readership::State::load(&path);
+            // A damaged file is said and records nothing: its save would be refused.
+            let state = deckle_readership::State::load(&path).unwrap_or_else(|e| {
+                eprintln!("readership: {e}");
+                Default::default()
+            });
             (path, state)
         })
         .collect();
@@ -5926,13 +5959,14 @@ fn record_layout(
                 Ok(e) => l.epub = Some(e),
                 Err(e) => eprintln!("readership: EPUB spine: {e}"),
             }
-            let mut state = deckle_readership::State::load(&path);
-            state.record_layout(with_items(l, built));
-            state.save(&path)
+            deckle_readership::State::load(&path).and_then(|mut state| {
+                state.record_layout(with_items(l, built));
+                state.save(&path)
+            })
         }
         None => epub.and_then(|e| {
             let l = layout::layout_from_epub(e, date, &built.title, stem);
-            let mut state = deckle_readership::State::load(&path);
+            let mut state = deckle_readership::State::load(&path)?;
             match state.record_epub_layout(with_items(l, built)) {
                 true => state.save(&path),
                 false => Ok(()),
@@ -6274,7 +6308,7 @@ fn digest_morgue(json: bool, path: &Path, action: cli::MorgueCommand) -> Result<
         }
         cli::MorgueCommand::Show { date } => {
             let date = day(&date)?;
-            let reads = deckle_readership::State::load(&deckle_readership::state_path());
+            let reads = deckle_readership::State::load(&deckle_readership::state_path())?;
             let state = deckle_morgue::MorgueState::load(&deckle_morgue::state::state_path())?;
             let detail = deckle_morgue::detail::detail(&morgue, date, &reads, &state)
                 .ok_or_else(|| format!("no edition kept for {date}"))?;
@@ -6457,7 +6491,7 @@ fn digest_readership(
 ) -> Result<ExitCode, String> {
     let mut cfg = paper_config(path, paper)?;
     let state_path = readership_path(&cfg);
-    let mut state = deckle_readership::State::load(&state_path);
+    let mut state = deckle_readership::State::load(&state_path)?;
     let report = deckle_readership::report(&state, &cfg);
     let Some(action) = action else {
         emit(json, &report, || {
