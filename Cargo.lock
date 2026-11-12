@@ -1724,6 +1724,7 @@ dependencies = [
 name = "deckle-rtf"
 version = "0.13.0"
 dependencies = [
+ "deckle-limits",
  "encoding_rs",
  "roxmltree",
  "sha2 0.11.1",

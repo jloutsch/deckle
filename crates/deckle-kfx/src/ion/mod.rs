@@ -36,4 +36,9 @@ pub enum IonError {
         expected: String,
         found: Vec<String>,
     },
+    #[error(
+        "this file is nested more than {} levels deep",
+        deckle_limits::MAX_ION_DEPTH
+    )]
+    TooDeep,
 }

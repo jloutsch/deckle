@@ -324,6 +324,9 @@ pub fn to_epub(bytes: &[u8], fallback_title: &str) -> Result<(Files, ImportRepor
     }
     r.notes(&notes);
     r.resolve_links();
+    if r.too_deep {
+        return Err(Fb2Error::Xml(deckle_limits::XmlError::TooDeep.to_string()));
+    }
     warnings.append(&mut r.warnings);
 
     let mut contents = std::mem::take(&mut r.contents);

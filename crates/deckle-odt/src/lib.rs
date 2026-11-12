@@ -292,6 +292,12 @@ pub fn to_epub(bytes: &[u8], fallback_title: &str) -> Result<(Files, ImportRepor
     };
     let mut body = Body::new(&styles, &package.files, text);
     let blocks = body.body(text);
+    if body.too_deep {
+        return Err(OdtError::Corrupt(format!(
+            "content.xml: {}",
+            deckle_limits::XmlError::TooDeep
+        )));
+    }
 
     let title = meta
         .title

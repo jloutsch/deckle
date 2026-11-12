@@ -51,6 +51,11 @@ pub enum MobiError {
     BadPart(String, String),
     #[error("this book is DRM-protected, and Deckle never removes DRM; use a DRM-free copy")]
     Drm,
+    #[error(
+        "this file is nested more than {} levels deep",
+        deckle_limits::MAX_DEPTH
+    )]
+    TooDeep,
 }
 
 /// What record 0 says about a book.
