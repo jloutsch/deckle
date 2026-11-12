@@ -35,7 +35,8 @@ them (calibre 9.18.0, Python 3.13.18, lxml 6.0.2). Regenerating expects the same
 handling shapes a Calibre-path fixture's `model.json`, so another version can change those, and
 possibly their `expected.kfx`. Rebuild all of them with `tools/ref/kfxgen_models.sh`; two runs
 give the same bytes. The script
-needs kfxgen `0bc705d` or later (the replay imports its `page_scale`). It exports commit
+needs kfxgen `0bc705d` or later (the replay imports its `page_scale`), and stops on a
+`KFXGEN_REF` that doesn't contain it. It exports commit
 `KFXGEN_REF` (default `0bc705d`) of the kfxgen repo `KFXGEN` (default `../kfxgen-public`, only
 read) with `git archive`, puts the hook into the export
 (`tools/ref/kfxgen_hook/inject.py` adds a call at the top of `generate_full_book`, and stops if
@@ -96,7 +97,11 @@ hrefs, unreadable JPEGs). The books are `ARG_BOOKS` in that script, their other 
 
 **Calibre path** (`ebook-convert` with kfxgen, CSS applied): the source is
 `sources/<name>.epub`. For each, the script also checks that replaying the model gives exactly
-the KFX `ebook-convert` wrote.
+the KFX `ebook-convert` wrote. The script builds from the committed sources. kfxgen's
+`test_books` is untracked in places, so no commit pins it: `kfxgen_models.sh --refresh-sources`
+copies the sources again from the kfxgen working tree and names each one that changed. The
+`fonts` source takes Liberation Serif from Calibre's fonts folder (`CALIBRE_FONTS`, by default
+the macOS app's).
 
 | Fixture | Source | Features |
 |---|---|---|
@@ -157,7 +162,10 @@ on 2026-08-01), so a fresh download can differ from them: on 2026-11-11 `pg11-im
 test both start from whatever is in `gutenberg/`; it just isn't the same books byte for byte.
 To dump them:
 `DECKLE_KFXGEN_CORPUS_OUT=gutenberg/models tools/ref/kfxgen_models.sh --corpus gutenberg/*.epub`
-(28 s on an M-series Mac, 174 MB), which writes `KFXGEN_COMMIT` and `TOOLS` there too. Two dumps
+(28 s on an M-series Mac, 174 MB), which writes `KFXGEN_COMMIT`, `TOOLS` and `BOOKS` (the books
+it dumped) there too, once every book is made. The corpus test stops unless the folder holds
+exactly the books in `BOOKS`: a dump that failed leaves no list, and a book left from an earlier
+corpus isn't in it (delete its folder). Two dumps
 give the same `expected.kfx` for every book, but not always the same `model.json`: in two dumps of
 pg74 the `images` argument held the same pictures in another order (pg76, pg86 and pg98's
 `model.json` also changed on a redump, their `expected.kfx` not). The port makes the same bytes
