@@ -67,19 +67,58 @@ fn accepted_origins(public: &str) -> Vec<String> {
     v
 }
 
-/// The token in `bookmarklet.token` in `dir`, created on first use: 32 hex characters.
+/// The token in `bookmarklet.token` in `dir`, created on first use: 32 hex characters, private
+/// to the owner (0600).
+///
+/// A file that is there but isn't a token, or can't be read, is an error naming it and is
+/// never replaced: a new token would break every installed bookmarklet. Only a missing file
+/// gets a new token, made whole beside it and linked into place only if still missing, then
+/// read back, so two processes starting together end with the same one.
 pub fn token(dir: &Path) -> std::io::Result<String> {
     let path = dir.join("bookmarklet.token");
-    if let Ok(t) = std::fs::read_to_string(&path) {
-        let t = t.trim().to_owned();
-        if t.len() == 32 && t.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Ok(t);
-        }
+    let read = || {
+        deckle_core::state_file::read_with(&path, |text| {
+            let t = text.trim();
+            if t.len() == 32 && t.chars().all(|c| c.is_ascii_hexdigit()) {
+                Ok(t.to_owned())
+            } else {
+                Err("not 32 hex characters".to_owned())
+            }
+        })
+        .map_err(|e| {
+            std::io::Error::other(format!(
+                "{e} Deleting it makes a new token; every bookmarklet already installed must \
+                 then be installed again."
+            ))
+        })
+    };
+    if let Some(t) = read()? {
+        return Ok(t);
     }
-    let t = format!("{:032x}", rand::random::<u128>());
     std::fs::create_dir_all(dir)?;
-    std::fs::write(&path, &t)?;
-    Ok(t)
+    let t = format!("{:032x}", rand::random::<u128>());
+    let tmp = dir.join(format!(".bookmarklet.token.{}.tmp", std::process::id()));
+    write_private(&tmp, t.as_bytes())?;
+    let linked = std::fs::hard_link(&tmp, &path);
+    let _ = std::fs::remove_file(&tmp);
+    match linked {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(e),
+    }
+    read()?.ok_or_else(|| std::io::Error::other(format!("{}: not made", path.display())))
+}
+
+/// `bytes` to a new file at `path`, 0600, synced.
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut open = std::fs::OpenOptions::new();
+    open.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut open, 0o600);
+    let mut f = open.open(path)?;
+    f.write_all(bytes)?;
+    f.sync_all()
 }
 
 /// The popup script; `kind` is an extra query parameter (with its leading `&`), or empty.

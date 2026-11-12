@@ -41,8 +41,13 @@ fn read_optional(path: &Path) -> Result<Vec<u8>, PressError> {
     }
 }
 
+/// A missing source stays missing: an empty copy would read as a damaged state file.
 fn snapshot(source: &Path, dest: &Path) -> Result<(), PressError> {
-    std::fs::write(dest, read_optional(source)?).map_err(storage)
+    match std::fs::read(source) {
+        Ok(bytes) => std::fs::write(dest, bytes).map_err(storage),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(storage(e)),
+    }
 }
 
 /// Snapshot queue bytes first, then copy only this edition's selected saved pages. Missing

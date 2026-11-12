@@ -123,22 +123,11 @@ fn now(zone: Tz) -> DateTime<Tz> {
 }
 
 /// The saved state; a file that's there but can't be read or parsed (permissions, a root-owned
-/// copy) is said, then started over. Only a missing file is a quiet fresh start.
+/// copy) is said, then started over, and a copy of one that doesn't parse is kept. A file that
+/// can't be read, or whose copy couldn't be made, is never saved over. Only a missing file is
+/// a quiet fresh start.
 fn load_state(path: &Path) -> DaemonState {
-    match std::fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|_| {
-            eprintln!("{}: daemon.json unreadable; starting fresh", path.display());
-            DaemonState::default()
-        }),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => DaemonState::default(),
-        Err(e) => {
-            eprintln!(
-                "{}: can't read daemon.json ({e}); starting fresh",
-                path.display()
-            );
-            DaemonState::default()
-        }
-    }
+    DaemonState::load(path)
 }
 
 struct Daemon {

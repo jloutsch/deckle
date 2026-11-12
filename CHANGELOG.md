@@ -22,6 +22,17 @@
   `koreader-documents.json`, `highlights.json`, `readership.json` and `interests.json` are kept
   the same way. Settings → Highlights and the Readership card show the message; a Kindle
   connection still delivers and skips only what needs the file.
+- **And for puzzles, the bookmarklet and the reader server.** A damaged `puzzles.json` leaves
+  the puzzle page out of the paper with a note. A `bookmarklet.token` that isn't a token is no
+  longer replaced by a new one (which broke every installed bookmarklet); the message says that
+  deleting it makes a new token and the bookmarklets then need installing again. A new token is
+  private to you (0600). KOReader's sync positions and `wireless.json` are kept the same way
+  (`wireless.json` always 0600), and the wireless server doesn't start, saying why.
+- **Files Deckle can rebuild start empty, with a line saying so.** The forecast and frost caches,
+  the watcher's `daemon.json`, KOReader plugin sources, the shelves Deckle made on a reader, the
+  readers seen and the wireless readers list and shelf rules keep a copy of a damaged file and
+  start again; one that can't be read at all is never replaced. See
+  [how it works](docs/how-it-works.md).
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in

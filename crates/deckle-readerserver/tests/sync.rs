@@ -174,3 +174,19 @@ async fn bad_updates_are_refused_and_a_pdf_page_is_kept_as_text() {
     let (_, body) = call(&f.ctx, "GET", "/syncs/progress/abc", Some(&key()), None).await;
     assert_eq!(body["progress"], "42");
 }
+
+/// A sync store that does not parse keeps every other book's position: the new one is refused.
+#[tokio::test]
+async fn a_damaged_sync_store_is_never_saved_over() {
+    let f = fixture();
+    let store = f.tmp.path().join("koreader-sync.json");
+    let cut = br#"{"abc": {"document": "abc", "progress": "4"#;
+    std::fs::write(&store, cut).unwrap();
+    let put = serde_json::json!({
+        "document": "def", "progress": "7", "percentage": 0.5, "device": "Kobo", "device_id": "K1",
+    });
+    let (s, _) = call(&f.ctx, "PUT", "/syncs/progress", Some(&key()), Some(put)).await;
+    assert_eq!(s, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(std::fs::read(&store).unwrap(), cut);
+    assert!(f.told.lock().unwrap().is_empty());
+}

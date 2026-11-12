@@ -45,21 +45,15 @@ pub struct Metadata {
     pub authors: Option<String>,
 }
 
-/// Every document's newest position.
-pub fn load(path: &Path) -> BTreeMap<String, Progress> {
-    std::fs::read(path)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+/// Every document's newest position; none before the first. A store that is there but does
+/// not parse or cannot be read is an error naming it, and no position is saved over it.
+pub fn load(path: &Path) -> Result<BTreeMap<String, Progress>, String> {
+    Ok(deckle_core::state_file::read(path)?.unwrap_or_default())
 }
 
-fn save(path: &Path, all: &BTreeMap<String, Progress>) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(all)?)?;
-    std::fs::rename(&tmp, path)
+fn save(path: &Path, all: &BTreeMap<String, Progress>) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(all).map_err(|e| e.to_string())?;
+    deckle_core::state_file::save_owner::<BTreeMap<String, Progress>>(path, &bytes, false)
 }
 
 fn unauthorized() -> Response {
@@ -143,12 +137,15 @@ pub async fn update(
         let _one = ctx.sync_lock.lock().await;
         let record = p.clone();
         let saved = tokio::task::spawn_blocking(move || {
-            let mut all = load(&store);
+            let mut all = load(&store)?;
             all.insert(record.document.clone(), record);
             save(&store, &all)
         })
         .await;
         if !matches!(saved, Ok(Ok(()))) {
+            if let Ok(Err(e)) = saved {
+                eprintln!("koreader sync: {e}");
+            }
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "message": "Not saved" })),
@@ -173,10 +170,15 @@ pub async fn get_progress(
     }
     let store = ctx.hooks.sync_store.clone();
     let doc = document.to_ascii_lowercase();
-    let found = tokio::task::spawn_blocking(move || load(&store).remove(&doc))
-        .await
-        .ok()
-        .flatten();
+    let found = tokio::task::spawn_blocking(move || {
+        load(&store)
+            .inspect_err(|e| eprintln!("koreader sync: {e}"))
+            .ok()?
+            .remove(&doc)
+    })
+    .await
+    .ok()
+    .flatten();
     match found {
         Some(p) => Json(json!({
             "document": p.document,

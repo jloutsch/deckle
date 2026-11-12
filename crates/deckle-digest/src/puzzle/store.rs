@@ -73,22 +73,19 @@ pub struct Store {
 }
 
 impl Store {
-    /// The store at `path`; a missing or unreadable file is an empty store.
-    pub fn load(path: &Path) -> Store {
-        std::fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+    /// The store at `path`; a missing file is an empty store. One that is there but does not
+    /// parse or cannot be read is an error naming it: it holds the puzzles printed and how
+    /// each was solved.
+    pub fn load(path: &Path) -> Result<Store, String> {
+        Ok(deckle_core::state_file::read(path)?.unwrap_or_default())
     }
 
-    /// Writes through a temp file and a rename, so a crash never leaves half a file.
+    /// Writes through a synced temp file and a rename, so a crash never leaves half a file;
+    /// refused while the file on disk can't be loaded.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(self)?)?;
-        std::fs::rename(&tmp, path)
+        let bytes = serde_json::to_vec_pretty(self)?;
+        deckle_core::state_file::save_owner::<Store>(path, &bytes, false)
+            .map_err(std::io::Error::other)
     }
 
     /// Records what `returns` (every reader's, for `date`) said about that day's word

@@ -595,29 +595,38 @@ pub fn gather_with_editor(
             SectionKind::Lottery => edition.sections.push(sources::lottery::section(cfg, net)),
             SectionKind::Horoscope => edition.sections.push(horoscope::section(cfg, date)),
             SectionKind::Puzzle => {
-                let store = puzzles.get_or_insert_with(|| {
-                    let mut store = puzzle::store::Store::load(&cfg.puzzle_store());
-                    // What the iPad found in yesterday's word search (returns 1.2), from every
-                    // bundle export's returns, so yesterday's answers tick the words.
-                    let yesterday = date - Days::new(1);
-                    let mut found = Vec::new();
-                    for e in cfg
-                        .export
-                        .iter()
-                        .filter(|e| e.format == config::ExportFormat::Bundle)
-                    {
-                        let root = inbox::expand_home(e.dir.trim());
-                        found.extend(returns::read_dir(&root, yesterday));
+                if puzzles.is_none() {
+                    // A damaged puzzles.json drops the puzzle page, with a note; the edition
+                    // still prints and nothing is saved over the file.
+                    match puzzle::store::Store::load(&cfg.puzzle_store()) {
+                        Err(e) => notes.push(format!("The puzzle left out: {e}")),
+                        Ok(mut store) => {
+                            // What the iPad found in yesterday's word search (returns 1.2),
+                            // from every bundle export's returns, so yesterday's answers tick
+                            // the words.
+                            let yesterday = date - Days::new(1);
+                            let mut found = Vec::new();
+                            for e in cfg
+                                .export
+                                .iter()
+                                .filter(|e| e.format == config::ExportFormat::Bundle)
+                            {
+                                let root = inbox::expand_home(e.dir.trim());
+                                found.extend(returns::read_dir(&root, yesterday));
+                            }
+                            store.mark_search(yesterday, &found);
+                            puzzles = Some(store);
+                        }
                     }
-                    store.mark_search(yesterday, &found);
-                    store
-                });
-                edition.sections.push(puzzle::section(
-                    date,
-                    cfg,
-                    store,
-                    puzzle::words::Words::embedded(),
-                ));
+                }
+                if let Some(store) = puzzles.as_mut() {
+                    edition.sections.push(puzzle::section(
+                        date,
+                        cfg,
+                        store,
+                        puzzle::words::Words::embedded(),
+                    ));
+                }
             }
             SectionKind::Shelf => {
                 let path = cfg.shelf_store();

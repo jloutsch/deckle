@@ -5185,20 +5185,25 @@ fn reader_sync(
     reader_server::remember(flush.delivered.iter());
     if plan.clippings && puzzle_on(cfg) && flush.clippings_error.is_none() {
         let path = cfg.puzzle_store();
-        let mut store = deckle_digest::puzzle::store::Store::load(&path);
-        use deckle_digest::puzzle::check::Notes;
-        let notes = match flush.clippings.as_deref() {
-            Some(b) => Notes::Read(b),
-            None => Notes::NoFile,
-        };
-        deckle_digest::puzzle::check::record(
-            &mut store,
-            notes,
-            deckle_digest::chrono::Local::now().date_naive(),
-            deckle_digest::puzzle::words::Words::embedded(),
-        );
-        if let Err(e) = store.save(&path) {
-            eprintln!("puzzle: {}: {e}", path.display());
+        let store = deckle_digest::puzzle::store::Store::load(&path);
+        if let Err(e) = &store {
+            eprintln!("puzzle: {e}");
+        }
+        if let Ok(mut store) = store {
+            use deckle_digest::puzzle::check::Notes;
+            let notes = match flush.clippings.as_deref() {
+                Some(b) => Notes::Read(b),
+                None => Notes::NoFile,
+            };
+            deckle_digest::puzzle::check::record(
+                &mut store,
+                notes,
+                deckle_digest::chrono::Local::now().date_naive(),
+                deckle_digest::puzzle::words::Words::embedded(),
+            );
+            if let Err(e) = store.save(&path) {
+                eprintln!("puzzle: {}: {e}", path.display());
+            }
         }
     }
     let export = cfg.sync.for_device(&id).clippings;
@@ -5751,22 +5756,27 @@ fn sync_to(
         .clippings;
     if plan.clippings && puzzle_on(cfg) && flush.clippings_error.is_none() {
         let path = cfg.puzzle_store();
-        let mut store = deckle_digest::puzzle::store::Store::load(&path);
-        let today = deckle_digest::chrono::Local::now().date_naive();
-        use deckle_digest::puzzle::check::Notes;
-        let notes = match flush.clippings.as_deref() {
-            Some(b) => Notes::Read(b),
-            None if deckle_core::clippings::notes_unreachable(target) => Notes::Unreachable,
-            None => Notes::NoFile,
-        };
-        deckle_digest::puzzle::check::record(
-            &mut store,
-            notes,
-            today,
-            deckle_digest::puzzle::words::Words::embedded(),
-        );
-        if let Err(e) = store.save(&path) {
-            eprintln!("puzzle: {}: {e}", path.display());
+        let store = deckle_digest::puzzle::store::Store::load(&path);
+        if let Err(e) = &store {
+            eprintln!("puzzle: {e}");
+        }
+        if let Ok(mut store) = store {
+            let today = deckle_digest::chrono::Local::now().date_naive();
+            use deckle_digest::puzzle::check::Notes;
+            let notes = match flush.clippings.as_deref() {
+                Some(b) => Notes::Read(b),
+                None if deckle_core::clippings::notes_unreachable(target) => Notes::Unreachable,
+                None => Notes::NoFile,
+            };
+            deckle_digest::puzzle::check::record(
+                &mut store,
+                notes,
+                today,
+                deckle_digest::puzzle::words::Words::embedded(),
+            );
+            if let Err(e) = store.save(&path) {
+                eprintln!("puzzle: {}: {e}", path.display());
+            }
         }
     }
     let highlights = match flush.clippings.as_deref().filter(|_| export) {
@@ -6008,7 +6018,7 @@ fn digest_puzzle(json: bool, cfg: &deckle_digest::Config) -> Result<ExitCode, St
     use deckle_digest::puzzle;
     let date = deckle_digest::chrono::Local::now().date_naive();
     let store_path = cfg.puzzle_store();
-    let mut store = puzzle::store::Store::load(&store_path);
+    let mut store = puzzle::store::Store::load(&store_path)?;
     let fresh = !store.days.contains_key(&date);
     let p = puzzle::today(
         date,

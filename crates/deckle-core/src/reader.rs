@@ -191,18 +191,13 @@ pub fn seen_file() -> PathBuf {
 
 /// Records a sighting of `reader` in `file`, at `now`.
 pub fn remember(file: &Path, reader: &Reader, now: &str) -> Result<(), String> {
-    let mut seen: std::collections::BTreeMap<String, String> = std::fs::read(file)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default();
+    // Rebuildable (each plug-in records its reader again): a file that does not parse starts
+    // empty, said, with a copy kept.
+    type Seen = std::collections::BTreeMap<String, String>;
+    let mut seen: Seen = crate::state_file::rebuildable(file).value;
     seen.insert(reader.id(), now.to_owned());
-    if let Some(dir) = file.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    }
-    let tmp = file.with_extension("json.tmp");
     let json = serde_json::to_vec_pretty(&seen).map_err(|e| e.to_string())?;
-    std::fs::write(&tmp, json).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, file).map_err(|e| format!("{}: {e}", file.display()))
+    crate::state_file::save_rebuildable::<Seen>(file, &json)
 }
 
 /// Whether `file` names any reader.

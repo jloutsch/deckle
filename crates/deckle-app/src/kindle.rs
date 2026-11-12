@@ -470,7 +470,10 @@ fn puzzle_on(clippings: &ClippingsRead, unreachable: bool, digest: &Path, store_
         None if unreachable => Notes::Unreachable,
         None => Notes::NoFile,
     };
-    let mut store = deckle_digest::puzzle::store::Store::load(store_path);
+    let mut store = match deckle_digest::puzzle::store::Store::load(store_path) {
+        Ok(store) => store,
+        Err(e) => return eprintln!("puzzle: {e}"),
+    };
     let today = deckle_digest::chrono::Local::now().date_naive();
     deckle_digest::puzzle::check::record(
         &mut store,
@@ -952,11 +955,11 @@ mod tests {
         // no puzzle in the paper: left alone
         std::fs::write(tmp.path().join("digest.toml"), "sections = [\"weather\"]\n").unwrap();
         shelf_on(&mut Conn::new(&target), &config, None).unwrap();
-        assert_eq!(Store::load(&store_path), store);
+        assert_eq!(Store::load(&store_path).unwrap(), store);
 
         std::fs::write(tmp.path().join("digest.toml"), "sections = [\"puzzle\"]\n").unwrap();
         shelf_on(&mut Conn::new(&target), &config, None).unwrap();
-        let after = Store::load(&store_path);
+        let after = Store::load(&store_path).unwrap();
         assert_eq!(
             after.days[&yesterday].solve.as_ref().map(|s| s.solved),
             Some(1)
@@ -966,7 +969,7 @@ mod tests {
         // a Kindle with no file yet (no highlights) keeps the hint
         std::fs::remove_file(out.join("My Clippings.txt")).unwrap();
         shelf_on(&mut Conn::new(&target), &config, None).unwrap();
-        assert_eq!(Store::load(&store_path).notes_readable, Some(true));
+        assert_eq!(Store::load(&store_path).unwrap().notes_readable, Some(true));
     }
 
     #[test]

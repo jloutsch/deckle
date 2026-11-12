@@ -181,11 +181,11 @@ pub fn diff(wanted: &Shelves, current: &Shelves, ours: &BTreeSet<String>) -> Dif
 
 /// The shelves Deckle made on a reader, kept beside the reader's own data
 /// (`.kobo/deckle-shelves.json`, `<KOReader>/deckle-shelves.json`).
+///
+/// Rebuildable: with an empty list [`diff`] only creates shelves and adds books, never removes,
+/// so a file that does not parse starts empty, said in one line naming it, with a copy kept.
 pub fn ours(file: &Path) -> BTreeSet<String> {
-    std::fs::read(file)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+    crate::state_file::rebuildable(file).value
 }
 
 /// Records that Deckle's shelves are now `before` with `d` applied.
@@ -202,9 +202,8 @@ pub fn record_ours(
         now.remove(gone);
     }
     now.retain(|n| wanted.contains_key(n));
-    let tmp = file.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(&now)?)?;
-    std::fs::rename(tmp, file)
+    crate::state_file::save_rebuildable::<BTreeSet<String>>(file, &serde_json::to_vec_pretty(&now)?)
+        .map_err(std::io::Error::other)
 }
 
 #[cfg(test)]

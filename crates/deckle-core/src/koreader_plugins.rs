@@ -284,19 +284,15 @@ pub struct Source {
     pub installed: String,
 }
 
+/// Where each plugin came from. Rebuildable (a plugin with no entry just shows no source), so a
+/// file that does not parse starts empty, said in one line, with a copy kept.
 fn load_sources(data: &Path) -> BTreeMap<String, Source> {
-    std::fs::read(data.join(SOURCES))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+    crate::state_file::rebuildable(&data.join(SOURCES)).value
 }
 
 fn save_sources(data: &Path, all: &BTreeMap<String, Source>) -> Result<(), String> {
-    let path = data.join(SOURCES);
-    let tmp = data.join(format!(".{SOURCES}.tmp"));
     let body = serde_json::to_vec_pretty(all).map_err(|e| e.to_string())?;
-    std::fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))
+    crate::state_file::save_rebuildable::<BTreeMap<String, Source>>(&data.join(SOURCES), &body)
 }
 
 // ---------------------------------------------------------------------------------------------

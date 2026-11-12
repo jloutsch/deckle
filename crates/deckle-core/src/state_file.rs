@@ -39,6 +39,19 @@ pub fn save_owner<T: DeserializeOwned>(
     save(path, bytes, secret).map_err(|e| e.to_string())
 }
 
+/// Saves a rebuildable file of type `T`: refused while the file on disk can't be read, or does
+/// not parse and no copy of it could be kept ([`Loaded::may_replace`]).
+pub fn save_rebuildable<T: DeserializeOwned>(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let on_disk = load::<T>(path);
+    if !on_disk.may_replace() {
+        return Err(format!(
+            "{} could not be read and no copy of it was kept, so it was not replaced",
+            path.display()
+        ));
+    }
+    save(path, bytes, false).map_err(|e| e.to_string())
+}
+
 /// What [`read`] makes of a [`Loaded`].
 pub fn owner<T>(path: &Path, loaded: Loaded<T>) -> Result<Option<T>, String> {
     match loaded {

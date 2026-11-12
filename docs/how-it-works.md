@@ -53,3 +53,15 @@ opt into **Fresh-paper requests** from compatible clients. The existing watcher 
 full paper into that folder while this computer is awake; cloud sync adds delay. Requests are
 off by default. [Setup and troubleshooting](daily.md#fresh-paper-requests) explains ownership,
 optional model costs, and disconnecting a folder.
+
+**A state file that doesn't read.** Deckle keeps its settings and what it has learned in small
+JSON files beside `library.json` and `digest.toml`. Each is written to a temporary file and
+renamed into place, so a crash never leaves half of one. If one is cut short anyway, or edited by
+hand with a stray comma, Deckle copies it to `<name>.damaged-<time>` beside it and leaves the
+file as it is. For your own data (settings and keys, the shelf snapshots, the Morgue's index,
+the library's files, devices, highlights, readership, interests, puzzles, the bookmarklet token,
+wireless and sync files) the part of Deckle that needs the file stops and says which file and
+where the copy is; nothing is saved over it until you fix the file or remove it. Files Deckle
+can rebuild (caches, the watcher's schedule state, the list of shelves it made on a reader, the
+wireless readers list) start empty instead, with one line saying so. A file that can't be read
+at all (permissions) is never replaced.
