@@ -761,59 +761,98 @@ pub fn copy_out(conn: &mut Conn<'_>, file: &str, dest: &Path) -> Result<(), Deli
 /// Puts a book [`copy_out`] kept back as `documents/<file>`, with its `.sdr` files. An existing
 /// file of that name is overwritten.
 pub fn copy_in(conn: &mut Conn<'_>, src: &Path, file: &str) -> Result<(), DeliverError> {
+    copy_in_book(conn, src, file)?;
+    copy_in_sdr(conn, src, file)
+}
+
+/// [`copy_in`]'s book file alone. A copy that fails leaves what was there.
+pub fn copy_in_book(conn: &mut Conn<'_>, src: &Path, file: &str) -> Result<(), DeliverError> {
     let parts = check_file(file)?;
     let name = *parts.last().expect("checked: at least one part");
-    let io = |path: PathBuf| move |source| DeliverError::Io { path, source };
     let book_path = src.join(name);
-    let book = std::fs::read(&book_path).map_err(io(book_path.clone()))?;
+    let book = std::fs::read(&book_path).map_err(|source| DeliverError::Io {
+        path: book_path,
+        source,
+    })?;
+    let Some(docs) = docs_dir(conn.target) else {
+        let dev = match conn.mtp() {
+            Some(Ok(dev)) => dev,
+            Some(Err(e)) => return Err(DeliverError::from(e)),
+            None => unreachable!("an MTP target always has a connection"),
+        };
+        let (_, folders) = parts.split_last().expect("checked");
+        let (storage, parent) = mtp_parent(dev, folders)?;
+        if let Some(h) = dev.find_child(storage, parent, name).map_err(mtp_err)? {
+            dev.delete(h).map_err(mtp_err)?;
+        }
+        dev.send_file(storage, parent, name, &book)
+            .map_err(mtp_err)?;
+        return Ok(());
+    };
+    let path: PathBuf = parts.iter().fold(docs, |p, s| p.join(s));
+    // Written beside and renamed: a failed copy leaves what was there.
+    crate::deliver::write_file(&path, &book)?;
+    Ok(())
+}
+
+/// [`copy_in`]'s `.sdr` files alone (the reading position and notes), into the book's `.sdr`
+/// folder. Nothing to do when none were kept.
+pub fn copy_in_sdr(conn: &mut Conn<'_>, src: &Path, file: &str) -> Result<(), DeliverError> {
+    let parts = check_file(file)?;
+    let name = *parts.last().expect("checked: at least one part");
     let sdr_src = src.join(sdr_name(name));
     let mut sdr = Vec::new();
     for n in names_in(&sdr_src) {
         let p = sdr_src.join(&n);
         if p.is_file() {
-            sdr.push((n, std::fs::read(&p).map_err(io(p.clone()))?));
+            let bytes = std::fs::read(&p).map_err(|source| DeliverError::Io {
+                path: p.clone(),
+                source,
+            })?;
+            sdr.push((n, bytes));
         }
     }
-    let docs = match conn.target {
-        Target::Folder(dir) => dir.clone(),
-        Target::MassStorage(dev) => dev.root.join("documents"),
-        Target::Mtp(_) => {
-            let dev = match conn.mtp() {
-                Some(Ok(dev)) => dev,
-                Some(Err(e)) => return Err(DeliverError::from(e)),
-                None => unreachable!("an MTP target always has a connection"),
-            };
-            let (_, folders) = parts.split_last().expect("checked");
-            let (storage, parent) = mtp_parent(dev, folders)?;
-            if let Some(h) = dev.find_child(storage, parent, name).map_err(mtp_err)? {
+    if sdr.is_empty() {
+        return Ok(());
+    }
+    let Some(docs) = docs_dir(conn.target) else {
+        let dev = match conn.mtp() {
+            Some(Ok(dev)) => dev,
+            Some(Err(e)) => return Err(DeliverError::from(e)),
+            None => unreachable!("an MTP target always has a connection"),
+        };
+        let (_, folders) = parts.split_last().expect("checked");
+        let (storage, parent) = mtp_parent(dev, folders)?;
+        let folder = dev
+            .ensure_folder(storage, parent, &sdr_name(name))
+            .map_err(mtp_err)?;
+        // Delete, then send: a known limit for `.sdr` files. The kept copy on the computer
+        // stays until a put back succeeds, so a failed send can be tried again.
+        for (n, bytes) in &sdr {
+            if let Some(h) = dev.find_child(storage, folder, n).map_err(mtp_err)? {
                 dev.delete(h).map_err(mtp_err)?;
             }
-            dev.send_file(storage, parent, name, &book)
-                .map_err(mtp_err)?;
-            if !sdr.is_empty() {
-                let folder = dev
-                    .ensure_folder(storage, parent, &sdr_name(name))
-                    .map_err(mtp_err)?;
-                for (n, bytes) in &sdr {
-                    if let Some(h) = dev.find_child(storage, folder, n).map_err(mtp_err)? {
-                        dev.delete(h).map_err(mtp_err)?;
-                    }
-                    dev.send_file(storage, folder, n, bytes).map_err(mtp_err)?;
-                }
-            }
-            return Ok(());
+            dev.send_file(storage, folder, n, bytes).map_err(mtp_err)?;
         }
+        return Ok(());
     };
-    let path: PathBuf = parts.iter().fold(docs, |p, s| p.join(s));
-    // Written beside and renamed: a failed copy leaves what was there.
-    crate::deliver::write_file(&path, &book)?;
-    if !sdr.is_empty() {
-        let dir = path.with_extension("sdr");
-        for (n, bytes) in &sdr {
-            crate::deliver::write_file(&dir.join(n), bytes)?;
-        }
+    let dir = parts
+        .iter()
+        .fold(docs, |p, s| p.join(s))
+        .with_extension("sdr");
+    for (n, bytes) in &sdr {
+        crate::deliver::write_file(&dir.join(n), bytes)?;
     }
     Ok(())
+}
+
+/// The `documents` folder on disk: a folder export or a mass-storage Kindle; `None` over MTP.
+fn docs_dir(target: &Target) -> Option<PathBuf> {
+    match target {
+        Target::Folder(dir) => Some(dir.clone()),
+        Target::MassStorage(dev) => Some(dev.root.join("documents")),
+        Target::Mtp(_) => None,
+    }
 }
 
 #[cfg(test)]

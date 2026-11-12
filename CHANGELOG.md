@@ -9,6 +9,11 @@
   when it's whole, as Kobo and PocketBook deliveries already were. A `.part` file a pulled
   cable leaves is removed on a later delivery once it's an hour old. A re-send needs room for
   one more copy for that moment (#74).
+- **Put back can't leave a Kindle with neither copy.** It removed the upgraded book first and
+  then copied the kept one in, so a failed copy left nothing. Now the kept book goes in first,
+  then the upgraded one comes out, then the kept reading position and notes go in (last,
+  because a `.kfx` and an `.azw3` of one name share a `.sdr` folder). If any step fails, the
+  upgrade stays in the list to try again, and the message says what's on the Kindle (#33).
 - **One bad outbox entry no longer stops the push.** An entry that couldn't be sent (an empty
   prepared book, a file the Kindle refused) stopped every push at that entry, so nothing after
   it went, ever. Now the rest go, and the push prints `not sent: <name>: <why>` for it on every
