@@ -35,7 +35,7 @@ pub(crate) struct Chunk {
     /// A text entry in a table cell.
     pub in_cell: Option<InCell>,
     /// Its block's `block_style`; a cell's for a cell's text or container.
-    pub style: Option<BlockStyle>,
+    pub style: Option<Box<BlockStyle>>,
     /// In ems: the book's margins (#553), a scene break's space (#230).
     pub space_above: Option<f64>,
     pub space_below: Option<f64>,
@@ -237,7 +237,7 @@ pub(crate) fn print_book_heading(heading: &mut Chunk, block: &Block, title: &str
     }
     keep_space(
         &mut heading.heading,
-        block.style.as_ref(),
+        block.style.as_deref(),
         block.margin_above,
         block.margin_below,
     );

@@ -56,7 +56,7 @@ pub(crate) fn number(v: &PyValue) -> Option<f64> {
 pub(crate) fn read_block_style(
     v: Option<&PyValue>,
     at: &str,
-) -> Result<Option<BlockStyle>, GenerateError> {
+) -> Result<Option<Box<BlockStyle>>, GenerateError> {
     let at = format!("{at}.block_style");
     let pairs = match v {
         None | Some(PyValue::None) => return Ok(None),
@@ -124,7 +124,7 @@ pub(crate) fn read_block_style(
             _ => return Err(Unsupported("a block style")),
         }
     }
-    Ok(Some(bs))
+    Ok(Some(Box::new(bs)))
 }
 
 /// `(magnitude, unit)`, the magnitude a decimal kfxgen writes and deckle-kfx holds
@@ -287,7 +287,7 @@ pub(crate) fn text_entry_style(
     around: Option<&Bidi>,
     drop_cap: Option<(i64, i64)>,
 ) -> String {
-    let bs = chunk.style.as_ref();
+    let bs = chunk.style.as_deref();
     let mut attrs = Style157::body(sizes.block_font_size(chapter_fs, chunk));
     // At the main size in a cell that isn't: 1, or it takes the cell's (#681).
     let cell_fs = open_sizes.iter().rev().flatten().find(|&&f| f != 0.0);
@@ -393,7 +393,7 @@ pub(crate) fn heading_style(
 #[derive(Clone, Default)]
 pub(crate) struct HeadingStyle {
     /// The book's heading's style, when it prints as kfxgen's (#490); never `{}`.
-    pub book_style: Option<BlockStyle>,
+    pub book_style: Option<Box<BlockStyle>>,
     /// The book's heading's small caps, transform, spacing and colour (#239): only
     /// `_print_book_heading` sets them (:1493), so a title split over blocks has none.
     pub typography: Typography,
@@ -523,7 +523,7 @@ impl Containers {
                 g,
                 styles,
                 marker,
-                chunk.style.as_ref(),
+                chunk.style.as_deref(),
                 cell_size.unwrap_or(chapter_fs),
                 &bidi,
             ),

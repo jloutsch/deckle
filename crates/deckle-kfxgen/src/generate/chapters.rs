@@ -100,7 +100,7 @@ pub(crate) struct Block {
     pub table: Option<Box<Table>>,
     pub rule: Option<RuleStyle>,
     pub boxed: Option<Box<BoxBlock>>,
-    pub style: Option<BlockStyle>,
+    pub style: Option<Box<BlockStyle>>,
     /// The book's margins, in ems (#553): `margin_above` None when absent, `Some(None)` for
     /// a None kfxgen reads as it is (`"margin_above" in block`).
     pub margin_above: Option<Option<f64>>,
