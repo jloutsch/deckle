@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # From kfxgen 8f55440 (plugin/kfxgen/model_dump.py). tools/ref/kfxgen_models.sh copies it into
 # an export of kfxgen as plugin/kfxgen/model_dump.py and calls it from generate_full_book.
-# The one change: the commit comes from $KFXGEN_COMMIT (the export has no .git).
+# The changes: the commit comes from $KFXGEN_COMMIT (the export has no .git), and loading
+# takes a model.json as data: it builds only kfxgen's classes and reads only the resources
+# their hashes name.
 """Dump the generator's input to a folder, and load it back.
 
 With ``KFXGEN_DUMP_MODEL=<dir>`` set, ``NativeKFXGenerator.generate_full_book``
@@ -27,6 +29,7 @@ import hashlib
 import importlib
 import json
 import os
+import re
 import types
 from pathlib import Path
 
@@ -113,6 +116,9 @@ def dump(directory, kwargs):
 
 
 def _resolve(qualified):
+    # Importing runs a module's code: only kfxgen's own, which the dump writes as kfxgen.*.
+    if not isinstance(qualified, str) or not qualified.startswith("kfxgen."):
+        raise ValueError(f"model_dump: {qualified!r} is not a kfxgen class")
     module, _, qualname = qualified.rpartition(".")
     # A nested class: walk back until the prefix imports.
     parts = []
@@ -127,6 +133,12 @@ def _resolve(qualified):
         raise ImportError(f"model_dump: cannot import {qualified}")
     for name in parts + qualname.split("."):
         obj = getattr(obj, name)
+    # Not a name a kfxgen module only imports (its Path, its tempfile).
+    home = getattr(obj, "__module__", None) or ""
+    if not isinstance(obj, type) or not any(
+        home == p or home.startswith(p + ".") for p in ("kfxgen", _PACKAGE)
+    ):
+        raise ValueError(f"model_dump: {qualified!r} is not a kfxgen class")
     return obj
 
 
@@ -145,7 +157,13 @@ def _decode(e, resources):
     if tag == "$dict":
         return {_decode(k, resources): _decode(v, resources) for k, v in body}
     if tag == "$bytes":
-        return (resources / body).read_bytes()
+        # A name is the sha256 of its bytes: no other path is read, and no other bytes.
+        if not isinstance(body, str) or not re.fullmatch(r"[0-9a-f]{64}", body):
+            raise ValueError(f"model_dump: resource {body!r} is not a sha256")
+        data = (resources / body).read_bytes()
+        if hashlib.sha256(data).hexdigest() != body:
+            raise ValueError(f"model_dump: resource {body} is not the bytes it names")
+        return data
     if tag == "$obj":
         cls = _resolve(body)
         obj = cls.__new__(cls)

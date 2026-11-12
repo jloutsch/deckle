@@ -21,6 +21,7 @@ def model_dump(tmp_path, monkeypatch):
     pkg = tmp_path / "pkg" / "kfxgen"
     pkg.mkdir(parents=True)
     (pkg / "__init__.py").write_text('__version__ = "test"\n')
+    (pkg / "font_table.py").write_text("class FontTable:\n    pass\n")
     (pkg / "native_generator.py").write_text(
         "def _safe_write_bytes(path, data):\n    open(path, 'wb').write(data)\n"
     )
@@ -32,7 +33,8 @@ def model_dump(tmp_path, monkeypatch):
 
 
 def test_dump_encodes_tuple_set_bytes_and_objects(model_dump, tmp_path):
-    obj = types.SimpleNamespace(name="Serif", faces={("normal", 400): b"\x00\x01font"})
+    obj = importlib.import_module("kfxgen.font_table").FontTable()
+    vars(obj).update(name="Serif", faces={("normal", 400): b"\x00\x01font"})
     value = {
         "none": None,
         "flags": [True, False, 0, 1],
@@ -56,7 +58,7 @@ def test_dump_encodes_tuple_set_bytes_and_objects(model_dump, tmp_path):
         assert type(back[key]) is type(value[key]), key
     assert [type(x) for x in back["flags"]] == [bool, bool, int, int]
     assert type(back[("tuple", "key")][0]) is tuple
-    assert isinstance(back["obj"], types.SimpleNamespace)
+    assert type(back["obj"]) is type(obj)
     assert vars(back["obj"]) == vars(obj)
 
 
@@ -91,3 +93,45 @@ def test_dump_names_kfxgen_classes_as_kfxgen_inside_calibre(model_dump, tmp_path
     model_dump.dump(tmp_path, {"font_table": cls()})
     doc = json.loads((tmp_path / "model.json").read_text())
     assert doc["args"]["$dict"][0][1]["$obj"] == "kfxgen.font_table.FontTable"
+
+
+def _model(tmp_path, args):
+    (tmp_path / "resources").mkdir(exist_ok=True)
+    (tmp_path / "model.json").write_text(json.dumps({"schema": 1, "args": args}))
+
+
+# A model.json from somewhere else is data: loading it imports and builds only kfxgen's
+# classes, and reads only the resources its hashes name (Deckle issue #14).
+@pytest.mark.parametrize(
+    "name",
+    [
+        "types.SimpleNamespace",
+        "this.x",
+        "kfxgenx.font_table.FontTable",
+        # A class a kfxgen module only imports, and a function of kfxgen's.
+        "kfxgen.model_dump.Path",
+        "kfxgen.model_dump.load",
+    ],
+)
+def test_load_refuses_a_class_outside_kfxgen(model_dump, tmp_path, name, monkeypatch):
+    monkeypatch.delitem(sys.modules, "this", raising=False)
+    _model(tmp_path, {"$obj": name, "state": {"$dict": []}})
+    with pytest.raises(ValueError, match="not a kfxgen class"):
+        model_dump.load(tmp_path)
+    assert "this" not in sys.modules
+
+
+def test_load_refuses_a_resource_that_is_not_a_hash(model_dump, tmp_path):
+    (tmp_path / "secret.txt").write_text("secret")
+    for name in ["../secret.txt", str(tmp_path / "secret.txt"), "abc"]:
+        _model(tmp_path, {"$bytes": name})
+        with pytest.raises(ValueError, match="not a sha256"):
+            model_dump.load(tmp_path)
+
+
+def test_load_refuses_a_resource_that_is_not_its_hash(model_dump, tmp_path):
+    name = "0" * 64
+    _model(tmp_path, {"$bytes": name})
+    (tmp_path / "resources" / name).write_bytes(b"other bytes")
+    with pytest.raises(ValueError, match="is not the bytes"):
+        model_dump.load(tmp_path)
