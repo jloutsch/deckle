@@ -14,9 +14,9 @@ use deckle_kfx::fragment::{Fragment, FragmentList};
 use deckle_kfx::ion::Value;
 use regex::Regex;
 
-use super::chapters::{Block, Chapter};
+use super::chapters::{Block, Chapter, first_writing_mode};
 use super::chunks::Chunk;
-use super::inline::{Flag, Span};
+use super::inline::{Anchors, Flag, Span};
 use super::page_scale::column_px;
 use super::table_styles::align_symbol;
 use super::{GenerateError, Generator, measure, model_err, py, st, sym};
@@ -470,8 +470,12 @@ pub(crate) fn title_after_pictures<'a>(
 /// The cover's page before the book's (:4876). The first page opening with the cover's
 /// picture leaves it to the cover's page (#475), and a contents page's links move one on.
 pub(crate) fn add_cover_page(chapters: &mut Vec<Chapter>, images: &Images) {
-    if let Some(blocks) = chapters.first_mut().and_then(|c| c.blocks.as_mut()) {
+    if let Some(first) = chapters.first_mut()
+        && let Some(blocks) = first.blocks.as_mut()
+    {
         without_leading_cover(blocks, images);
+        // kfxgen reads the page's writing mode from the blocks left (:4905, then :942).
+        first.writing_mode = first_writing_mode(blocks);
     }
     for link in chapters.iter_mut().flat_map(|c| &mut c.toc_links) {
         link.target += 1;
@@ -479,44 +483,67 @@ pub(crate) fn add_cover_page(chapters: &mut Vec<Chapter>, images: &Images) {
     chapters.insert(0, Chapter::cover());
 }
 
-/// `_without_leading_cover` (:5333) for blocks with no box: the cover's picture dropped when
-/// it is the first block with text, its ids moving to the next block's start. Nothing else
-/// printing on the page, it stays, as Kindle Previewer prints it (#524); so does a cover
-/// last on its page, which leaves only blank blocks before it.
+/// `_without_leading_cover` (:5372): the cover's picture dropped when it is the first block
+/// with text, its ids moving to the next block's start; a box (#238) is looked into. Nothing
+/// else printing on the page, it stays, as Kindle Previewer prints it (#524).
 fn without_leading_cover(blocks: &mut Vec<Block>, images: &Images) {
-    let Some(n) = leading_cover(blocks.iter().map(|b| b.text.as_str()), images) else {
-        return;
-    };
-    if n + 1 >= blocks.len()
-        || !blocks[n + 1..]
-            .iter()
-            .any(|b| !py::strip(&b.text).is_empty())
+    let mut left = blocks.clone();
+    // Ids left to place mean no block followed the cover, so nothing below prints.
+    if drop_leading_cover(&mut left, images).is_some()
+        && left.iter().any(|b| !py::strip(&b.text).is_empty())
     {
-        return;
+        *blocks = left;
     }
-    let cover = blocks.remove(n);
-    // `_with_anchors` (:1902): the cover's ids at the start of the next block.
-    let next = &mut blocks[n].anchors;
-    let mut offsets: BTreeMap<String, i64> =
-        cover.anchors.keys.iter().map(|k| (k.clone(), 0)).collect();
-    offsets.append(&mut next.offsets);
-    next.offsets = offsets;
-    next.keys.splice(0..0, cover.anchors.keys);
 }
 
-/// `_drop_leading_cover` (:5356) for blocks with no box: the index of the first block with
-/// text, when that block is the cover's picture alone.
-fn leading_cover<'a>(texts: impl IntoIterator<Item = &'a str>, images: &Images) -> Option<usize> {
-    for (n, text) in texts.into_iter().enumerate() {
-        let text = py::strip(text);
-        if text.is_empty() {
-            continue;
+/// `_with_anchors` (:1911): `source`'s ids at the start of `anchors`.
+fn with_anchors(anchors: &mut Anchors, source: Anchors) {
+    let mut offsets: BTreeMap<String, i64> = source.keys.iter().map(|k| (k.clone(), 0)).collect();
+    offsets.append(&mut anchors.offsets);
+    anchors.offsets = offsets;
+    anchors.keys.splice(0..0, source.keys);
+}
+
+/// `_drop_leading_cover` (:5392): `blocks` less the cover's picture when it is the first
+/// block with text, and the ids left to place (those of a picture nothing follows); None,
+/// `blocks` as they were, when the first block with text isn't that picture.
+fn drop_leading_cover(blocks: &mut Vec<Block>, images: &Images) -> Option<Option<Anchors>> {
+    let n = blocks.iter().position(|b| !py::strip(&b.text).is_empty())?;
+    let mut pending = blocks[n].anchors.clone();
+    if let Some(boxed) = &blocks[n].boxed {
+        let mut kids = boxed.blocks.clone();
+        let inner = drop_leading_cover(&mut kids, images)?;
+        if !kids.is_empty() {
+            if let Some(inner) = inner {
+                with_anchors(&mut kids[0].anchors, inner);
+            }
+            let block = &mut blocks[n];
+            block.text = kids
+                .iter()
+                .map(|k| k.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            block.boxed.as_mut().unwrap().blocks = kids;
+            return Some(None);
         }
-        let m = WHOLE_TOKEN.captures(text)?;
+        if let Some(inner) = inner {
+            with_anchors(&mut pending, inner);
+        }
+    } else {
+        let m = WHOLE_TOKEN.captures(py::strip(&blocks[n].text))?;
         let (resource, _) = images.resource(&m[1])?;
-        return (resource == COVER_RESOURCE).then_some(n);
+        if resource != COVER_RESOURCE {
+            return None;
+        }
     }
-    None
+    blocks.remove(n);
+    match blocks.get_mut(n) {
+        Some(next) => {
+            with_anchors(&mut next.anchors, pending);
+            Some(None)
+        }
+        None => Some(Some(pending)),
+    }
 }
 
 /// `_parse_size_hint` (:645): ('w' or 'h', percent), or None to size by pixels. Its column is

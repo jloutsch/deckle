@@ -113,6 +113,9 @@ pub(crate) struct Block {
     /// The text-align a picture walked as a block of its own inherits, having no
     /// `block_style` (#757, 0bc705d :5890).
     pub picture_align: Option<String>,
+    /// Its file's writing mode (#247), on a chapter's own blocks: what
+    /// `_chapter_writing_mode` (:942) looks for.
+    pub writing_mode: Option<String>,
 }
 
 impl Block {
@@ -134,6 +137,7 @@ impl Block {
             tight: false,
             trailing: String::new(),
             picture_align: None,
+            writing_mode: None,
         }
     }
 
@@ -179,7 +183,17 @@ fn read_chapter(ch: &PyValue, at: &str) -> Result<Chapter, GenerateError> {
                 .ok_or_else(|| model_err(format!("{at}.blocks: a list")))?
                 .iter()
                 .enumerate()
-                .map(|(j, b)| read_block(b, &format!("{at}.blocks[{j}]"), 0))
+                .map(|(j, b)| {
+                    let mut block = read_block(b, &format!("{at}.blocks[{j}]"), 0)?;
+                    block.writing_mode = match b.get("writing_mode") {
+                        Some(PyValue::Str(m)) if !m.is_empty() => Some(m.clone()),
+                        m if truthy(m) => {
+                            return Err(model_err(format!("{at}.blocks: a writing_mode string")));
+                        }
+                        _ => None,
+                    };
+                    Ok(block)
+                })
                 .collect::<Result<Vec<_>, _>>()?,
         ),
     };
@@ -213,20 +227,7 @@ fn read_chapter(ch: &PyValue, at: &str) -> Result<Chapter, GenerateError> {
             .ok_or_else(|| model_err(format!("{at}.preserved_images: a list of strings")))?,
         _ => Vec::new(),
     };
-    let writing_mode = match ch.get("blocks").and_then(PyValue::as_list) {
-        Some(blocks) => blocks
-            .iter()
-            .map(|b| b.get("writing_mode"))
-            .find(|m| truthy(*m))
-            .flatten()
-            .map(|m| {
-                m.as_str()
-                    .map(str::to_owned)
-                    .ok_or_else(|| model_err(format!("{at}.blocks: a writing_mode string")))
-            })
-            .transpose()?,
-        None => None,
-    };
+    let writing_mode = first_writing_mode(blocks.as_deref().unwrap_or_default());
     Ok(Chapter {
         title,
         text,
@@ -244,6 +245,11 @@ fn read_chapter(ch: &PyValue, at: &str) -> Result<Chapter, GenerateError> {
         writing_mode,
         page_bidi: Bidi::read(ch.get("page_bidi"), &format!("{at}.page_bidi"))?,
     })
+}
+
+/// `_chapter_writing_mode` (:942): the mode of the first block that carries one.
+pub(crate) fn first_writing_mode(blocks: &[Block]) -> Option<String> {
+    blocks.iter().find_map(|b| b.writing_mode.clone())
 }
 
 /// A number or None, as `block.get(key) or 0.0` reads it.

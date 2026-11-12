@@ -2569,6 +2569,47 @@ ARG_BOOKS["vertical_page"] = [
     ),
 ]
 
+
+
+def _cover_in_box(*first_page):
+    """A first page of `first_page`, then a link to the cover picture's id."""
+    return [
+        _chapter("Start", [*first_page, _block("Welcome to the book.", keys=["c1.xhtml"])]),
+        _chapter(
+            "Next",
+            [
+                _block("Next", heading=True, level=1),
+                _block("See the cover.", [(8, 5, _link("c1.xhtml#cover"))]),
+            ],
+        ),
+    ]
+
+
+_COVER_BLOCK = _block(_pic("cover.jpg", "cover"), keys=["c1.xhtml#cover"])
+# The cover's picture in a box opening the first page (kfxgen `_drop_leading_cover`, #238):
+# in a box in a box with a caption after it, the picture left out and its ids and the inner
+# box's on the caption.
+ARG_BOOKS["cover_in_box"] = _cover_in_box(
+    _block(""),
+    _box(
+        [_box([_COVER_BLOCK], keys=["c1.xhtml#inner"]), _block("The caption.")],
+        keys=["c1.xhtml#box"],
+    ),
+)
+# Alone in its box: the box left out, its ids and the picture's on the next block. The box
+# doesn't name the picture's id, so it only lands when the picture's own ids are carried.
+ARG_BOOKS["cover_box_alone"] = _cover_in_box(
+    {
+        **_box([_COVER_BLOCK]),
+        "anchor_keys": ["c1.xhtml#box"],
+        "anchor_offsets": {"c1.xhtml#box": 0},
+    }
+)
+
+# The cover's picture carrying a writing mode the rest of its page doesn't (#247): the page
+# takes its mode from the blocks left once the picture is out.
+ARG_BOOKS["cover_mode"] = _cover_in_box({**_COVER_BLOCK, "writing_mode": "vertical-rl"})
+
 #: The image books' other arguments.
 ARG_BOOK_EXTRAS = {
     "tcy_notes": {"language": "ja", "rtl": True, "writing_mode": "vertical-rl"},
@@ -2669,6 +2710,21 @@ ARG_BOOK_EXTRAS = {
         "resolved_image_refs": True,
     },
     "cover_alone": {
+        "cover_image": _COVER,
+        "images": {"cover.jpg": _COVER},
+        "resolved_image_refs": True,
+    },
+    "cover_in_box": {
+        "cover_image": _COVER,
+        "images": {"cover.jpg": _COVER},
+        "resolved_image_refs": True,
+    },
+    "cover_box_alone": {
+        "cover_image": _COVER,
+        "images": {"cover.jpg": _COVER},
+        "resolved_image_refs": True,
+    },
+    "cover_mode": {
         "cover_image": _COVER,
         "images": {"cover.jpg": _COVER},
         "resolved_image_refs": True,
