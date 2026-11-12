@@ -21,7 +21,7 @@ flate2 = "1"
 tar = { version = "0.4", default-features = false }
 
 [dev-dependencies]
-deckle-kfx.workspace = true
+deckle-kfx = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
 roxmltree.workspace = true
 zip.workspace = true

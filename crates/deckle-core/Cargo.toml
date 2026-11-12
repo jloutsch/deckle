@@ -46,6 +46,7 @@ ureq.workspace = true
 rusqlite.workspace = true
 
 [dev-dependencies]
+deckle-kfx = { workspace = true, features = ["testing"] }
 
 [features]
 # The stand-in SSH tablet of `remarkable_ssh::fake`, for other crates' tests.

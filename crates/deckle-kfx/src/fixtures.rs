@@ -22,6 +22,7 @@ pub fn kfxgen(name: &str) -> PathBuf {
 /// byte so an entry can declare a size its data doesn't have, as a hostile file does
 /// (size-limits design, "Tests"). Every entry carries zip64 sizes, so a size past 4 GB can be
 /// declared.
+#[cfg(any(test, feature = "testing"))]
 pub fn stored_zip(entries: &[(&str, &[u8], u64)]) -> Vec<u8> {
     fn crc32(data: &[u8]) -> u32 {
         let mut c = !0u32;
@@ -91,6 +92,7 @@ pub fn stored_zip(entries: &[(&str, &[u8], u64)]) -> Vec<u8> {
 
 /// For tests: a minimal one-chapter EPUB as a [`stored_zip`] (OPF `content.opf`, chapter
 /// `c.xhtml`), its declared sizes true, followed by the entries `extra`.
+#[cfg(any(test, feature = "testing"))]
 pub fn stored_epub(extra: &[(&str, &[u8], u64)]) -> Vec<u8> {
     const CONTAINER: &[u8] = br#"<?xml version="1.0"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">

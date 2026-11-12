@@ -14,7 +14,7 @@ roxmltree.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
-deckle-kfx.workspace = true
+deckle-kfx = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
 roxmltree.workspace = true
 zip.workspace = true
