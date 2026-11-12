@@ -274,8 +274,20 @@ fn build_job(path: &Path, mut job: JobDescriptor, net: &dyn Net) -> Result<(), S
     };
     let artifact = match job.input.operation {
         PressOperation::FreshFull => {
-            build_fresh(&job.config, &context, net, &crate::gather_options())
-                .map_err(|e| e.to_string())?
+            {
+                // A section left out (a damaged state file, a source down) has no place in the
+                // result the requester reads, so it is logged here.
+                let (artifact, notes) =
+                    build_fresh_noted(&job.config, &context, net, &crate::gather_options())
+                        .map_err(|e| e.to_string())?;
+                for n in notes {
+                    eprintln!(
+                        "press: {} {}: {n}",
+                        job.lease.paper_id, job.lease.edition_id
+                    );
+                }
+                artifact
+            }
         }
         PressOperation::ReadingEdition => match build_reading(
             &job.config,

@@ -150,6 +150,17 @@ pub fn build_fresh(
     net: &dyn Net,
     opts: &GatherOptions,
 ) -> Result<FreshArtifact, PressError> {
+    build_fresh_noted(cfg, context, net, opts).map(|(artifact, _)| artifact)
+}
+
+/// [`build_fresh`] with the build's notes (a section left out and why). The press protocol
+/// has no place for them in a result, so the worker logs them.
+pub fn build_fresh_noted(
+    cfg: &Config,
+    context: &FreshBuildContext,
+    net: &dyn Net,
+    opts: &GatherOptions,
+) -> Result<(FreshArtifact, Vec<String>), PressError> {
     // A new directory fences every output from both persistent inputs and prior attempts.
     // Never recursively create a caller-supplied path or follow an existing output symlink.
     std::fs::create_dir(&context.work_dir).map_err(storage)?;
@@ -212,7 +223,8 @@ pub fn build_fresh(
     }
     let gathered =
         crate::gather_with(&isolated, date, context.started_at, net, opts).without_nudges();
-    render_fresh(cfg, context, &gathered)
+    let artifact = render_fresh(cfg, context, &gathered)?;
+    Ok((artifact, gathered.notes))
 }
 
 fn render_fresh(
