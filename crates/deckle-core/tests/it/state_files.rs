@@ -127,3 +127,21 @@ fn a_rebuildable_file_with_no_copy_or_unreadable_is_never_saved_over() {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), b"[\"Mine\"]");
 }
+
+/// The readers seen (`readers.json` beside devices.json): `any_seen` reads it as `remember`
+/// does, so a damaged one is said and copied, not silently "no reader".
+#[test]
+fn readers_seen_damaged_is_said_and_copied() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("readers.json");
+    std::fs::write(&path, b"{\"kobo/N4181\": \"2026-11-").unwrap();
+    assert!(!deckle_core::reader::any_seen(&path));
+    let copied = std::fs::read_dir(dir.path()).unwrap().flatten().any(|e| {
+        e.file_name()
+            .to_string_lossy()
+            .starts_with("readers.json.damaged-")
+    });
+    assert!(copied, "a copy is kept");
+    std::fs::write(&path, b"{\"kobo/N4181\": \"2026-11-12\"}").unwrap();
+    assert!(deckle_core::reader::any_seen(&path));
+}

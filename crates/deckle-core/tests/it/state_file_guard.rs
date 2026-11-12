@@ -6,7 +6,11 @@
 use std::path::{Path, PathBuf};
 
 /// Silent loads that may stay, as `crates/…` paths: none of them is ever saved over.
-const ALLOWED: &[&str] = &[];
+const ALLOWED: &[&str] = &[
+    // Recap records in the cache, read many at once to find earlier books; each is written by
+    // its own book, never saved back from this read.
+    "crates/deckle-core/src/recaps.rs",
+];
 
 /// The shapes the pattern cannot match, listed by hand: the file and a regex for the old load.
 const BY_HAND: &[(&str, &str)] = &[
@@ -46,9 +50,10 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 /// `path:line` of each silent load in the workspace's crates and the desktop app.
 fn silent_loads(root: &Path) -> Vec<String> {
     // rustfmt splits the chain over lines, so a file is searched whole; a load spans at most
-    // five lines after the read.
+    // five lines after the read. It ends however the empty case is made: a default, a
+    // fallback, `is_some_and` (which reads a damaged file as "nothing there") or `filter`.
     let chain = regex::Regex::new(
-        r"(?s)(fs::read|read_to_string)\b[^;]*?\.ok\(\)[^;]*?(from_slice|from_str)[^;]*?unwrap_or_default",
+        r"(?s)(fs::read|read_to_string)\b[^;]*?\.ok\(\)[^;]*?(from_slice|from_str)[^;]*?(unwrap_or_default|unwrap_or\(|unwrap_or_else|is_some_and|\.filter\()",
     )
     .unwrap();
     let mut files = Vec::new();
@@ -106,9 +111,31 @@ fn the_pattern_finds_a_load_split_over_lines() {
          .and_then(|b| serde_json::from_slice(&b).ok())\n        .unwrap_or_default()\n}\n",
     )
     .unwrap();
+    // The old `any_seen` (reader.rs) and the old reMarkable host-key pin (remarkable_login.rs).
+    std::fs::write(
+        src.join("seen.rs"),
+        "pub fn any_seen(file: &Path) -> bool {\n    std::fs::read(file)\n        .ok()\n        \
+         .and_then(|b| serde_json::from_slice::<Map>(&b).ok())\n        \
+         .is_some_and(|m| !m.is_empty())\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        src.join("pin.rs"),
+        "fn f() {\n    let pinned: Option<HostKeyPin> = std::fs::read(&pin_file)\n        .ok()\n        \
+         .and_then(|b| serde_json::from_slice(&b).ok())\n        \
+         .filter(|p: &HostKeyPin| p.host == host);\n}\n",
+    )
+    .unwrap();
     for (file, _) in BY_HAND {
         std::fs::create_dir_all(dir.path().join(file).parent().unwrap()).unwrap();
         std::fs::write(dir.path().join(file), "").unwrap();
     }
-    assert_eq!(silent_loads(dir.path()), ["crates/x/src/lib.rs:2"]);
+    assert_eq!(
+        silent_loads(dir.path()),
+        [
+            "crates/x/src/lib.rs:2",
+            "crates/x/src/pin.rs:2",
+            "crates/x/src/seen.rs:2"
+        ]
+    );
 }

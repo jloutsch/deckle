@@ -201,11 +201,12 @@ pub fn remember(file: &Path, reader: &Reader, now: &str) -> Result<(), String> {
 }
 
 /// Whether `file` names any reader.
+/// A file that does not parse starts empty, said in one line, with a copy kept, as
+/// [`remember`] reads it.
 pub fn any_seen(file: &Path) -> bool {
-    std::fs::read(file)
-        .ok()
-        .and_then(|b| serde_json::from_slice::<std::collections::BTreeMap<String, String>>(&b).ok())
-        .is_some_and(|m| !m.is_empty())
+    !crate::state_file::rebuildable::<std::collections::BTreeMap<String, String>>(file)
+        .value
+        .is_empty()
 }
 
 /// Writes `bytes` to `Deckle/<name>` through a hidden temporary file, flushed to the drive
