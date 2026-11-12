@@ -79,7 +79,7 @@ pub(crate) struct Cell {
     pub background: Option<i64>,
     /// A cell holding several blocks (#261).
     pub paragraphs: Vec<Paragraph>,
-    pub style: Option<BlockStyle>,
+    pub style: Option<Box<BlockStyle>>,
 }
 
 #[derive(Clone)]

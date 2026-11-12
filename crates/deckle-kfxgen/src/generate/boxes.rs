@@ -732,7 +732,7 @@ pub(crate) fn cut_title_in_box(
         let kid = &first_box.blocks[0];
         keep_space(
             &mut chunks[at].heading,
-            kid.style.as_ref(),
+            kid.style.as_deref(),
             None,
             kid.margin_below,
         );

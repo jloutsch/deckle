@@ -367,6 +367,9 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
         symtab.import_fragment(),
     ));
     g.fragments.sort_preferred();
+    // The fragments hold the book now: what they were built from is not kept while they
+    // are written and read back.
+    drop((chapters, data, pos));
 
     let doc = KfxDoc {
         symtab,
@@ -376,6 +379,7 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
         package_version: String::new(),
     };
     let bytes = write_kfx(&doc, &WriteOptions::from_doc(&doc))?;
+    drop(doc);
     let fragments: FragmentList = read_kfx(&bytes)?.fragments;
     Ok(GenerateOutput {
         bytes,

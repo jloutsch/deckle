@@ -162,10 +162,13 @@ pub(crate) fn build_chapter_content(
             for link in &chapter.toc_links {
                 toc_link_chunks.insert(chunks.len(), link);
                 chunks.push(Chunk {
-                    style: page_bidi.clone().map(|bidi| BlockStyle {
-                        bidi: Some(bidi),
-                        ..BlockStyle::default()
-                    }),
+                    style: page_bidi
+                        .clone()
+                        .map(|bidi| BlockStyle {
+                            bidi: Some(bidi),
+                            ..BlockStyle::default()
+                        })
+                        .map(Box::new),
                     ..Chunk::text(link.text.clone())
                 });
             }
