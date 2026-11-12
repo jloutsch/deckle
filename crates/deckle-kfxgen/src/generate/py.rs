@@ -262,12 +262,34 @@ pub(crate) fn quantize_milli(x: f64) -> Option<Decimal> {
 }
 
 /// `Decimal(str(x))`. Rust prints a float's shortest round-trip digits, as `repr` does, but
-/// without an exponent: the same decimal below 1e16, which no style reaches.
+/// without an exponent: the same decimal below 1e16, where `repr` starts writing one.
 pub(crate) fn decimal_of_float(x: f64) -> Decimal {
+    if x.is_finite() && x.abs() >= 1e16 {
+        return decimal(&format!("{x:e}"));
+    }
     let mut text = format!("{x}");
     if !text.contains('.') && x.is_finite() {
         // repr(2.0) is "2.0", and Decimal keeps that zero.
         text.push_str(".0");
     }
     decimal(&text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decimal_of_float;
+
+    /// `Decimal(str(1e16))` is 1E+16 and `Decimal(str(2.0))` is 2.0 (issue #13).
+    #[test]
+    fn a_float_of_1e16_keeps_its_exponent() {
+        for (x, coefficient, exponent) in [
+            (1e16, 1, 16),
+            (-1.2345678901234568e17, -12345678901234568, 1),
+            (9999999999999998.0, 99999999999999980, -1),
+            (2.0, 20, -1),
+        ] {
+            let d = decimal_of_float(x);
+            assert_eq!((d.coefficient, d.exponent), (coefficient, exponent), "{x}");
+        }
+    }
 }

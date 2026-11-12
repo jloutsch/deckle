@@ -289,6 +289,14 @@ pub(crate) fn read_block(
         block.anchors = Anchors::read(b, at)?;
         Ok(block)
     };
+    // `page_bidi` reads a rule's or box's own `block_style`, and a rule's `box`; kfxgen prints
+    // a rule's text. None is ported, and the converter writes none.
+    if kind.is_some() && truthy(b.get("block_style").and_then(|s| s.get("bidi"))) {
+        return Err(Unsupported("a direction on a rule's or box's own style"));
+    }
+    if kind == Some("rule") && (truthy(b.get("box")) || truthy(b.get("text"))) {
+        return Err(Unsupported("a rule with text or a box"));
+    }
     match kind {
         Some("rule") => {
             return margins(Block {

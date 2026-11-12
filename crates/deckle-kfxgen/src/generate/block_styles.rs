@@ -328,7 +328,7 @@ pub(crate) fn heading_style(
     chunk: &Chunk,
     attrs: &Style157,
     around: Option<&Bidi>,
-) -> Option<String> {
+) -> Result<Option<String>, GenerateError> {
     let book = chunk.heading.book_style.as_ref();
     let own = match book {
         Some(b) => b.bidi.as_ref(),
@@ -349,21 +349,26 @@ pub(crate) fn heading_style(
     // Its small caps, transform, spacing and colour (#239), whichever style follows (:7788).
     attrs.typography = chunk.heading.typography.clone();
     let size_px = attrs.font_size * sizes.main_px_or_16();
+    // kfxgen divides by it (:7813, :7819): a heading of no size raises there.
+    let over_size = |px: f64| match size_px {
+        0.0 => Err(model_err("a heading's font size: not 0".to_owned())),
+        _ => Ok(px / size_px),
+    };
     if let Some(below) = chunk.heading.space_below_px.filter(|&b| b != 0.0) {
-        attrs.space_below = Some(below / size_px);
+        attrs.space_below = Some(over_size(below)?);
     }
     if book.is_some() {
         if let Some(above) = chunk.heading.space_above_px {
-            attrs.space_above = Some(above / size_px);
+            attrs.space_above = Some(over_size(above)?);
             attrs.margin_top = None;
         }
     } else if attrs.space_below.is_none()
         && bidi.is_empty()
         && attrs.typography == Typography::default()
     {
-        return None;
+        return Ok(None);
     }
-    Some(styles.allocate_in(g, "_h", attrs, &bidi))
+    Ok(Some(styles.allocate_in(g, "_h", attrs, &bidi)))
 }
 
 /// What `_print_book_heading` (:1477) and the chapter's page put on kfxgen's heading.

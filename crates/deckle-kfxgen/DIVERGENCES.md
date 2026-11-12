@@ -192,3 +192,17 @@ levels deep are `GenerateError::Unsupported`, checked while the model is read, b
 deeper recursion: a book kfxgen writes at 33 to 245 levels is refused. No fixture nests more
 than 2, no corpus book more than 1. A model loaded from JSON can't reach the limit:
 serde_json stops at 128 levels, which `load_model` reaches at 27 nested boxes.
+
+## Three hand-made values the port reads differently
+
+Found by running both generators on edited models (issue #13). The converter writes none of
+them, and the port keeps its own behaviour:
+
+- **A size too small to divide by.** A `font_size` of 5e-324 makes a ratio of infinity. kfxgen
+  raises when it serializes it (`abs()` of a str, `ion_binary.py:728`). The port writes the
+  infinite decimal as 0 and makes a book.
+- **A font table whose `_by_family` disagrees with its `faces`.** kfxgen matches a family
+  against `_by_family` as the model gives it. The port builds the same grouping from `faces`
+  and does not read `_by_family`. The converter always derives one from the other.
+- **A tate-chu-yoko run that starts before the paragraph.** Python's slice wraps a negative
+  start round to the paragraph's end. The port clamps it to the start.
