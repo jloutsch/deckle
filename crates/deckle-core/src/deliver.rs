@@ -615,7 +615,8 @@ fn megabytes(bytes: u64) -> String {
 /// 6. A rename that fails leaves the new copy whole under its `.part` name; the error says so.
 ///
 /// A Kindle that can't rename gets the old way, with the room check: delete, then send. A
-/// failed send there has lost the old copy, and the error says [`OLD_COPY_REMOVED`].
+/// failed send there has lost the old copy, and the error says [`OLD_COPY_REMOVED`]; after a
+/// pulled cable a partial file may stay under the book's name until the next send.
 pub(crate) fn mtp_send_replacing(
     dev: &mut Mtp,
     storage: u32,
@@ -691,7 +692,9 @@ pub(crate) fn mtp_send_replacing(
             dev.delete(old).map_err(m)?;
         }
         if let Err(e) = dev.send_file(storage, parent, name, bytes) {
-            // Half a book never keeps the book's name.
+            // Try to take half a book off the book's name. With the session still up this works;
+            // after a pulled cable it can't, and the partial file stays under the name until the
+            // next send of this book replaces it.
             remove_if_there(dev, storage, parent, name);
             let what = match existing {
                 Some(_) => format!(

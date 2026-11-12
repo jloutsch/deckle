@@ -15,7 +15,8 @@
   deleted, and the message says the old copy is as it was. A Kindle that can rename over MTP
   gets the new copy beside the old one and swapped in; whether any Kindle can is not known
   yet, so the others still delete first, and a cable pulled mid-send there still loses the old
-  copy, which the error now says. Details in [docs/devices.md](docs/devices.md) (#74).
+  copy (the error now says so) and can leave a partial file under the book's name until the
+  book is sent again. Details in [docs/devices.md](docs/devices.md) (#74).
 - **A download from an MTP Kindle that stops short is an error.** A cable pulled while a book
   or its reading position was read off the Kindle returned the bytes so far as the whole file,
   so a kept copy could be cut off. Now it fails and says how much came (#32).

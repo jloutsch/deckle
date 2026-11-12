@@ -51,7 +51,9 @@ anything when it doesn't fit. Then:
   under its `.part` name, says so, and the next send of that book cleans it up.
 - **A Kindle that can't rename** (the known limit): the old copy is deleted, then the book is
   sent, as before. A full Kindle is caught by the room check, but a cable pulled mid-send loses
-  the old copy; the error says so, and sending the book again puts it back.
+  the old copy, and can leave a partial file under the book's name (Deckle can't remove it once
+  the cable is out). The error says the old copy was removed; sending the book again replaces
+  the partial file with the whole book.
 - Word Wise system files and a put-back's `.sdr` files are always deleted, then sent: Word Wise
   can be built again, and a put back keeps its copy on the computer until it succeeds.
 - **Not known:** whether any Kindle accepts the rename. No real Kindle has been tried; the
