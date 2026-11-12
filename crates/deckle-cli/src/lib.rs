@@ -2095,7 +2095,12 @@ fn kindle(json: bool, to: &str, action: cli::KindleCommand) -> Result<ExitCode, 
 /// The originals on this computer (Books and Kindle design §4); a calibre library that won't
 /// open is a warning.
 fn originals() -> deckle_library::sources::Sources {
-    let cfg = deckle_library::LibraryConfig::load(&deckle_library::config::default_path());
+    // A library.json that can't be read is a warning: the originals are looked for without it.
+    let cfg = deckle_library::LibraryConfig::load(&deckle_library::config::default_path())
+        .unwrap_or_else(|e| {
+            eprintln!("warning: {e}");
+            Default::default()
+        });
     let found =
         deckle_library::sources::Sources::gather(&cfg, deckle_library::sources::home().as_deref());
     for w in &found.warnings {
@@ -2523,7 +2528,7 @@ fn library(json: bool, action: cli::LibraryCommand) -> Result<ExitCode, String> 
         LibraryConfig {
             root: Some(root.clone()),
             auto_add: !no_auto_add,
-            ..LibraryConfig::load(&config)
+            ..LibraryConfig::load(&config)?
         }
         .save(&config)?;
         println!("library: {}", root.display());

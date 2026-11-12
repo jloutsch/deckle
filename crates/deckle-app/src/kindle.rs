@@ -27,6 +27,10 @@ pub struct LibraryStatus {
     pub root: Option<String>,
     pub auto_add: bool,
     pub books: usize,
+    /// `library.json` is there but could not be read: why, and where its copy is. Nothing is
+    /// saved over it until the owner fixes or removes it.
+    #[serde(default)]
+    pub damaged: Option<String>,
 }
 
 /// One book on the Kindle, as the tab shows it.
@@ -114,7 +118,10 @@ pub fn data_url(bytes: &[u8]) -> String {
 }
 
 pub fn library_status_at(config: &Path) -> LibraryStatus {
-    let cfg = LibraryConfig::load(config);
+    let (cfg, damaged) = match LibraryConfig::load(config) {
+        Ok(cfg) => (cfg, None),
+        Err(e) => (LibraryConfig::default(), Some(e)),
+    };
     LibraryStatus {
         books: cfg
             .root
@@ -123,6 +130,7 @@ pub fn library_status_at(config: &Path) -> LibraryStatus {
             .unwrap_or(0),
         root: cfg.root.map(|r| r.to_string_lossy().into_owned()),
         auto_add: cfg.auto_add,
+        damaged,
     }
 }
 
@@ -138,7 +146,7 @@ pub fn library_set_at(
     LibraryConfig {
         root,
         auto_add,
-        ..LibraryConfig::load(config)
+        ..LibraryConfig::load(config)?
     }
     .save(config)?;
     Ok(library_status_at(config))
@@ -279,7 +287,10 @@ pub fn shelf_on(
             space,
         )
     });
-    let sources = Sources::gather(&LibraryConfig::load(config), home().as_deref());
+    let sources = Sources::gather(
+        &LibraryConfig::load(config).unwrap_or_default(),
+        home().as_deref(),
+    );
     let mut books: Vec<DeviceBookRow> = sort(shelved, &sources, |b| {
         deckle_readership::parse_yjf(b)
             .ok()

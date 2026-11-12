@@ -39,11 +39,20 @@ pub struct CatalogView {
 
 /// `device` is the footer's Kindle (its profile key), when one is connected.
 pub fn catalog_at(config: &Path, home: Option<&Path>, device: Option<&str>) -> CatalogView {
-    let cfg = LibraryConfig::load(config);
+    // A damaged library.json or upgrades.json is a warning above the list; nothing is saved
+    // over either.
+    let mut damaged = Vec::new();
+    let cfg = LibraryConfig::load(config)
+        .inspect_err(|e| damaged.push(e.clone()))
+        .unwrap_or_default();
+    let upgrades = Upgrades::load(config)
+        .inspect_err(|e| damaged.push(e.clone()))
+        .unwrap_or_default();
     let library = Library::configured(config).map(|(l, _)| l);
-    let sources = Sources::gather(&cfg, home);
+    let mut sources = Sources::gather(&cfg, home);
+    sources.warnings.splice(0..0, damaged);
     CatalogView {
-        entries: catalog(library.as_ref(), &sources, &Upgrades::load(config))
+        entries: catalog(library.as_ref(), &sources, &upgrades)
             .into_iter()
             .map(|entry| EntryRow {
                 on_kindle: device.is_some_and(|d| {
@@ -430,7 +439,7 @@ pub fn watch_set_at(config: &Path, dir: Option<String>) -> Result<Option<String>
     }
     LibraryConfig {
         watch: dir.clone(),
-        ..LibraryConfig::load(config)
+        ..LibraryConfig::load(config)?
     }
     .save(config)?;
     Ok(dir.map(|d| d.to_string_lossy().into_owned()))

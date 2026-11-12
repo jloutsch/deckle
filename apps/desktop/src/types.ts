@@ -704,6 +704,8 @@ export interface LibraryStatus {
   root: string | null;
   auto_add: boolean;
   books: number;
+  /** library.json is there but could not be read: why, and where its copy is. Nothing is saved over it until it is fixed or removed. */
+  damaged?: string | null;
 }
 
 /** One book in a Kindle's documents/ (library design §4). */

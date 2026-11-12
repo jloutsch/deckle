@@ -13,6 +13,11 @@
   is kept with a copy beside it and not replaced. The paper prints without From Your Shelf and
   says why, a Kindle connection skips the shelf and still delivers, the shelf card on the
   Daily tab shows the message, and `digest morgue send` stops with it.
+- **And for the library's own files.** `library.json`, `upgrades.json`, the calibre shelves
+  and write-back settings, the reading log and the watched folder's list of files already tried
+  are kept the same way. Settings → Library says when `library.json` doesn't read, the Books tab
+  lists it with its warnings, and a watched folder whose list doesn't read stops (rather than
+  adding every EPUB in it again) and says so beside the folder in Settings and once in the app.
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in

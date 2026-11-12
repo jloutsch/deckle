@@ -41,11 +41,11 @@ fn key(path: &Path) -> Option<String> {
 
 /// Adds the EPUBs in `dir` (not its subfolders) that haven't been tried, remembering them in
 /// `seen`. A file still being written (changed in the last few seconds) waits for the next look.
+///
+/// A `seen` that is there but does not parse or cannot be read stops the scan with an error
+/// naming it: starting it empty would add every EPUB in the folder again.
 pub fn scan(lib: &Library, dir: &Path, seen: &Path) -> Result<Watched, String> {
-    let mut state: Seen = std::fs::read(seen)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default();
+    let mut state: Seen = deckle_core::state_file::read(seen)?.unwrap_or_default();
     let mut out = Watched::default();
     let entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let mut files: Vec<PathBuf> = entries

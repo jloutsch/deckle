@@ -4,3 +4,4 @@
 mod library;
 mod real_calibre;
 mod search;
+mod state_files;

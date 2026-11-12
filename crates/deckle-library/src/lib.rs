@@ -177,15 +177,7 @@ pub fn book_info(path: &Path) -> Result<BookInfo, String> {
 
 /// `bytes` to `path` by a temp file in the same folder and a rename: never half-written.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    use std::io::Write;
-    let dir = path.parent().unwrap_or(Path::new("."));
-    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let mut tmp = tempfile::NamedTempFile::new_in(dir).map_err(|e| e.to_string())?;
-    tmp.write_all(bytes).map_err(|e| e.to_string())?;
-    tmp.as_file().sync_all().map_err(|e| e.to_string())?;
-    tmp.persist(path)
-        .map_err(|e| format!("{}: {}", path.display(), e.error))?;
-    Ok(())
+    deckle_core::state_file::save(path, bytes, false).map_err(|e| e.to_string())
 }
 
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
@@ -245,9 +237,12 @@ impl Library {
         Library { root: root.into() }
     }
 
-    /// The library `library.json` at `config` points at, when there is one.
+    /// The library `library.json` at `config` points at, when there is one. A `library.json`
+    /// that can't be read is said on stderr and reads as no library; nothing is saved over it.
     pub fn configured(config: &Path) -> Option<(Library, LibraryConfig)> {
-        let cfg = LibraryConfig::load(config);
+        let cfg = LibraryConfig::load(config)
+            .inspect_err(|e| eprintln!("library: {e}"))
+            .ok()?;
         let root = cfg.root.clone()?;
         Some((Library::new(root), cfg))
     }

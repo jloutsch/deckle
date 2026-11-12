@@ -239,17 +239,25 @@ function Deckle() {
   }, [loadCatalog, busy]);
   // The watched folder, looked at every two minutes while Deckle is open.
   const watching = !!catalog?.watch;
+  // The last watch error said, so a failing look every two minutes says it once.
+  const watchSaid = useRef<string | null>(null);
   useEffect(() => {
     if (!watching) return;
     const look = async () => {
       try {
         const w = await api.libraryWatchScan();
+        watchSaid.current = null;
         if (w.added.length) {
           setNotice(w.added.length === 1 ? `${w.added[0]} was added to your library from the watched folder.` : `${w.added.length} books were added to your library from the watched folder.`);
           loadCatalog();
         }
-      } catch {
-        // A folder that went away says so in Settings; nothing to do here.
+      } catch (e) {
+        // Said once here; Settings → Library shows it beside the watched folder.
+        const said = String(e);
+        if (watchSaid.current !== said) {
+          watchSaid.current = said;
+          setNotice(`The watched folder wasn't looked at: ${said}`);
+        }
       }
     };
     look();

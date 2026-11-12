@@ -29,7 +29,7 @@ fn now() -> String {
 
 /// The rules on a plugged-in Kobo or PocketBook (or a folder standing in for one).
 fn on_drive(folder: Option<&Path>, apply: bool) -> Result<Vec<Target>, String> {
-    let cfg = Config::load(&config_path());
+    let cfg = Config::load(&config_path())?;
     let sets = sets()?;
     match folder {
         Some(f) => {
@@ -81,7 +81,13 @@ fn for_reader(
 
 /// When a reader is plugged in: the rules on it, when they're on automatically.
 pub(crate) fn on_sync(reader: &deckle_core::reader::Reader) {
-    let cfg = Config::load(&config_path());
+    let cfg = match Config::load(&config_path()) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("shelves: {e}");
+            return;
+        }
+    };
     if !cfg.auto || cfg.rules.is_empty() {
         return;
     }
@@ -123,9 +129,13 @@ impl Publisher {
         self.last = Some(Instant::now());
         let store = crate::wireless::store();
         // Off: sessions leave collections alone.
-        let on = Config::load(&config_path()).auto;
-        let r = if on { sets() } else { Ok(Vec::new()) }
-            .and_then(|s| store.set_shelves(&s).map_err(|e| e.to_string()));
+        // A rules file that can't be read is said once and leaves the sessions' copy as it is.
+        let r = match Config::load(&config_path()) {
+            Ok(cfg) if cfg.auto => sets(),
+            Ok(_) => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+        .and_then(|s| store.set_shelves(&s).map_err(|e| e.to_string()));
         match r {
             Ok(()) => self.said = None,
             Err(e) if self.said.as_deref() != Some(e.as_str()) => {
@@ -180,7 +190,7 @@ fn target_lines(targets: &[Target]) -> String {
 
 pub(crate) fn run(json: bool, action: ShelvesCommand) -> Result<ExitCode, String> {
     let path = config_path();
-    let mut cfg = Config::load(&path);
+    let mut cfg = Config::load(&path)?;
     let save = |cfg: &Config| {
         cfg.save(&path)
             .map_err(|e| format!("{}: {e}", path.display()))

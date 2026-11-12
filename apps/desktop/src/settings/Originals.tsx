@@ -13,9 +13,19 @@ import { Row, Switch } from "./Row";
 export default function Originals() {
   const [status, setStatus] = useState<SourcesStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Why the watched folder can't be looked at (a damaged seen list, a folder gone), from a look now.
+  const [watchError, setWatchError] = useState<string | null>(null);
   useEffect(() => {
     api.librarySources().then(setStatus).catch((e) => setError(String(e)));
   }, []);
+  const watched = status?.watch ?? null;
+  useEffect(() => {
+    if (!watched) return setWatchError(null);
+    api
+      .libraryWatchScan()
+      .then(() => setWatchError(null))
+      .catch((e) => setWatchError(String(e)));
+  }, [watched]);
   const save = async (findInCalibre: boolean, calibre: string | null, folders: string[]) => {
     try {
       setStatus(await api.librarySourcesSet(findInCalibre, calibre, folders));
@@ -89,6 +99,7 @@ export default function Originals() {
         )}
         <Switch label="Watch a folder" checked={!!status.watch} onChange={(on) => (on ? watchFolder() : setWatch(null))} />
       </Row>
+      {watchError && <p className="warn small">{watchError}</p>}
       {error && <p className="warn small">{error}</p>}
     </>
   );

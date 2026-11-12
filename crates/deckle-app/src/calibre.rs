@@ -50,7 +50,7 @@ pub struct WritebackPatch {
 
 fn update(f: impl FnOnce(&mut Writeback) -> Result<(), String>) -> Result<Status, String> {
     let p = paths();
-    let mut wb = Writeback::load(&p.config);
+    let mut wb = Writeback::load(&p.config)?;
     f(&mut wb)?;
     wb.save(&p.config).map_err(|e| e.to_string())?;
     Ok(writeback::status(&p))
@@ -99,7 +99,7 @@ pub fn calibre_writeback_confirm(keys: Vec<String>) -> Result<Status, String> {
 /// Writes the next batch now; what it did is in the answer's `last_result`.
 pub fn calibre_writeback_write() -> Result<Status, String> {
     let p = paths();
-    let wb = Writeback::load(&p.config);
+    let wb = Writeback::load(&p.config)?;
     writeback::write_now(&p, password(&wb).as_deref(), &mut writeback::system_runner)?;
     Ok(writeback::status(&p))
 }
@@ -120,7 +120,7 @@ pub fn calibre_create_columns() -> Result<Status, String> {
 /// Keeps the content server's password in the system keychain.
 pub fn calibre_set_password(password: String) -> Result<Status, String> {
     let p = paths();
-    let wb = Writeback::load(&p.config);
+    let wb = Writeback::load(&p.config)?;
     let user = wb.username.ok_or("set the content server's user first")?;
     SystemKeyring
         .set(writeback::KEYCHAIN_SERVICE, &user, &password)

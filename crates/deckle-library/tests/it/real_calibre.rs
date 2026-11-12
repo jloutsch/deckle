@@ -252,7 +252,7 @@ fn real_calibredb_takes_the_columns_and_the_values() {
                 &epub.to_string_lossy(),
             ],
         );
-        let mut wb = Writeback::load(&p.config);
+        let mut wb = Writeback::load(&p.config).unwrap();
         wb.annotations = true;
         wb.save(&p.config).unwrap();
         let r = writeback::write_now(&p, None, &mut writeback::system_runner)
