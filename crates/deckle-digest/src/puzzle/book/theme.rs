@@ -236,7 +236,7 @@ pub fn sources(main: &Path, today: NaiveDate) -> Sources {
         }
     }
     out.week = from_headlines(&puzzles, today, WEEK_DAYS, None).len();
-    out.vocab = from_shelf(&Shelf::load(&cfg.shelf_store())).len();
+    out.vocab = Shelf::load(&cfg.shelf_store()).map_or(0, |s| from_shelf(&s).len());
     out.cookbook = from_cookbook(&Cookbook::new(Cookbook::default_dir())).len();
     out
 }
@@ -278,7 +278,7 @@ pub fn resolve(main: &Path, source: &Source, today: NaiveDate) -> Result<Themed,
             }
         }
         Source::Vocab => {
-            let words = from_shelf(&Shelf::load(&cfg.shelf_store()));
+            let words = from_shelf(&Shelf::load(&cfg.shelf_store())?);
             Themed {
                 note: format!("{} words you looked up on the Kindle", words.len()),
                 title: format!("Words you looked up, {month}"),

@@ -361,7 +361,7 @@ fn record_keeps_other_kindles() {
         ..Default::default()
     };
     record(&path, "S", scribe).unwrap();
-    let shelf = Shelf::load(&path);
+    let shelf = Shelf::load(&path).unwrap();
     assert_eq!(
         shelf.kindles["P"].highlights.len(),
         1,
@@ -518,4 +518,22 @@ fn a_failed_kobo_read_keeps_the_last_highlights() {
     let again =
         deckle_shelf::kobo_snapshot(Vec::new(), None, true, "Kobo", Some(first.clone()), now());
     assert_eq!(again.highlights, first.highlights);
+}
+
+/// #93: a shelf.json that does not parse is not replaced by this connection's snapshot.
+#[test]
+fn a_damaged_shelf_file_is_never_saved_over() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("shelf.json");
+    let truncated = br#"{"kindles": {"P": {"name": "Kindle Paperwhite", "seen": "2026-1"#;
+    std::fs::write(&path, truncated).unwrap();
+    let snap = KindleSnapshot {
+        name: "Scribe".into(),
+        seen: "2026-10-22".into(),
+        ..Default::default()
+    };
+    let e = record(&path, "S", snap).unwrap_err();
+    assert!(e.contains(&path.display().to_string()), "{e}");
+    assert!(e.contains("shelf.json.damaged-"), "{e}");
+    assert_eq!(std::fs::read(&path).unwrap(), truncated);
 }

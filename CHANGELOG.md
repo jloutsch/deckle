@@ -8,6 +8,11 @@
   (`settings.json.damaged-<time>`), says so at the top of Settings, and saves nothing until the
   file is fixed or removed. Settings are written to a temporary file and renamed into place, and
   are always private to you (0600), also when an older copy was readable by others.
+- **The same for From Your Shelf and the Morgue.** A `shelf.json` (every Kindle's snapshot and
+  the highlights already printed) or `morgue.json` (the editions sent again) that doesn't read
+  is kept with a copy beside it and not replaced. The paper prints without From Your Shelf and
+  says why, a Kindle connection skips the shelf and still delivers, the shelf card on the
+  Daily tab shows the message, and `digest morgue send` stops with it.
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in

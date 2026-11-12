@@ -4772,7 +4772,14 @@ const RESENT_DAYS: i64 = 7;
 /// last week.
 fn morgue_exempt() -> Vec<String> {
     use deckle_digest::chrono::{DateTime, Utc};
-    let state = deckle_morgue::MorgueState::load(&deckle_morgue::state::state_path());
+    // A damaged morgue.json is said and exempts nothing: prune keeps its usual count.
+    let state = match deckle_morgue::MorgueState::load(&deckle_morgue::state::state_path()) {
+        Ok(state) => state,
+        Err(e) => {
+            eprintln!("morgue: {e}");
+            return Vec::new();
+        }
+    };
     let now = Utc::now();
     let outbox = deckle_core::queue::Queue::default_dir();
     state
@@ -4797,7 +4804,13 @@ fn morgue_exempt() -> Vec<String> {
 fn record_morgue(flush: &deckle_core::queue::FlushReport) {
     use deckle_core::yjf::OnDevice;
     let path = deckle_morgue::state::state_path();
-    let mut state = deckle_morgue::MorgueState::load(&path);
+    let mut state = match deckle_morgue::MorgueState::load(&path) {
+        Ok(state) => state,
+        Err(e) => {
+            eprintln!("morgue: {e}");
+            return;
+        }
+    };
     let before = state.clone();
     let now = deckle_digest::chrono::Utc::now().to_rfc3339();
     for delivered in &flush.delivered {
@@ -5194,10 +5207,14 @@ fn reader_sync(
     shelves::on_sync(reader);
     let shelf = flush.kobo_books.clone().and_then(|books| {
         let path = cfg.shelf_store();
-        let previous = deckle_digest::shelf::store::Shelf::load(&path)
-            .kindles
-            .get(&id)
-            .cloned();
+        // A damaged shelf.json skips the shelf, said; the books were delivered all the same.
+        let previous = match deckle_digest::shelf::store::Shelf::load(&path) {
+            Ok(shelf) => shelf.kindles.get(&id).cloned(),
+            Err(e) => {
+                eprintln!("shelf: {e}");
+                return None;
+            }
+        };
         let name = cfg.sync.device_name(&id).unwrap_or_else(|| reader.name());
         let snap = deckle_shelf::kobo_snapshot(
             books,
@@ -5755,12 +5772,15 @@ fn sync_to(
     // What this connection teaches each paper (interests design §5): taps from the reads just
     // recorded, highlights from the clippings, authors from the shelf just stored.
     for (paper, (_, state)) in papers.iter().zip(&states) {
-        let store = deckle_digest::shelf::store::Shelf::load(&paper.shelf_store());
+        // A damaged shelf.json is said, and the authors on it are left out of this lesson.
+        let store = deckle_digest::shelf::store::Shelf::load(&paper.shelf_store())
+            .inspect_err(|e| eprintln!("learning: {e}"))
+            .ok();
         if let Err(e) = deckle_readership::learn::on_connection(
             paper,
             state,
             flush.clippings.as_deref(),
-            Some(&store),
+            store.as_ref(),
             deckle_digest::chrono::Utc::now(),
         ) {
             eprintln!("learning: {e}");
@@ -5800,11 +5820,15 @@ fn record_shelf(
     let device = deckle_library::device_ref(target);
     let id = deckle_core::sync::device_id(target);
     let path = cfg.shelf_store();
-    // A read that failed (not "no file") must not blank what the last plug-in found.
-    let previous = deckle_digest::shelf::store::Shelf::load(&path)
-        .kindles
-        .get(&id)
-        .cloned();
+    // A read that failed (not "no file") must not blank what the last plug-in found, and a
+    // damaged shelf.json is said and left as it is.
+    let previous = match deckle_digest::shelf::store::Shelf::load(&path) {
+        Ok(shelf) => shelf.kindles.get(&id).cloned(),
+        Err(e) => {
+            eprintln!("shelf: {e}");
+            return None;
+        }
+    };
     let library = deckle_library::Library::configured(&deckle_library::config::default_path())
         .map(|(lib, _)| lib);
     let (snap, errors) = deckle_shelf::snapshot(
@@ -6067,18 +6091,23 @@ fn archive_to_morgue(
             .map(|e| format!("Morgue: couldn't save the edition ({e})"));
     }
     let state_path = deckle_morgue::state::state_path();
-    let mut state = deckle_morgue::MorgueState::load(&state_path);
-    let cache = deckle_core::wordwise::default_cache_dir().join("digest");
-    let was_imported = state.imported;
-    if !deckle_morgue::import::import_once(&morgue, &cache, &mut state).is_empty() {
-        eprintln!("morgue: imported the editions in {}", cache.display());
-    }
-    // Only a first import changes the state; saving on every build widens the window in which
-    // another writer's update is lost.
-    if state.imported != was_imported
-        && let Err(e) = state.save(&state_path)
-    {
-        eprintln!("morgue: {}: {e}", state_path.display());
+    // A damaged morgue.json skips the first-run import, said; the edition is still kept.
+    match deckle_morgue::MorgueState::load(&state_path) {
+        Err(e) => eprintln!("morgue: {e}"),
+        Ok(mut state) => {
+            let cache = deckle_core::wordwise::default_cache_dir().join("digest");
+            let was_imported = state.imported;
+            if !deckle_morgue::import::import_once(&morgue, &cache, &mut state).is_empty() {
+                eprintln!("morgue: imported the editions in {}", cache.display());
+            }
+            // Only a first import changes the state; saving on every build widens the window
+            // in which another writer's update is lost.
+            if state.imported != was_imported
+                && let Err(e) = state.save(&state_path)
+            {
+                eprintln!("morgue: {}: {e}", state_path.display());
+            }
+        }
     }
     morgue
         .archive_edition(epub, &deckle_morgue::from_gathered(gathered))
@@ -6138,7 +6167,7 @@ fn morgue_send(
     // Recorded first: a plug-in between the two steps must already know to leave it alone (it
     // is only exempt while it is in the outbox, so this costs nothing if the add fails).
     let path = deckle_morgue::state::state_path();
-    let mut state = deckle_morgue::MorgueState::load(&path);
+    let mut state = deckle_morgue::MorgueState::load(&path)?;
     let before = state.resent.get(&date).cloned();
     state.resent.insert(
         date,
@@ -6241,7 +6270,7 @@ fn digest_morgue(json: bool, path: &Path, action: cli::MorgueCommand) -> Result<
         cli::MorgueCommand::Show { date } => {
             let date = day(&date)?;
             let reads = deckle_readership::State::load(&deckle_readership::state_path());
-            let state = deckle_morgue::MorgueState::load(&deckle_morgue::state::state_path());
+            let state = deckle_morgue::MorgueState::load(&deckle_morgue::state::state_path())?;
             let detail = deckle_morgue::detail::detail(&morgue, date, &reads, &state)
                 .ok_or_else(|| format!("no edition kept for {date}"))?;
             emit(json, &detail, || {
@@ -6309,7 +6338,7 @@ fn digest_shelf(json: bool, path: &Path, forget: bool) -> Result<ExitCode, Strin
         println!("Forgot the shelf snapshot.");
         return Ok(ExitCode::SUCCESS);
     }
-    let shelf = Shelf::load(&store);
+    let shelf = Shelf::load(&store)?;
     let date = deckle_digest::chrono::Local::now().date_naive();
     let tz = deckle_digest::tz::local_tz();
     let out = ShelfOut {

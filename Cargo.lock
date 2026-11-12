@@ -1633,6 +1633,7 @@ name = "deckle-morgue"
 version = "0.13.0"
 dependencies = [
  "chrono",
+ "deckle-core",
  "deckle-digest",
  "deckle-readership",
  "deunicode",

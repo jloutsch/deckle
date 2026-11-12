@@ -28,6 +28,17 @@ pub fn read_with<T>(
     owner(path, load_with(path, parse))
 }
 
+/// Saves owner data of type `T`: refused, with [`read`]'s message, while the file on disk does
+/// not parse as `T` or cannot be read, so a value made without loading it can't replace it.
+pub fn save_owner<T: DeserializeOwned>(
+    path: &Path,
+    bytes: &[u8],
+    secret: bool,
+) -> Result<(), String> {
+    read::<T>(path)?;
+    save(path, bytes, secret).map_err(|e| e.to_string())
+}
+
 /// What [`read`] makes of a [`Loaded`].
 pub fn owner<T>(path: &Path, loaded: Loaded<T>) -> Result<Option<T>, String> {
     match loaded {

@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 deckle-digest.workspace = true
+deckle-core.workspace = true
 deckle-readership.workspace = true
 deunicode.workspace = true
 html-escape = "0.2"

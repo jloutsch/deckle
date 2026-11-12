@@ -621,28 +621,35 @@ pub fn gather_with_editor(
             }
             SectionKind::Shelf => {
                 let path = cfg.shelf_store();
-                let mut store = shelf::store::Shelf::load(&path);
-                let before = store.clone();
-                match shelf::section(
-                    &mut store,
-                    cfg,
-                    date,
-                    tz::local_tz(),
-                    opts.shelf_fraction_ok,
-                ) {
-                    Some(section) => edition.sections.push(section),
-                    None if store.kindles.is_empty() => notes.push(
-                        "From Your Shelf left out: plug your Kindle in once to fill it".into(),
-                    ),
-                    None => {}
-                }
-                store.prune_shown(date);
-                if store != before
-                    && let Err(e) = store.save(&path)
-                {
-                    notes.push(format!(
-                        "From Your Shelf wasn't saved ({e}); a rebuild today prints the same page"
-                    ));
+                // A damaged shelf.json drops the section, with a note; the edition still prints.
+                match shelf::store::Shelf::load(&path) {
+                    Err(e) => notes.push(format!("From Your Shelf left out: {e}")),
+                    Ok(mut store) => {
+                        let before = store.clone();
+                        match shelf::section(
+                            &mut store,
+                            cfg,
+                            date,
+                            tz::local_tz(),
+                            opts.shelf_fraction_ok,
+                        ) {
+                            Some(section) => edition.sections.push(section),
+                            None if store.kindles.is_empty() => notes.push(
+                                "From Your Shelf left out: plug your Kindle in once to fill it"
+                                    .into(),
+                            ),
+                            None => {}
+                        }
+                        store.prune_shown(date);
+                        if store != before
+                            && let Err(e) = store.save(&path)
+                        {
+                            notes.push(format!(
+                                "From Your Shelf wasn't saved ({e}); a rebuild today prints the \
+                                 same page"
+                            ));
+                        }
+                    }
                 }
             }
             SectionKind::Onthisday => edition

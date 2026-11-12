@@ -321,14 +321,17 @@ pub fn shelf_on(
     let _config_write = crate::config_write()?;
     if let Ok(cfg) = deckle_digest::Config::load(&digest) {
         let state = deckle_readership::State::load(&config.with_file_name("readership.json"));
-        let shelf = deckle_digest::shelf::store::Shelf::load(&config.with_file_name("shelf.json"));
+        // A damaged shelf.json is said, and the authors on it are left out of this lesson.
+        let shelf = deckle_digest::shelf::store::Shelf::load(&config.with_file_name("shelf.json"))
+            .inspect_err(|e| eprintln!("learning: {e}"))
+            .ok();
         let bytes = clippings.as_ref().ok().and_then(|c| c.as_deref());
         if let Err(e) = deckle_readership::learn::on_connection_at(
             &cfg,
             &config.with_file_name("interests.json"),
             &state,
             bytes,
-            Some(&shelf),
+            shelf.as_ref(),
             deckle_digest::chrono::Utc::now(),
         ) {
             eprintln!("learning: {e}");
@@ -389,10 +392,13 @@ fn record_shelf(
         .ok()
         .and_then(|c| c.sync.device_name(&id));
     let store = config.with_file_name("shelf.json");
-    let previous = deckle_digest::shelf::store::Shelf::load(&store)
-        .kindles
-        .get(&id)
-        .cloned();
+    let previous = match deckle_digest::shelf::store::Shelf::load(&store) {
+        Ok(shelf) => shelf.kindles.get(&id).cloned(),
+        Err(e) => {
+            eprintln!("shelf: {e}");
+            return;
+        }
+    };
     let (snap, errors) = deckle_shelf::snapshot(
         deckle_shelf::Read {
             books,
@@ -996,7 +1002,7 @@ mod tests {
             listed.books.iter().any(|b| b.file == "Walden.kfx"),
             "the tab still lists the books"
         );
-        let snap = Shelf::load(&store);
+        let snap = Shelf::load(&store).unwrap();
         let k = snap.kindles.values().next().expect("a snapshot");
         assert_eq!(k.books.len(), 1);
         assert_eq!(k.books[0].title, "Walden");

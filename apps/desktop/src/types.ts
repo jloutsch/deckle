@@ -905,6 +905,8 @@ export interface ShelfStatus {
   emailOn: boolean;
   /** `[sync] shelf` in digest.toml. */
   enabled: boolean;
+  /** shelf.json is there but could not be read: why, and where its copy is. Nothing is recorded until it is fixed or removed (#93). */
+  damaged?: string | null;
 }
 
 /** The press (tomorrow's paper design §4): `next` and `since` are ISO instants with offsets. */

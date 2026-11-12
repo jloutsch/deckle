@@ -298,7 +298,7 @@ fn state_file(home: &Path) -> PathBuf {
 }
 
 fn load_state(home: &Path) -> MorgueState {
-    MorgueState::load(&state_file(home))
+    MorgueState::load(&state_file(home)).unwrap()
 }
 
 /// A Kindle folder holding the given editions.
@@ -323,6 +323,39 @@ fn sent_again(home: &Path, date: &str) {
         .args(["digest", "morgue", "send", date])
         .assert()
         .success();
+}
+
+/// #82 item 3: a morgue.json that does not parse is not replaced, by `morgue send` or by a
+/// Kindle connection; the push itself still goes.
+#[test]
+fn a_damaged_morgue_file_is_never_saved_over() {
+    let home = setup("");
+    seed(
+        home.path(),
+        "2026-10-01",
+        "The Deckle Daily",
+        "An old story",
+    );
+    std::fs::write(morgue(home.path()).join("2026/2026-10-01.kfx"), b"OLD KFX").unwrap();
+    let truncated = br#"{"imported": true, "resent": {"2026-09-30": {"queued": "2026-"#;
+    std::fs::write(state_file(home.path()), truncated).unwrap();
+
+    let out = deckle(home.path())
+        .args(["digest", "morgue", "send", "2026-10-01"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("morgue.json"), "{err}");
+    assert_eq!(std::fs::read(state_file(home.path())).unwrap(), truncated);
+
+    let kindle = kindle_with(home.path(), &["2026-10-20"]);
+    let outbox = cache_dir(home.path()).join("outbox");
+    std::fs::create_dir_all(&outbox).unwrap();
+    std::fs::write(outbox.join("deckle-daily-2026-10-21.kfx"), b"NEW").unwrap();
+    push(home.path(), &kindle);
+    assert!(kindle.join("deckle-daily-2026-10-21.kfx").exists());
+    assert_eq!(std::fs::read(state_file(home.path())).unwrap(), truncated);
 }
 
 fn push(home: &Path, to: &Path) {

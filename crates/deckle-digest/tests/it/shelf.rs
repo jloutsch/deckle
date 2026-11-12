@@ -82,12 +82,14 @@ fn round_trip_and_corrupt_file() {
     shelf.put("G0", snap("Scribe", today()));
     shelf.shown.insert("h1".into(), today());
     shelf.save(&path).unwrap();
-    assert_eq!(Shelf::load(&path), shelf);
+    assert_eq!(Shelf::load(&path), Ok(shelf));
+    // A file that does not parse is an error naming it, not an empty shelf (#93).
     std::fs::write(&path, b"\x00not json").unwrap();
-    assert_eq!(Shelf::load(&path), Shelf::default());
+    let e = Shelf::load(&path).unwrap_err();
+    assert!(e.contains("shelf.json.damaged-"), "{e}");
     assert_eq!(
         Shelf::load(&dir.path().join("missing.json")),
-        Shelf::default()
+        Ok(Shelf::default())
     );
 }
 
@@ -722,6 +724,28 @@ mod page {
         );
     }
 
+    /// #93: a damaged shelf.json drops From Your Shelf with a note; the edition still builds
+    /// and the file is not saved over.
+    #[test]
+    fn a_damaged_shelf_file_drops_the_section_and_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = cfg_in(dir.path());
+        fixed_shelf().save(&cfg.shelf_store()).unwrap();
+        let whole = std::fs::read(cfg.shelf_store()).unwrap();
+        let cut = &whole[..whole.len() / 2];
+        std::fs::write(cfg.shelf_store(), cut).unwrap();
+        let g = gather_with(&cfg, date(), now(), &offline, &GatherOptions::default());
+        assert!(g.edition.sections.iter().all(|s| s.key != "shelf"));
+        assert!(
+            g.notes
+                .iter()
+                .any(|n| n.starts_with("From Your Shelf left out:") && n.contains("shelf.json")),
+            "{:?}",
+            g.notes
+        );
+        assert_eq!(std::fs::read(cfg.shelf_store()).unwrap(), cut);
+    }
+
     #[test]
     fn rebuild_same_day_same_highlight() {
         let dir = tempfile::tempdir().unwrap();
@@ -753,7 +777,7 @@ mod page {
         let first = gather_with(&cfg, date(), now(), &offline, &opts);
         let second = gather_with(&cfg, date(), now(), &offline, &opts);
         assert_eq!(body(&first), body(&second));
-        assert!(Shelf::load(&cfg.shelf_store()).shown.len() == 1);
+        assert!(Shelf::load(&cfg.shelf_store()).unwrap().shown.len() == 1);
     }
 
     #[test]

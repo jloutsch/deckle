@@ -214,10 +214,13 @@ fn shelf(cfg: &Config, device: &str, p: &Progress) {
         .collect();
     books.sort_by(|a, b| b.last_read.cmp(&a.last_read));
     let path = cfg.shelf_store();
-    let previous = deckle_digest::shelf::store::Shelf::load(&path)
-        .kindles
-        .get(device)
-        .cloned();
+    let previous = match deckle_digest::shelf::store::Shelf::load(&path) {
+        Ok(shelf) => shelf.kindles.get(device).cloned(),
+        Err(e) => {
+            eprintln!("shelf: {e}");
+            return;
+        }
+    };
     let name = cfg
         .sync
         .device_name(device)

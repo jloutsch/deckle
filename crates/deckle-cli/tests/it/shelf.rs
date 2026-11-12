@@ -66,7 +66,7 @@ fn push_records_the_shelf() {
         .success();
     let text = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     assert!(text.contains("Shelf: "), "{text}");
-    let shelf = Shelf::load(&shelf_json(home.path()));
+    let shelf = Shelf::load(&shelf_json(home.path())).unwrap();
     assert_eq!(shelf.kindles.len(), 1);
     let snap = shelf.kindles.values().next().unwrap();
     assert_eq!(snap.books.len(), 1, "{snap:?}");
@@ -120,7 +120,7 @@ fn a_second_kindle_keeps_the_first_ones_snapshot() {
         .arg(&k2)
         .assert()
         .success();
-    let shelf = Shelf::load(&shelf_json(home.path()));
+    let shelf = Shelf::load(&shelf_json(home.path())).unwrap();
     assert_eq!(shelf.kindles.len(), 2);
     assert!(shelf.kindles.values().any(|k| !k.highlights.is_empty()));
 }
@@ -205,6 +205,6 @@ fn a_kindle_can_be_given_a_name() {
         .arg(&k)
         .assert()
         .success();
-    let shelf = Shelf::load(&shelf_json(home.path()));
+    let shelf = Shelf::load(&shelf_json(home.path())).unwrap();
     assert_eq!(shelf.kindles.values().next().unwrap().name, "Mom's Kindle");
 }
