@@ -28,14 +28,15 @@ pub fn connect_with(
 ) -> Result<(deckle_core::remarkable_ssh::SshShell, String), String> {
     use crate::secret::{self, SystemKeyring};
     let host = rm.ssh_host();
+    // A pin that is there but does not read is not "no pin": that would trust whatever key
+    // answers and write over the pin. Nothing connects until it reads.
+    let pin_file = hostkey_path(config);
+    let pinned: Option<HostKeyPin> = deckle_core::state_file::read(&pin_file)
+        .map_err(|e| format!("{e} It pins the reMarkable's SSH host key."))?
+        .filter(|p: &HostKeyPin| p.host == host);
     let (password, _) =
         secret::remarkable_password(host, &SystemKeyring, &|k| std::env::var(k).ok())
             .map_err(|e| e.to_string())?;
-    let pin_file = hostkey_path(config);
-    let pinned: Option<HostKeyPin> = std::fs::read(&pin_file)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .filter(|p: &HostKeyPin| p.host == host);
     let c = deckle_core::remarkable_ssh::connect(
         host,
         rm.ssh_port(),
@@ -49,11 +50,9 @@ pub fn connect_with(
             host: host.to_owned(),
             fingerprint: c.fingerprint.clone(),
         };
-        std::fs::write(
-            &pin_file,
-            serde_json::to_vec_pretty(&pin).expect("two strings"),
-        )
-        .map_err(|e| format!("couldn't pin the host key at {}: {e}", pin_file.display()))?;
+        let bytes = serde_json::to_vec_pretty(&pin).expect("two strings");
+        deckle_core::state_file::save_owner::<HostKeyPin>(&pin_file, &bytes, false)
+            .map_err(|e| format!("couldn't pin the host key: {e}"))?;
     }
     Ok((c.shell, c.fingerprint))
 }
@@ -63,4 +62,27 @@ pub fn connect(
     config: &Path,
 ) -> Result<deckle_core::remarkable_ssh::SshShell, String> {
     connect_with(rm, config).map(|(s, _)| s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A pin that does not read is not "no pin": nothing connects (which would trust whatever
+    /// key answers) and the file is left as it was, named in the error.
+    #[test]
+    fn a_damaged_host_key_pin_refuses_to_connect() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("digest.toml");
+        let pin = hostkey_path(&config);
+        let cut = br#"{"host": "192.0.2.1", "fingerprint": "SHA256:made-up"#;
+        std::fs::write(&pin, cut).unwrap();
+        let rm = crate::config::RemarkableConfig {
+            ssh_host: "192.0.2.1".into(),
+            ..Default::default()
+        };
+        let e = connect_with(&rm, &config).err().expect("refused");
+        assert!(e.contains(&pin.display().to_string()), "{e}");
+        assert_eq!(std::fs::read(&pin).unwrap(), cut);
+    }
 }
