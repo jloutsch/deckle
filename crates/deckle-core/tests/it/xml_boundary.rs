@@ -2,8 +2,8 @@
 //! Every parse of file content goes through `deckle_limits::parse_xml`, which refuses XML nested
 //! too deep before `roxmltree` recurses (nesting-depth design, mechanism 1). This walks the
 //! workspace's Rust sources and fails on a direct `Document::parse` outside that wrapper.
-//! Test code (`tests/` folders and `#[cfg(test)] mod` blocks) parses Deckle's own output and may
-//! call `roxmltree` directly.
+//! Test code (`tests/` folders and items marked `#[cfg(test)]`) parses Deckle's own output and
+//! may call `roxmltree` directly.
 
 use std::path::{Path, PathBuf};
 
@@ -26,27 +26,60 @@ fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// The text before the file's `#[cfg(test)] mod …`, the code that ships.
-fn shipped(text: &str) -> &str {
-    let mut offset = 0;
-    // Where a `#[cfg(test)]` line starts, until the next item shows what it marks.
-    let mut marked = None;
-    for line in text.split_inclusive('\n') {
-        let item = line.trim();
-        if let Some(start) = marked {
-            if item.starts_with("mod ") || item.starts_with("pub mod ") {
-                return &text[..start];
-            }
-            if !item.is_empty() {
-                marked = None;
+/// The file without the items marked `#[cfg(test)]`, the code that ships. Only the marked item
+/// is left out (a `mod x;` line, a whole `mod tests { … }`, a helper `fn`), not the rest of the
+/// file. An item ends at a line ending in `;` or `}` (a one-line item), or, when its line ends
+/// in `{`, at the closing brace on the item's own indentation: the workspace is kept formatted
+/// by `cargo fmt`, which the pre-push hook checks.
+fn shipped(text: &str) -> String {
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let Some(rest) = lines[i].trim().strip_prefix("#[cfg(test)]") else {
+            out.push_str(lines[i]);
+            i += 1;
+            continue;
+        };
+        // The marked item's first line: this one when the item follows on it, else the next
+        // line that is not blank or another attribute.
+        let mut j = i;
+        if rest.trim().is_empty() {
+            j += 1;
+            while j < lines.len()
+                && (lines[j].trim().is_empty() || lines[j].trim_start().starts_with("#["))
+            {
+                j += 1;
             }
         }
-        if item == "#[cfg(test)]" {
-            marked = Some(offset);
+        let Some(first) = lines.get(j) else { break };
+        let close = &first[..indent(first)];
+        // Through a signature over several lines to the line that ends in `{`, `;` or `}`.
+        let mut k = j;
+        while k < lines.len() && !lines[k].trim_end().ends_with(['{', ';', '}']) {
+            k += 1;
         }
-        offset += line.len();
+        if k < lines.len() && lines[k].trim_end().ends_with('{') {
+            k += 1;
+            while k < lines.len() {
+                let line = lines[k].trim_end();
+                if line.starts_with(close) && matches!(&line[close.len()..], "}" | "};" | "},") {
+                    break;
+                }
+                k += 1;
+            }
+        }
+        i = k + 1;
     }
-    text
+    out
+}
+
+/// The shipped code calls `roxmltree` directly: `Document::parse…`, or `Document` under
+/// another name to call it by.
+fn offends(text: &str) -> bool {
+    let code = shipped(text);
+    code.contains("Document::parse") || code.contains("Document as")
 }
 
 fn all_sources() -> Vec<PathBuf> {
@@ -73,13 +106,28 @@ fn the_walk_sees_the_source_tree() {
 }
 
 #[test]
-fn shipped_stops_at_the_test_module_only() {
-    let text = "fn a() {}\n#[cfg(test)]\nfn helper() {}\nfn b() {}\n\n#[cfg(test)]\nmod tests {\n    fn c() {}\n}\n";
+fn shipped_leaves_out_only_the_items_marked_for_tests() {
+    let text = "fn a() {}\n#[cfg(test)]\nmod fake;\nfn b() {}\n#[cfg(test)]\nfn helper() {}\n\
+                fn c() {}\n#[cfg(test)]\n#[allow(dead_code)]\nfn signature(\n    x: u8,\n) -> u8 {\n    \
+                x\n}\n#[cfg(test)]\nmod tests {\n    fn d() {\n    }\n}\n#[cfg(test)] use a::b;\n\
+                fn e() {}\n";
     assert_eq!(
         shipped(text),
-        "fn a() {}\n#[cfg(test)]\nfn helper() {}\nfn b() {}\n\n"
+        "fn a() {}\nfn b() {}\nfn c() {}\nfn e() {}\n"
     );
     assert_eq!(shipped("fn a() {}\n"), "fn a() {}\n");
+}
+
+#[test]
+fn a_direct_parse_after_a_test_module_line_and_an_alias_are_caught() {
+    assert!(offends(
+        "#[cfg(test)]\nmod fake;\nfn f(x: &str) {\n    roxmltree::Document::parse(x);\n}\n"
+    ));
+    assert!(offends("use roxmltree::Document as D;\n"));
+    assert!(offends("use roxmltree::{Document as D, Node};\n"));
+    assert!(!offends(
+        "#[cfg(test)]\nmod tests {\n    fn t() {\n        roxmltree::Document::parse(\"<a/>\");\n    }\n}\n"
+    ));
 }
 
 #[test]
@@ -87,10 +135,7 @@ fn only_deckle_limits_calls_document_parse() {
     let offenders: Vec<String> = all_sources()
         .into_iter()
         .filter(|f| !f.components().any(|c| c.as_os_str() == "deckle-limits"))
-        .filter(|f| {
-            let text = std::fs::read_to_string(f).unwrap();
-            shipped(&text).contains("Document::parse")
-        })
+        .filter(|f| offends(&std::fs::read_to_string(f).unwrap()))
         .map(|f| f.strip_prefix(root()).unwrap_or(&f).display().to_string())
         .collect();
     assert!(
