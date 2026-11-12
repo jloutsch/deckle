@@ -17,18 +17,35 @@ fn corpus_is_byte_identical() {
     let corpus = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join(corpus);
-    let commit = |dir: &Path| std::fs::read_to_string(dir.join("KFXGEN_COMMIT")).unwrap();
+    // A corpus dump that failed leaves none.
+    let commit = |dir: &Path| {
+        let file = dir.join("KFXGEN_COMMIT");
+        std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display()))
+    };
     assert_eq!(
         commit(&corpus),
         commit(&deckle_kfx::fixtures::kfxgen("models")),
         "corpus and fixtures dumped from different kfxgen commits"
     );
+    // The folder holds the books the script dumped, no fewer and no others: a book whose
+    // dump failed, or one left from an earlier corpus, stops the test (issue #16).
+    let mut listed: Vec<String> = std::fs::read_to_string(corpus.join("BOOKS"))
+        .expect("the corpus has no BOOKS: its last dump failed, or predates the list")
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    listed.sort();
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(&corpus)
         .unwrap()
         .map(|e| e.unwrap().path())
-        .filter(|p| p.join("model.json").is_file())
+        .filter(|p| p.is_dir())
         .collect();
     dirs.sort();
+    let names: Vec<_> = dirs
+        .iter()
+        .map(|d| d.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, listed, "the corpus folder's books, against BOOKS");
     assert!(!dirs.is_empty(), "no models in {}", corpus.display());
     for dir in dirs {
         match generate(&load_model(&dir).unwrap()) {

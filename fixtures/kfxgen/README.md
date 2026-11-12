@@ -162,7 +162,10 @@ on 2026-08-01), so a fresh download can differ from them: on 2026-11-11 `pg11-im
 test both start from whatever is in `gutenberg/`; it just isn't the same books byte for byte.
 To dump them:
 `DECKLE_KFXGEN_CORPUS_OUT=gutenberg/models tools/ref/kfxgen_models.sh --corpus gutenberg/*.epub`
-(28 s on an M-series Mac, 174 MB), which writes `KFXGEN_COMMIT` and `TOOLS` there too. Two dumps
+(28 s on an M-series Mac, 174 MB), which writes `KFXGEN_COMMIT`, `TOOLS` and `BOOKS` (the books
+it dumped) there too, once every book is made. The corpus test stops unless the folder holds
+exactly the books in `BOOKS`: a dump that failed leaves no list, and a book left from an earlier
+corpus isn't in it (delete its folder). Two dumps
 give the same `expected.kfx` for every book, but not always the same `model.json`: in two dumps of
 pg74 the `images` argument held the same pictures in another order (pg76, pg86 and pg98's
 `model.json` also changed on a redump, their `expected.kfx` not). The port makes the same bytes

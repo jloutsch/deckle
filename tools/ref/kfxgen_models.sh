@@ -101,9 +101,13 @@ if [ "${1:-}" = "--corpus" ]; then
       exit 1
     }
   done
+  # A run that fails leaves no BOOKS and no KFXGEN_COMMIT, so the corpus test stops on what
+  # it left; BOOKS lists the books of a run that made them all.
+  rm -f "$DECKLE_KFXGEN_CORPUS_OUT"/{BOOKS,KFXGEN_COMMIT,TOOLS}
   for epub in "$@"; do
     calibre_model "$(basename "$epub" .epub)" "$epub" "$DECKLE_KFXGEN_CORPUS_OUT"
   done
+  for epub in "$@"; do basename "$epub" .epub; done >"$DECKLE_KFXGEN_CORPUS_OUT/BOOKS"
   record_tools "$DECKLE_KFXGEN_CORPUS_OUT"
   exit 0
 fi
