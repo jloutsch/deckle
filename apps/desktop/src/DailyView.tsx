@@ -33,32 +33,10 @@ import { keepUnfinished, savable } from "./subscriptions";
 import type { ExportConfig, PressSetupStatus, DailyConfig, DailyState, Day, EditionPreview, EmailConfig, EmailStatus, NextPaper, PagePlanRow, PapersView, ReadershipView, ReadingEntry, RunResult } from "./types";
 import { DEFAULT_EMAIL } from "./types";
 import { useT } from "./i18n";
-import { notSent, runFailed } from "./runResult";
+import { notSent, runFailed, summary } from "./runResult";
 
 /** Amazon's Manage Your Content and Devices: the approved-sender list and the emailed Docs. */
 const MYCD = "https://www.amazon.com/mycd";
-
-function summary(r: RunResult, send: boolean): string {
-  if (!r.ok && !r.report) return r.log || "Something went wrong.";
-  const build = send ? r.report?.build : r.report;
-  const parts: string[] = [];
-  if (build?.title) parts.push(build.title);
-  if (send) {
-    const run = r.report?.run;
-    const outcome = r.report?.outcome;
-    if (r.report?.emailed) parts.push(`Emailed to ${r.report.emailed}.`);
-    if (r.report?.email_error) parts.push(`Email failed: ${r.report.email_error}. Sent over USB instead.`);
-    parts.push(...exportParts(r.report?.exports));
-    const rm = remarkablePart(r.report);
-    if (rm) parts.push(rm);
-    if (run?.error) parts.push(`Not converted: ${run.error}`);
-    else if (outcome?.flush?.delivered?.length) parts.push("Sent to your Kindle.");
-    else if (outcome?.queued) parts.push("Waiting for your Kindle: it goes over when you plug it in.");
-  } else {
-    parts.push("Preview built. Saved articles stay saved until you send.");
-  }
-  return parts.join(" — ");
-}
 
 function counts(r: RunResult, send: boolean): { title: string; items: number; unavailable: string | null }[] {
   const build = send ? r.report?.build : r.report;

@@ -218,6 +218,9 @@ fn an_unrelated_bad_entry_doesnt_fail_the_morning_run() {
         "{v}"
     );
     assert_eq!(v["edition_sent"], true, "{v}");
+    // Per device: it went to the Kobo, and no Kindle was there to take it.
+    assert_eq!(v["reader"]["edition_sent"], true, "{v}");
+    assert_ne!(v["outcome"]["edition_sent"], true, "{v}");
     assert!(
         root.join("Deckle/deckle-daily-2026-10-23.kepub.epub")
             .is_file()

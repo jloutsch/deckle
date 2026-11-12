@@ -3565,6 +3565,11 @@ fn digest(
                 edition_sent: bool,
             }
             let stem = deckle_digest::edition_stem(&cfg, date);
+            outcome.edition_sent = outcome.sent(&stem);
+            let mut reader = reader;
+            if let Some(o) = &mut reader {
+                o.edition_sent = o.sent(&stem);
+            }
             let readers: Vec<&DigestOutcome> = [Some(&outcome), reader.as_ref()]
                 .into_iter()
                 .flatten()
@@ -4111,6 +4116,10 @@ fn say_once(said: &mut Option<String>, r: Result<(), String>) {
 #[derive(Debug, Default, serde::Serialize)]
 struct DigestOutcome {
     flush: Option<deckle_core::queue::FlushReport>,
+    /// `digest run`: the run's edition went to this device (the app says "Sent to your Kindle"
+    /// from it, not from whatever else went).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    edition_sent: bool,
     /// No Kindle connected: the edition waits in the outbox.
     queued: bool,
     /// Highlights exported in the same session (`[sync] clippings`).
