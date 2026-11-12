@@ -505,6 +505,29 @@ fn write_data(f: &mut std::fs::File, data: &[u8]) -> std::io::Result<()> {
     f.write_all(data)
 }
 
+/// The extensions of what Deckle writes into `documents/` or `Deckle/`.
+const BOOK_EXTENSIONS: &[&str] = &["kfx", "azw3", "azw", "mobi", "prc", "pdf", "txt", "epub"];
+
+/// Only the shapes Deckle writes: `.<book>.<digits>.part` ([`write_beside`]) and `.<epub>.tmp`
+/// (an older Deckle's Kobo and PocketBook deliveries), where `<book>` has a book's extension. A
+/// folder the owner picked may hold their own `.notes.tmp`.
+fn is_deckle_temp(file: &str) -> bool {
+    let Some(rest) = file.strip_prefix('.') else {
+        return false;
+    };
+    if let Some(book) = rest.strip_suffix(".tmp") {
+        return book.ends_with(".epub");
+    }
+    let Some((book, pid)) = rest.strip_suffix(".part").and_then(|r| r.rsplit_once('.')) else {
+        return false;
+    };
+    !pid.is_empty()
+        && pid.bytes().all(|b| b.is_ascii_digit())
+        && book
+            .rsplit_once('.')
+            .is_some_and(|(stem, ext)| !stem.is_empty() && BOOK_EXTENSIONS.contains(&ext))
+}
+
 /// A temporary file [`write_beside`] (`.<name>.<pid>.part`) or an older Deckle (`.<name>.tmp`)
 /// left in `dir` when a cable was pulled, older than an hour, so another Deckle's live write is
 /// spared. Run at the start of a delivery to that folder.
@@ -514,8 +537,7 @@ pub(crate) fn remove_leftovers(dir: &Path) {
         return;
     };
     for e in entries.flatten() {
-        let name = e.file_name().to_string_lossy().into_owned();
-        if !(name.starts_with('.') && (name.ends_with(".part") || name.ends_with(".tmp"))) {
+        if !is_deckle_temp(&e.file_name().to_string_lossy()) {
             continue;
         }
         let old = e
@@ -1094,6 +1116,35 @@ mod tests {
             source: std::io::Error::other("full"),
         };
         assert!(!io.stops_push());
+    }
+
+    #[test]
+    fn a_folder_keeps_temporary_files_that_arent_deckles() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hours_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+        for n in [
+            ".notes.tmp",
+            ".download.part",
+            ".x.7.part",
+            ".old.kfx.42.part",
+            ".old.epub.tmp",
+        ] {
+            let f = std::fs::File::create(tmp.path().join(n)).unwrap();
+            f.set_modified(hours_ago).unwrap();
+        }
+        let target = Target::Folder(tmp.path().to_path_buf());
+        deliver_named_on(
+            b"x",
+            "c.kfx",
+            &mut Conn::new(&target),
+            &DeliverOptions::default(),
+        )
+        .unwrap();
+        // Only the shapes Deckle writes: `.<book>.<digits>.part` and `.<epub>.tmp`.
+        assert_eq!(
+            names(tmp.path()),
+            [".download.part", ".notes.tmp", ".x.7.part", "c.kfx"]
+        );
     }
 
     #[test]

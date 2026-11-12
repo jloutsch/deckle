@@ -31,8 +31,10 @@ says whether `system/thumbnails` is writable over that transport, which decides 
 
 On a Kindle that mounts as a drive, a Kobo, a PocketBook or a folder, a book is written beside
 the old copy as `.<name>.<process id>.part` and renamed over it only when it's whole, so a full
-drive or a pulled cable leaves the old copy. A `.part` (or an older Deckle's `.<name>.tmp`) more
-than an hour old is removed at the start of the next delivery to `documents/` or `Deckle/`.
+drive or a pulled cable leaves the old copy. Such a `.part` (or an older Deckle's
+`.<name>.epub.tmp`) more than an hour old is removed at the start of the next delivery to
+`documents/`, `Deckle/` or the folder. Only those shapes, for a book's name, are removed: a
+`.notes.tmp` or `.download.part` of your own stays.
 
 - **To check on a real Kindle:** that it ignores a dot-file in `documents/` (no empty book on
   the home screen while a send is under way, or after a pulled cable). Checked so far only
