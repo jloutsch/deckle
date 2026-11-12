@@ -231,24 +231,50 @@ pub fn any_seen(file: &Path) -> bool {
 /// Writes `bytes` to `Deckle/<name>` through a hidden temporary file, flushed to the drive
 /// before it's renamed, so an unplugged reader never holds half a book
 /// ([`crate::deliver::write_beside`]). Temporary files an earlier pulled cable left go first.
+/// A book already there that refuses to be replaced is said as locked.
 pub fn deliver(reader: &Reader, bytes: &[u8], name: &str) -> std::io::Result<PathBuf> {
+    deliver_at(reader, bytes, name).map_err(|b| {
+        if b.locked() {
+            std::io::Error::other(locked(reader, name))
+        } else {
+            b.into_inner()
+        }
+    })
+}
+
+/// What a push says of a book on `reader` that can't be replaced.
+pub(crate) fn locked(reader: &Reader, name: &str) -> String {
+    format!(
+        "{name} on the {} is locked or read-only; unlock or delete it",
+        reader.name()
+    )
+}
+
+/// [`deliver`], saying whether `Deckle/` or the one file failed
+/// ([`crate::deliver::Beside`]).
+pub(crate) fn deliver_at(
+    reader: &Reader,
+    bytes: &[u8],
+    name: &str,
+) -> Result<PathBuf, crate::deliver::Beside> {
+    use crate::deliver::Beside;
     // Before anything is made: unplugged from a fixed mount point, the root is an empty folder
     // on the computer's own disk.
     if !reader.present() {
-        return Err(std::io::Error::new(
+        return Err(Beside::Folder(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!(
                 "the {} at {} is no longer connected",
                 reader.name(),
                 reader.root().display()
             ),
-        ));
+        )));
     }
     let dir = reader.folder();
-    std::fs::create_dir_all(&dir)?;
+    std::fs::create_dir_all(&dir).map_err(Beside::Folder)?;
     crate::deliver::remove_leftovers(&dir);
     let to = dir.join(name);
-    crate::deliver::write_beside(&to, bytes)?;
+    crate::deliver::write_beside_at(&to, bytes)?;
     Ok(to)
 }
 

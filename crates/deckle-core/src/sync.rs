@@ -361,12 +361,15 @@ pub fn run_reader(
             };
             match reader.prepare(&bytes) {
                 Ok(ready) => {
-                    let path = match reader::deliver(reader, &ready, &name) {
+                    let path = match reader::deliver_at(reader, &ready, &name) {
                         Ok(path) => path,
-                        Err(e) => {
+                        Err(b) => {
                             let gone_now = !reader.present();
-                            // A drive mounted read-only fails every entry alike: stop once.
-                            let refused = crate::deliver::drive_refuses(&e);
+                            // `Deckle/` itself refusing (a drive mounted read-only) fails every
+                            // entry alike: stop once. One locked book is its entry's failure.
+                            let refused = b.folder_refuses();
+                            let locked = b.locked();
+                            let e = b.into_inner();
                             report.failed.push((
                                 name.clone(),
                                 if gone_now {
@@ -376,6 +379,8 @@ pub fn run_reader(
                                         "the {} can't be written to ({e}); the push stopped",
                                         reader.name()
                                     )
+                                } else if locked {
+                                    reader::locked(reader, &name)
                                 } else {
                                     format!("writing {name}: {e}")
                                 },
@@ -1356,6 +1361,30 @@ mod kobo_tests {
         assert_eq!(r.failed.len(), 1, "{r:?}");
         assert_eq!(r.failed[0].0, "b.kepub.epub");
         assert!(!r.stopped);
+        assert_eq!(queued(&q), ["b.epub"]);
+    }
+
+    #[test]
+    fn a_locked_book_on_the_kobo_costs_only_its_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("KOBOeReader");
+        let kobo = Reader::Kobo(fake_kobo(&root, ""));
+        let q = three_queued(tmp.path());
+        std::fs::remove_dir_all(q.dir.join("b.epub")).unwrap();
+        std::fs::write(q.dir.join("b.epub"), epub("B.")).unwrap();
+        crate::deliver::FAIL_RENAME_OF.with(|f| *f.borrow_mut() = Some("b.kepub.epub".into()));
+        let r = run_reader(&q, &kobo, PUSH, &Prune::default(), &mut |_, _, _| {});
+        crate::deliver::FAIL_RENAME_OF.with(|f| *f.borrow_mut() = None);
+        let r = r.unwrap();
+        assert!(!r.stopped, "{r:?}");
+        assert_eq!(r.delivered.len(), 2, "{r:?}");
+        assert_eq!(
+            r.failed,
+            [(
+                "b.kepub.epub".to_owned(),
+                "b.kepub.epub on the Kobo is locked or read-only; unlock or delete it".to_owned()
+            )]
+        );
         assert_eq!(queued(&q), ["b.epub"]);
     }
 

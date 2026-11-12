@@ -29,8 +29,8 @@
   prepared book, a file the Kindle refused) stopped every push at that entry, so nothing after
   it went, ever. Now the rest go, and the push prints `not sent: <name>: <why>` for it on every
   push while it waits in the outbox; this holds for Kindles, Kobos and PocketBooks. A reader
-  unplugged mid-push, or one that can't be written to, stops it with one message instead of
-  one per entry, and a reader mounted at a fixed folder that's been unplugged gets nothing
+  unplugged mid-push, or one that can't be written to at all, stops it with one message instead
+  of one per entry (one locked book on it costs only that book), and a reader mounted at a fixed folder that's been unplugged gets nothing
   written into that folder, whether by a push, a send, a put back or a restore. `digest push`
   and `digest run` fail only when the push stopped or the run's own edition didn't go, so the
   scheduler no longer prints the paper again all day for another book's sake; the Daily tab

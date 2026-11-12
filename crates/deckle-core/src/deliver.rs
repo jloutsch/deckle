@@ -410,16 +410,27 @@ pub fn deliver_named_reporting(
         Target::MassStorage(dev) => {
             kindle_still_there(&dev.root)?;
             remove_leftovers(&dev.root.join("documents"));
-            let path =
-                write_file(&dev.root.join("documents").join(&name), kfx).map_err(|e| match e {
-                    DeliverError::Io { ref source, .. } if drive_refuses(source) => {
-                        DeliverError::Gone(format!(
-                            "the Kindle at {} can't be written to: {e}",
-                            dev.root.display()
-                        ))
+            let path = dev.root.join("documents").join(&name);
+            // `documents/` itself refusing (mounted read-only) stops a push; one locked book is
+            // that book's failure alone.
+            write_beside_at(&path, kfx).map_err(|b| {
+                if b.folder_refuses() {
+                    DeliverError::Gone(format!(
+                        "the Kindle at {} can't be written to: {}",
+                        dev.root.display(),
+                        b.into_inner()
+                    ))
+                } else if b.locked() {
+                    DeliverError::Refused(format!(
+                        "{name} on the Kindle is locked or read-only; unlock or delete it"
+                    ))
+                } else {
+                    DeliverError::Io {
+                        path: path.clone(),
+                        source: b.into_inner(),
                     }
-                    e => e,
-                })?;
+                }
+            })?;
             warn(write_sidecars(&path, &opts.sidecars));
             warn(write_system_files(&dev.root, &opts.system_files));
             if let Some((thumb_name, jpeg)) = &opts.thumbnail {
@@ -492,26 +503,64 @@ pub(crate) fn write_file(path: &Path, data: &[u8]) -> Result<PathBuf, DeliverErr
 /// it in one step. On any error the `.part` file is removed and the old file was never touched.
 /// The process id keeps two Deckle processes off one temporary file.
 pub(crate) fn write_beside(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    write_beside_at(path, data).map_err(Beside::into_inner)
+}
+
+/// Where [`write_beside_at`] failed.
+#[derive(Debug)]
+pub(crate) enum Beside {
+    /// The folder refused the temporary file: nothing can be written there (mounted read-only,
+    /// a folder that isn't writable).
+    Folder(std::io::Error),
+    /// The temporary file was made, then the write, the flush or the rename failed: this file
+    /// alone (a locked book refuses the rename).
+    File(std::io::Error),
+}
+
+impl Beside {
+    pub(crate) fn into_inner(self) -> std::io::Error {
+        match self {
+            Beside::Folder(e) | Beside::File(e) => e,
+        }
+    }
+
+    /// The device can't be written to at all: a push stops here.
+    pub(crate) fn folder_refuses(&self) -> bool {
+        matches!(self, Beside::Folder(e) if drive_refuses(e))
+    }
+
+    /// The book already there refused to be replaced: locked or read-only.
+    pub(crate) fn locked(&self) -> bool {
+        matches!(self, Beside::File(e) if e.kind() == std::io::ErrorKind::PermissionDenied)
+    }
+}
+
+/// [`write_beside`], saying whether the folder or the file failed.
+pub(crate) fn write_beside_at(path: &Path, data: &[u8]) -> Result<(), Beside> {
     let dir = path.parent().unwrap_or(Path::new(""));
     if !dir.as_os_str().is_empty() {
-        std::fs::create_dir_all(dir)?;
+        std::fs::create_dir_all(dir).map_err(Beside::Folder)?;
     }
     let name = path
         .file_name()
-        .ok_or_else(|| std::io::Error::other("no file name"))?
+        .ok_or_else(|| Beside::File(std::io::Error::other("no file name")))?
         .to_string_lossy();
     let part = dir.join(format!(".{name}.{}.part", std::process::id()));
+    let mut f = std::fs::File::create(&part).map_err(Beside::Folder)?;
     let written = (|| {
-        let mut f = std::fs::File::create(&part)?;
         write_data(&mut f, data)?;
         f.sync_all()?;
         drop(f);
+        #[cfg(test)]
+        if FAIL_RENAME_OF.with(|f| f.borrow().as_deref() == Some(&*name)) {
+            return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        }
         std::fs::rename(&part, path)
     })();
     if written.is_err() {
         let _ = std::fs::remove_file(&part);
     }
-    written
+    written.map_err(Beside::File)
 }
 
 #[cfg(test)]
@@ -520,6 +569,10 @@ thread_local! {
     /// cable).
     pub(crate) static FAIL_WRITE_AFTER: std::cell::Cell<Option<usize>> =
         const { std::cell::Cell::new(None) };
+    /// Tests: renaming onto this file name is refused as a locked file is (`chflags uchg` in
+    /// Finder gives EPERM).
+    pub(crate) static FAIL_RENAME_OF: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 fn write_data(f: &mut std::fs::File, data: &[u8]) -> std::io::Result<()> {

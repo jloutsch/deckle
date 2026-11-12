@@ -960,6 +960,50 @@ mod tests {
     }
 
     #[test]
+    fn a_locked_book_on_the_kindle_costs_only_its_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let q = Queue::new(tmp.path().join("outbox"));
+        let src = tmp.path().join("p");
+        std::fs::write(&src, b"KFX").unwrap();
+        for n in ["a.kfx", "b.kfx", "c.kfx"] {
+            q.add(&src, n, None).unwrap();
+        }
+        let root = tmp.path().join("mount");
+        std::fs::create_dir_all(root.join("documents")).unwrap();
+        std::fs::create_dir_all(root.join("system")).unwrap();
+        std::fs::write(root.join("documents/b.kfx"), b"OLD").unwrap();
+        let target = Target::MassStorage(crate::deliver::Device {
+            root: root.clone(),
+            model_hint: "Kindle".into(),
+            thumbnails_writable: false,
+            firmware: None,
+            serial: None,
+        });
+        // b.kfx is locked in Finder: renaming over it is refused.
+        crate::deliver::FAIL_RENAME_OF.with(|f| *f.borrow_mut() = Some("b.kfx".into()));
+        let r = q.flush_with(
+            &mut Conn::new(&target),
+            None,
+            &[],
+            &Finishing::default(),
+            &mut |_, _, _| {},
+        );
+        crate::deliver::FAIL_RENAME_OF.with(|f| *f.borrow_mut() = None);
+        let r = r.unwrap();
+        assert!(!r.stopped, "{r:?}");
+        assert_eq!(r.delivered.len(), 2, "{r:?}");
+        assert_eq!(
+            r.failed,
+            [(
+                "b.kfx".to_owned(),
+                "b.kfx on the Kindle is locked or read-only; unlock or delete it".to_owned()
+            )]
+        );
+        assert_eq!(std::fs::read(root.join("documents/b.kfx")).unwrap(), b"OLD");
+        assert_eq!(queued(&q), ["b.kfx"]);
+    }
+
+    #[test]
     fn an_unplugged_kindle_stops_the_push_and_keeps_the_outbox() {
         let tmp = tempfile::tempdir().unwrap();
         let q = Queue::new(tmp.path().join("outbox"));

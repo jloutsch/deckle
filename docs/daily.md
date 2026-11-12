@@ -84,8 +84,9 @@ No Kindle plugged in at build time? The edition waits in the outbox and goes ove
 One entry that won't go doesn't hold up the rest: the push sends everything else and prints
 `not sent: <name>: <why>` for it. It stays in the outbox and is tried again, and named again,
 on every push until it goes or you remove it. Only a reader that's unplugged mid-push, one that
-can't be written to (a drive mounted read-only) or a lost MTP session stops the push, with one
-message, and what wasn't sent stays queued. `digest push` and `digest run` exit with an error
+can't be written to at all (a drive mounted read-only) or a lost MTP session stops the push,
+with one message, and what wasn't sent stays queued. A single book on the reader that's locked
+or read-only only costs that book: it's named, with "unlock or delete it". `digest push` and `digest run` exit with an error
 only then, or when the run's own edition didn't go, so the scheduler doesn't print the paper
 again for another book's sake. When a
 paper's edition is queued both as a Kindle book and as a PDF and the one this Kindle takes
