@@ -4,6 +4,9 @@
 //! (#246, #605, #710, #714), and the runs an inline element's direction lays out
 //! (`_direction_layers`, `native_generator.py:402`); ruby (#236); vertical text, and
 //! characters set across its lines, 縦中横 (#247).
+use std::collections::hash_map::Entry;
+use std::collections::{BTreeSet, HashMap};
+
 use deckle_kfx::fragment::Fragment;
 use deckle_kfx::ion::{Struct, Value};
 
@@ -217,6 +220,44 @@ fn plain(flags: &Flags) -> Flags {
         .collect()
 }
 
+/// For each of `queries`, the `ranges` it lies in, by index, lowest first. Both are
+/// (start, end).
+fn holders(ranges: &[(i64, i64)], queries: &[(i64, i64)]) -> Vec<Vec<usize>> {
+    // The pass below takes a query to end at or after its start; one that doesn't is looked
+    // up in every range.
+    if queries.iter().any(|(a, b)| b < a) {
+        return (queries.iter())
+            .map(|&(a, b)| {
+                (0..ranges.len())
+                    .filter(|&j| ranges[j].0 <= a && b <= ranges[j].1)
+                    .collect()
+            })
+            .collect();
+    }
+    let mut by_start: Vec<usize> = (0..ranges.len()).collect();
+    by_start.sort_by_key(|&j| ranges[j].0);
+    let mut by_start = by_start.into_iter().peekable();
+    let mut order: Vec<usize> = (0..queries.len()).collect();
+    order.sort_by_key(|&q| queries[q].0);
+    // The ranges that start at or before the query and end at or after its start, as
+    // (end, index).
+    let mut open: BTreeSet<(i64, usize)> = BTreeSet::new();
+    let mut out = vec![Vec::new(); queries.len()];
+    for q in order {
+        let (a, b) = queries[q];
+        while let Some(j) = by_start.next_if(|&j| ranges[j].0 <= a) {
+            open.insert((ranges[j].1, j));
+        }
+        while open.first().is_some_and(|&(end, _)| end < a) {
+            open.pop_first();
+        }
+        let mut found: Vec<usize> = open.range((b, 0)..).map(|&(_, j)| j).collect();
+        found.sort_unstable();
+        out[q] = found;
+    }
+    out
+}
+
 /// `_direction_layers` (:402): each inline element with a direction one run over its whole
 /// text, and each link (#710, #715), carrying the flags common to all its text no run it is
 /// layered on carries; every other run keeps what those don't carry. Outer runs first.
@@ -232,6 +273,7 @@ pub(crate) fn direction_layers(spans: &[Span]) -> Vec<Layer> {
         flags: Flags,
     }
     let mut dirs: Vec<(i64, Range)> = Vec::new();
+    let mut dir_at: HashMap<i64, usize> = HashMap::new();
     let mut links: Vec<Range> = Vec::new();
     for sp in spans {
         let plain = plain(&sp.flags);
@@ -240,21 +282,24 @@ pub(crate) fn direction_layers(spans: &[Span]) -> Vec<Layer> {
             let Flag::Bidi(serial, depth, keys) = f else {
                 continue;
             };
-            match dirs.iter_mut().find(|(s, _)| s == serial) {
+            match dir_at.get(serial).map(|&i| &mut dirs[i]) {
                 Some((_, r)) => {
                     r.end = r.end.max(end);
                     r.flags = &r.flags & &plain;
                 }
-                None => dirs.push((
-                    *serial,
-                    Range {
-                        start: sp.start,
-                        end,
-                        level: 8 * i128::from(*depth),
-                        keys: Some(keys.clone()),
-                        flags: plain.clone(),
-                    },
-                )),
+                None => {
+                    dir_at.insert(*serial, dirs.len());
+                    dirs.push((
+                        *serial,
+                        Range {
+                            start: sp.start,
+                            end,
+                            level: 8 * i128::from(*depth),
+                            keys: Some(keys.clone()),
+                            flags: plain.clone(),
+                        },
+                    ));
+                }
             }
         }
         // In target order, `Flags`' own (#759, 0bc705d :442); an empty target is no link.
@@ -287,26 +332,34 @@ pub(crate) fn direction_layers(spans: &[Span]) -> Vec<Layer> {
             })
             .collect();
     }
+    let ends =
+        |ranges: &[Range]| -> Vec<(i64, i64)> { ranges.iter().map(|r| (r.start, r.end)).collect() };
+    let span_ends: Vec<(i64, i64)> = spans
+        .iter()
+        .map(|sp| (sp.start, sp.start + sp.len))
+        .collect();
     let mut layers: Vec<Range> = dirs.into_iter().map(|(_, r)| r).collect();
-    let n_dirs = layers.len();
-    for mut link in links {
-        let (a, b) = (link.start, link.end);
-        link.level = layers[..n_dirs]
-            .iter()
-            .filter(|r| r.start <= a && b <= r.end)
-            .map(|r| r.level)
-            .max()
-            .unwrap_or(0)
-            + 2;
-        let mut inside = spans
-            .iter()
-            .filter(|sp| a <= sp.start && sp.start + sp.len <= b)
-            .map(|sp| plain(&sp.flags));
-        let first = inside.next().unwrap_or_default();
-        link.flags = inside.fold(first, |acc, f| &acc & &f);
+    // Each link two levels above the direction elements it is in, with the flags common to
+    // the runs in it.
+    let around = holders(&ends(&layers), &ends(&links));
+    let mut common: Vec<Option<Flags>> = vec![None; links.len()];
+    for (sp, links_around) in spans.iter().zip(holders(&ends(&links), &span_ends)) {
+        let plain = plain(&sp.flags);
+        for i in links_around {
+            common[i] = Some(match common[i].take() {
+                Some(flags) => &flags & &plain,
+                None => plain.clone(),
+            });
+        }
+    }
+    for ((mut link, around), common) in links.into_iter().zip(around).zip(common) {
+        link.level = around.iter().map(|&j| layers[j].level).max().unwrap_or(0) + 2;
+        link.flags = common.unwrap_or_default();
         layers.push(link);
     }
-    let contains = |o: &Range, a: i64, b: i64| o.start <= a && b <= o.end;
+    // The layers each layer is in, itself among them.
+    let layer_ends = ends(&layers);
+    let around = holders(&layer_ends, &layer_ends);
     // What each layer carries: its flags less those of the layers below it, lowest first.
     let mut by_level: Vec<usize> = (0..layers.len()).collect();
     by_level.sort_by_key(|&i| layers[i].level);
@@ -314,9 +367,9 @@ pub(crate) fn direction_layers(spans: &[Span]) -> Vec<Layer> {
     for &i in &by_level {
         let r = &layers[i];
         let mut flags = r.flags.clone();
-        for (o, c) in layers.iter().zip(&carried) {
-            if o.level < r.level && contains(o, r.start, r.end) {
-                let c = c.as_ref().expect("a lower layer is carried first");
+        for &o in &around[i] {
+            if layers[o].level < r.level {
+                let c = carried[o].as_ref().expect("a lower layer is carried first");
                 flags.retain(|f| !c.contains(f));
             }
         }
@@ -331,8 +384,8 @@ pub(crate) fn direction_layers(spans: &[Span]) -> Vec<Layer> {
     };
     let mut out: Vec<(Layer, i128)> = Vec::new();
     for (i, r) in layers.iter().enumerate() {
-        let inside: Vec<usize> = (0..layers.len())
-            .filter(|&j| layers[j].level < r.level && contains(&layers[j], r.start, r.end))
+        let inside: Vec<usize> = (around[i].iter().copied())
+            .filter(|&j| layers[j].level < r.level)
             .collect();
         out.push((
             Layer {
@@ -345,10 +398,7 @@ pub(crate) fn direction_layers(spans: &[Span]) -> Vec<Layer> {
             r.level,
         ));
     }
-    for sp in spans {
-        let inside: Vec<usize> = (0..layers.len())
-            .filter(|&j| contains(&layers[j], sp.start, sp.start + sp.len))
-            .collect();
+    for (sp, inside) in spans.iter().zip(holders(&layer_ends, &span_ends)) {
         let rest: Flags = plain(&sp.flags)
             .into_iter()
             .filter(|f| !inside.iter().any(|&j| carried[j].contains(f)))
@@ -416,14 +466,14 @@ pub(crate) fn ruby_eids<'a>(
     spans: impl IntoIterator<Item = &'a [Span]>,
     next_eid: &mut i64,
     step: i64,
-) -> Vec<((usize, i64), i64)> {
-    let mut eids: Vec<((usize, i64), i64)> = Vec::new();
+) -> HashMap<(usize, i64), i64> {
+    let mut eids = HashMap::new();
     for (i, spans) in spans.into_iter().enumerate() {
         for sp in spans {
             if let Some((serial, _)) = ruby_of(&sp.flags)
-                && !eids.iter().any(|(k, _)| *k == (i, serial))
+                && let Entry::Vacant(eid) = eids.entry((i, serial))
             {
-                eids.push(((i, serial), *next_eid));
+                eid.insert(*next_eid);
                 *next_eid += step;
             }
         }
@@ -435,14 +485,18 @@ pub(crate) fn ruby_eids<'a>(
 /// in the order they first appear.
 pub(crate) fn rubies(spans: &[Span]) -> Vec<(i64, i64, i64, String)> {
     let mut out: Vec<(i64, i64, i64, String)> = Vec::new();
+    let mut at: HashMap<i64, usize> = HashMap::new();
     for sp in spans {
         let Some((serial, reading)) = ruby_of(&sp.flags) else {
             continue;
         };
         let end = sp.start + sp.len;
-        match out.iter_mut().find(|r| r.0 == serial) {
-            Some(r) => r.2 = end,
-            None => out.push((serial, sp.start, end, reading.to_owned())),
+        match at.get(&serial) {
+            Some(&i) => out[i].2 = end,
+            None => {
+                at.insert(serial, out.len());
+                out.push((serial, sp.start, end, reading.to_owned()));
+            }
         }
     }
     out
@@ -457,12 +511,16 @@ pub(crate) fn ruby_heading_title(
 ) -> Option<(String, Vec<Span>)> {
     let first = first.filter(|b| b.is_paragraph())?;
     let mut rubies: Vec<(i64, (i64, &str))> = Vec::new();
+    let mut found: HashMap<i64, usize> = HashMap::new();
     for sp in &first.spans {
         if let Some((serial, reading)) = ruby_of(&sp.flags) {
             let at = (sp.start + sp.len, reading);
-            match rubies.iter_mut().find(|r| r.0 == serial) {
-                Some(r) => r.1 = at,
-                None => rubies.push((serial, at)),
+            match found.get(&serial) {
+                Some(&i) => rubies[i].1 = at,
+                None => {
+                    found.insert(serial, rubies.len());
+                    rubies.push((serial, at));
+                }
             }
         }
     }
@@ -472,21 +530,8 @@ pub(crate) fn ruby_heading_title(
     let mut ends: Vec<(i64, &str)> = rubies.into_iter().map(|(_, at)| at).collect();
     ends.sort_by(|a, b| b.cmp(a));
     let no_space = |s: &str| s.chars().filter(|&c| !py::is_space(c)).collect::<String>();
-    let run_in = |open: &str, close: &str| {
-        let mut text: Vec<char> = first.text.chars().collect();
-        for &(end, reading) in &ends {
-            // Python's slice: an end past the text is its end, a negative one counts back.
-            let n = text.len() as i64;
-            let at = if end < 0 {
-                (end + n).max(0)
-            } else {
-                end.min(n)
-            } as usize;
-            let run: Vec<char> = format!("{open}{reading}{close}").chars().collect();
-            text.splice(at..at, run);
-        }
-        no_space(&text.into_iter().collect::<String>())
-    };
+    let run_in =
+        |open: &str, close: &str| no_space(&readings_run_in(&first.text, &ends, open, close));
     let want = no_space(title);
     if ![("", ""), ("(", ")"), ("（", "）")]
         .iter()
@@ -499,35 +544,117 @@ pub(crate) fn ruby_heading_title(
     Some((base, spans))
 }
 
+/// `text` with each reading run in at its end, between `open` and `close`: `ends` from the
+/// last to the first, as kfxgen puts them in.
+fn readings_run_in(text: &str, ends: &[(i64, &str)], open: &str, close: &str) -> String {
+    let n = py::len(text) as i64;
+    if ends.iter().any(|&(end, _)| !(0..=n).contains(&end)) {
+        return readings_spliced_in(text, ends, open, close);
+    }
+    // Every end inside the text: each reading stands before the character at its end, and
+    // one put in later stands before one put in earlier at the same end.
+    let mut out = String::with_capacity(text.len());
+    let mut ends = ends.iter().rev().peekable();
+    for (i, c) in text.chars().enumerate() {
+        while let Some((_, reading)) = ends.next_if(|&&(end, _)| end as usize == i) {
+            out.extend([open, reading, close]);
+        }
+        out.push(c);
+    }
+    ends.for_each(|(_, reading)| out.extend([open, reading, close]));
+    out
+}
+
+/// [`readings_run_in`] one reading at a time, for an end outside the text.
+fn readings_spliced_in(text: &str, ends: &[(i64, &str)], open: &str, close: &str) -> String {
+    let mut text: Vec<char> = text.chars().collect();
+    for &(end, reading) in ends {
+        // Python's slice: an end past the text is its end, a negative one counts back.
+        let n = text.len() as i64;
+        let at = if end < 0 {
+            (end + n).max(0)
+        } else {
+            end.min(n)
+        } as usize;
+        let run: Vec<char> = format!("{open}{reading}{close}").chars().collect();
+        text.splice(at..at, run);
+    }
+    text.into_iter().collect()
+}
+
 /// A chunk's rubies put on its runs (:8039): each reading numbered in its chapter's ruby
 /// fragment, on the run over exactly its base, or on a run of its own before the first run
 /// after its start.
 pub(crate) fn place_rubies(
     spans: &[Span],
     runs: &mut Vec<Run>,
-    eids: &[((usize, i64), i64)],
+    eids: &HashMap<(usize, i64), i64>,
     chunk_idx: usize,
     chapter: usize,
     readings: &mut Vec<(i64, String)>,
 ) {
+    let mut events = Vec::new();
     for (serial, start, end, reading) in rubies(spans) {
-        let eid = eids
-            .iter()
-            .find(|(k, _)| *k == (chunk_idx, serial))
-            .map(|(_, e)| *e)
-            .expect("every ruby has an id");
+        let eid = eids[&(chunk_idx, serial)];
         readings.push((eid, reading));
         let ruby = (format!("ruby{chapter}"), readings.len() as i64);
-        // After a longer run starting with it, such as a link holding it (QA's G53 on #713).
-        let at = runs
-            .iter()
-            .position(|r| r.start > start || (r.start == start && r.len <= end - start))
-            .unwrap_or(runs.len());
-        match runs.get_mut(at) {
-            Some(r) if (r.start, r.len) == (start, end - start) => r.ruby = Some(ruby),
-            _ => runs.insert(at, Run::ruby(start, end - start, ruby)),
+        events.push((start, end - start, ruby));
+    }
+    // By start, the longer first: where each event goes among runs in that order.
+    let place = |start: i64, len: i64| (start, std::cmp::Reverse(len));
+    if runs.is_sorted_by_key(|r| place(r.start, r.len)) {
+        place_events_sorted(runs, events, place);
+    } else {
+        events
+            .into_iter()
+            .for_each(|(start, len, ruby)| place_event(runs, start, len, ruby));
+    }
+}
+
+/// A ruby's event on the run it covers, else put in as a run of its own: after a longer run
+/// starting with it, such as a link holding it (QA's G53 on #713).
+fn place_event(runs: &mut Vec<Run>, start: i64, len: i64, ruby: (String, i64)) {
+    let at = runs
+        .iter()
+        .position(|r| r.start > start || (r.start == start && r.len <= len))
+        .unwrap_or(runs.len());
+    match runs.get_mut(at) {
+        Some(r) if (r.start, r.len) == (start, len) => r.ruby = Some(ruby),
+        _ => runs.insert(at, Run::ruby(start, len, ruby)),
+    }
+}
+
+/// `place_event` for each of `events` in turn, where `runs` are in `place`'s order: one pass
+/// over both. Events at one place go on one run, the last of them staying.
+fn place_events_sorted<K: Ord + Copy>(
+    runs: &mut Vec<Run>,
+    mut events: Vec<(i64, i64, (String, i64))>,
+    place: impl Fn(i64, i64) -> K,
+) {
+    // Stable: events at one place stay in their order.
+    events.sort_by_key(|&(start, len, _)| place(start, len));
+    let mut out: Vec<Run> = Vec::with_capacity(runs.len() + events.len());
+    let mut old = std::mem::take(runs).into_iter().peekable();
+    for (start, len, ruby) in events {
+        let at = place(start, len);
+        // An earlier event at this place made the last run, or took it.
+        if let Some(last) = out.last_mut().filter(|r| place(r.start, r.len) == at) {
+            last.ruby = Some(ruby);
+            continue;
+        }
+        while let Some(r) = old.next_if(|r| place(r.start, r.len) < at) {
+            out.push(r);
+        }
+        match old.next_if(|r| place(r.start, r.len) == at) {
+            Some(mut r) => {
+                r.ruby = Some(ruby);
+                out.push(r);
+            }
+            None => out.push(Run::ruby(start, len, ruby)),
         }
     }
+    out.extend(old);
+    *runs = out;
 }
 
 /// The readings' style and each chapter's ruby fragment, built after the pruning, which looks
@@ -756,5 +883,108 @@ pub(crate) fn build_tcy_fragments(
         let f = build_fragment_145(g, strings, &name);
         g.push(f);
         content_names.push(name);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Run, place_event, place_events_sorted};
+
+    /// Readings run into a text in one pass are those spliced in one at a time.
+    #[test]
+    fn readings_run_in_one_pass_are_those_spliced_in() {
+        let mut seed = 3u64;
+        let mut next = |n: u64| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) % n) as i64
+        };
+        let readings = ["か", "き", "kana", ""];
+        for round in 0..2000 {
+            let text: String = "漢字abé".chars().take(next(6) as usize).collect();
+            // In every fifth round, ends before and past the text.
+            let wide = if round % 5 == 0 { 4 } else { 0 };
+            let mut ends: Vec<(i64, &str)> = (0..next(6))
+                .map(|_| {
+                    (
+                        next(text.chars().count() as u64 + 1 + 2 * wide) - wide as i64,
+                        readings[next(4) as usize],
+                    )
+                })
+                .collect();
+            ends.sort_by(|a, b| b.cmp(a));
+            assert_eq!(
+                super::readings_run_in(&text, &ends, "(", ")"),
+                super::readings_spliced_in(&text, &ends, "(", ")"),
+                "round {round}: {text:?} {ends:?}"
+            );
+        }
+    }
+
+    /// The ranges a query lies in are those a look through every range finds.
+    #[test]
+    fn holders_are_the_ranges_a_query_lies_in() {
+        let mut seed = 11u64;
+        let mut next = |n: u64| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) % n) as i64
+        };
+        for round in 0..2000 {
+            // Ranges that end before they start too; queries that do, in every fifth round.
+            let ranges: Vec<(i64, i64)> = (0..next(9)).map(|_| (next(8), next(8))).collect();
+            let queries: Vec<(i64, i64)> = (0..next(9))
+                .map(|_| {
+                    let a = next(8);
+                    (a, if round % 5 == 0 { next(8) } else { a + next(4) })
+                })
+                .collect();
+            let want: Vec<Vec<usize>> = (queries.iter())
+                .map(|&(a, b)| {
+                    (0..ranges.len())
+                        .filter(|&j| ranges[j].0 <= a && b <= ranges[j].1)
+                        .collect()
+                })
+                .collect();
+            assert_eq!(super::holders(&ranges, &queries), want, "round {round}");
+        }
+    }
+
+    /// Placing every ruby event in one pass gives the runs that placing them one by one does.
+    #[test]
+    fn events_placed_in_one_pass_are_those_placed_one_by_one() {
+        let mut seed = 7u64;
+        let mut next = |n: u64| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) % n) as i64
+        };
+        let place = |start: i64, len: i64| (start, std::cmp::Reverse(len));
+        for round in 0..2000 {
+            let mut runs: Vec<Run> = (0..next(8))
+                .map(|i| Run::ruby(next(5), next(4), ("run".into(), i)))
+                .collect();
+            runs.sort_by_key(|r| place(r.start, r.len));
+            let events: Vec<_> = (0..next(8))
+                .map(|i| (next(5), next(4), ("ruby".to_owned(), i)))
+                .collect();
+            let mut one_by_one: Vec<Run> = runs
+                .iter()
+                .map(|r| Run::ruby(r.start, r.len, r.ruby.clone().unwrap()))
+                .collect();
+            for (start, len, ruby) in events.clone() {
+                place_event(&mut one_by_one, start, len, ruby);
+            }
+            place_events_sorted(&mut runs, events, place);
+            let seen = |runs: &[Run]| -> Vec<_> {
+                runs.iter()
+                    .map(|r| (r.start, r.len, r.ruby.clone()))
+                    .collect()
+            };
+            assert_eq!(seen(&runs), seen(&one_by_one), "round {round}");
+        }
     }
 }

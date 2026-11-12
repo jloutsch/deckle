@@ -16,7 +16,7 @@ use super::typography::Typography;
 use super::{Generator, measure, py, st, sym};
 
 /// The arguments of `build_table_style_157` the ported paths set.
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TableStyle {
     pub border: Option<Border>,
     pub width: Option<f64>,
@@ -24,13 +24,13 @@ pub(crate) struct TableStyle {
 }
 
 /// The arguments of `build_part_style_157`.
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PartStyle {
     pub border: Option<Border>,
 }
 
 /// The arguments `_cell_style` (:7326) gives `build_cell_style_157`.
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CellStyle {
     pub align: Option<String>,
     pub bold: bool,

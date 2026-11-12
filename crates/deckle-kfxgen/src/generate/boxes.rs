@@ -4,6 +4,7 @@
 //! `_rule_chunk` :1105) and `$157` styles (`build_box_style_157` :3853,
 //! `build_rule_style_157` :3915).
 use std::borrow::Borrow;
+use std::collections::HashSet;
 
 use deckle_kfx::ion::Value;
 
@@ -25,7 +26,7 @@ use crate::pyvalue::{PyValue, truthy};
 use GenerateError::Unsupported;
 
 /// A rule's border width: points, or ems kept in ems (QA on #724).
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum RuleWidth {
     Pt(f64),
     Em(f64),
@@ -61,7 +62,7 @@ fn read_rule_border(v: Option<&PyValue>, at: &str) -> Result<Option<RuleBorder>,
 }
 
 /// A rule block's `rule` (#230): how `build_rule_style_157` draws it.
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RuleStyle {
     /// In ems.
     pub space_above: Option<f64>,
@@ -288,12 +289,12 @@ pub(crate) fn emit_box_chunks(
     images: &Images,
     chunks: &mut Vec<Chunk>,
 ) -> Result<Vec<String>, GenerateError> {
-    let inner: Vec<String> = b.blocks.iter().flat_map(block_keys).collect();
+    let inner: HashSet<String> = b.blocks.iter().flat_map(block_keys).collect();
     let own: Vec<String> = block
         .anchors
         .keys
         .iter()
-        .filter(|k| !inner.contains(k))
+        .filter(|k| !inner.contains(*k))
         .cloned()
         .collect();
     if !b.opened {
@@ -342,7 +343,7 @@ pub(crate) fn block_keys(b: &Block) -> Vec<String> {
 
 /// `build_box_style_157`'s arguments (:7520): the box's look, its padding and margins
 /// scaled from its ems to the main size's.
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct BoxStyle {
     pub border: Option<Border>,
     pub background: Option<i64>,

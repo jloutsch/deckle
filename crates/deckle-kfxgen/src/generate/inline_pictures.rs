@@ -6,7 +6,7 @@
 //! picture in a container of its link (#355). A picture among words in the storyline is
 //! `inline_picture_entries`'.
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use regex::Captures;
 
@@ -27,11 +27,6 @@ fn group<'t>(m: &Captures<'t>, i: usize) -> Option<&'t str> {
 
 fn has_words(text: &str) -> bool {
     !py::strip(&IMG_TOKEN.replace_all(text, "")).is_empty()
-}
-
-/// `text[a:b]`, in characters.
-fn slice(text: &str, a: usize, b: usize) -> &str {
-    py::take(py::skip(text, a), b.saturating_sub(a))
 }
 
 /// The runs of `spans` inside [a, b), counted from `a` (:600).
@@ -109,6 +104,7 @@ pub(crate) fn cut_after_picture_lines(block: &Block) -> Option<Vec<Block>> {
         .map(|(b, after, tail)| (b, Some(after), tail))
         .chain([(n, None, None)]);
     let mut pieces: Vec<Block> = Vec::new();
+    let mut slicer = py::Slicer::new(text);
     let (mut a, mut lo, mut empty_line_cut) = (0, 0, false);
     for (b, after, tail) in ends {
         // A piece holds its end (#487), its cut (QA on #590), and the blank lines after it
@@ -140,7 +136,7 @@ pub(crate) fn cut_after_picture_lines(block: &Block) -> Option<Vec<Block>> {
             .cloned()
             .collect();
         let mut piece = Block {
-            text: slice(text, a, b).to_owned(),
+            text: slicer.slice(a, b).to_owned(),
             spans: slice_spans(&block.spans, ai, bi),
             anchors: Anchors { keys, offsets },
             ..block.clone()
@@ -171,10 +167,7 @@ pub(crate) fn cut_after_picture_lines(block: &Block) -> Option<Vec<Block>> {
         }
     }
     // A key with no offset, or one before the text, stays on the first piece.
-    let placed: Vec<String> = pieces
-        .iter()
-        .flat_map(|p| p.anchors.keys.iter().cloned())
-        .collect();
+    let placed: HashSet<&String> = pieces.iter().flat_map(|p| &p.anchors.keys).collect();
     let rest: Vec<String> = block
         .anchors
         .keys
@@ -480,7 +473,10 @@ pub(crate) fn emit_entries(
             }
             Piece::Text(text) => {
                 let (runs, anchors) = append_text_with_spans(&text, &para, &spans, &keys, &offsets);
-                keys.retain(|k| !anchors.keys.contains(k));
+                if !anchors.keys.is_empty() {
+                    let placed: HashSet<&String> = anchors.keys.iter().collect();
+                    keys.retain(|k| !placed.contains(k));
+                }
                 chunks.push(Chunk {
                     spans: runs,
                     anchors,

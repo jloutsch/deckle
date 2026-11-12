@@ -137,6 +137,36 @@ pub(crate) fn take(s: &str, n: usize) -> &str {
     s.char_indices().nth(n).map_or(s, |(i, _)| &s[..i])
 }
 
+/// `s[a:b]` and `s[a:]` for slices taken one after another: each is found from where the
+/// last began, not from the start of `s`.
+pub(crate) struct Slicer<'a> {
+    s: &'a str,
+    /// The start of the last slice, in characters and in bytes.
+    at: (usize, usize),
+}
+
+impl<'a> Slicer<'a> {
+    pub(crate) fn new(s: &'a str) -> Self {
+        Slicer { s, at: (0, 0) }
+    }
+
+    /// `s[a:]`.
+    pub(crate) fn from(&mut self, a: usize) -> &'a str {
+        if a < self.at.0 {
+            self.at = (0, 0);
+        }
+        let rest = skip(&self.s[self.at.1..], a - self.at.0);
+        // Past the end, the next slice starts over or is empty too.
+        self.at = (a, self.s.len() - rest.len());
+        rest
+    }
+
+    /// `s[a:b]`.
+    pub(crate) fn slice(&mut self, a: usize, b: usize) -> &'a str {
+        take(self.from(a), b.saturating_sub(a))
+    }
+}
+
 /// `round(x, digits)`: both round the float's exact value half to even.
 pub(crate) fn round(x: f64, digits: usize) -> f64 {
     format!("{x:.digits$}").parse().unwrap_or(x)
@@ -278,6 +308,29 @@ pub(crate) fn decimal_of_float(x: f64) -> Decimal {
 #[cfg(test)]
 mod tests {
     use super::decimal_of_float;
+
+    /// A slice after another is the one Python takes, forwards, backwards and past the end.
+    #[test]
+    fn slices_one_after_another_are_pythons() {
+        let s = "aé\u{fffc}b漢c";
+        let mut slicer = super::Slicer::new(s);
+        for (a, b) in [
+            (0usize, 2usize),
+            (2, 3),
+            (3, 3),
+            (4, 9),
+            (9, 12),
+            (1, 5),
+            (5, 2),
+            (0, 6),
+            (7, 8),
+        ] {
+            let want: String = s.chars().skip(a).take(b.saturating_sub(a)).collect();
+            assert_eq!(slicer.slice(a, b), want, "{a}:{b}");
+            let rest: String = s.chars().skip(a).collect();
+            assert_eq!(slicer.from(a), rest, "{a}:");
+        }
+    }
 
     /// `Decimal(str(1e16))` is 1E+16 and `Decimal(str(2.0))` is 2.0 (issue #13).
     #[test]

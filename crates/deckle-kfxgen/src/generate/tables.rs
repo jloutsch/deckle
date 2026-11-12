@@ -22,7 +22,7 @@ use GenerateError::Unsupported;
 pub(crate) type Border = Vec<(String, (String, f64, Option<i64>))>;
 
 /// A cell's padding side: ems, or `("%", n)`.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Pad {
     Em(f64),
     Pct(f64),

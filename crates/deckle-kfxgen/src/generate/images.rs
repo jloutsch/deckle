@@ -7,7 +7,7 @@
 //!
 //! A picture among a paragraph's words, linked, or a float among words is `inline_pictures`'.
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
 
 use deckle_kfx::fragment::{Fragment, FragmentList};
@@ -44,23 +44,50 @@ type Pair = (String, String);
 /// A picture's width and height as its style reads them: its pixels, or `display_dims`'.
 pub(crate) type Dims = (Option<f64>, Option<f64>);
 
-/// A Python dict's insertion order: `set` replaces a value where its key stands.
-fn get<'a, V>(map: &'a [(String, V)], key: &str) -> Option<&'a V> {
-    map.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+/// A Python dict: its items in insertion order, and `set` replaces a value where its key
+/// stands. `at` finds a key's item and is never iterated.
+struct Dict<V> {
+    items: Vec<(String, V)>,
+    at: HashMap<String, usize>,
 }
 
-fn set<V>(map: &mut Vec<(String, V)>, key: &str, value: V) {
-    match map.iter_mut().find(|(k, _)| k == key) {
-        Some(slot) => slot.1 = value,
-        None => map.push((key.to_owned(), value)),
+impl<V> Default for Dict<V> {
+    fn default() -> Self {
+        Dict {
+            items: Vec::new(),
+            at: HashMap::new(),
+        }
+    }
+}
+
+impl<V> Dict<V> {
+    fn get(&self, key: &str) -> Option<&V> {
+        self.at.get(key).map(|&i| &self.items[i].1)
+    }
+
+    fn set(&mut self, key: &str, value: V) {
+        match self.at.get(key) {
+            Some(&i) => self.items[i].1 = value,
+            None => {
+                self.at.insert(key.to_owned(), self.items.len());
+                self.items.push((key.to_owned(), value));
+            }
+        }
+    }
+
+    fn retain(&mut self, mut keep: impl FnMut(&V) -> bool) {
+        self.items.retain(|(_, v)| keep(v));
+        self.at = (self.items.iter().enumerate())
+            .map(|(i, (k, _))| (k.clone(), i))
+            .collect();
     }
 }
 
 /// `generate_full_book`'s `image_resources` and `_image_dims`.
 #[derive(Default)]
 pub(crate) struct Images {
-    resources: Vec<(String, Pair)>,
-    dims: Vec<(String, Dims)>,
+    resources: Dict<Pair>,
+    dims: Dict<Dims>,
     resolved_refs: bool,
     pub cover: bool,
 }
@@ -71,11 +98,12 @@ impl Images {
     pub(crate) fn resource(&self, href: &str) -> Option<&Pair> {
         let bare = href.split('#').next().unwrap_or("");
         let bare = bare.split('?').next().unwrap_or("");
-        get(&self.resources, bare)
-            .or_else(|| get(&self.resources, &unquote(bare)))
+        self.resources
+            .get(bare)
+            .or_else(|| self.resources.get(&unquote(bare)))
             .or_else(|| {
                 self.may_fall_back_by_basename(bare)
-                    .then(|| get(&self.resources, bare.rsplit('/').next().unwrap_or("")))
+                    .then(|| self.resources.get(bare.rsplit('/').next().unwrap_or("")))
                     .flatten()
             })
     }
@@ -83,8 +111,8 @@ impl Images {
     /// Each resource's dims, from its first href that has them (:2434).
     pub(crate) fn dims_by_resource(&self) -> BTreeMap<String, Dims> {
         let mut out = BTreeMap::new();
-        for (key, (res, _)) in &self.resources {
-            if let Some(d) = get(&self.dims, key) {
+        for (key, (res, _)) in &self.resources.items {
+            if let Some(d) = self.dims.get(key) {
                 out.entry(res.clone()).or_insert(*d);
             }
         }
@@ -340,31 +368,31 @@ pub(crate) fn build_resources(g: &mut Generator, args: &PyValue) -> Result<Image
         g.push(f);
         let base = basename(href);
         // Two pictures of one name: the first keeps it.
-        if get(&images.resources, base).is_none() {
-            set(&mut images.resources, base, pair.clone());
-            set(&mut images.dims, base, dims);
+        if images.resources.get(base).is_none() {
+            images.resources.set(base, pair.clone());
+            images.dims.set(base, dims);
         }
-        set(&mut images.resources, href, pair.clone());
-        set(&mut images.dims, href, dims);
+        images.resources.set(href, pair.clone());
+        images.dims.set(href, dims);
         let decoded = unquote(href);
-        if get(&images.resources, &decoded).is_none() {
-            set(&mut images.resources, &decoded, pair);
+        if images.resources.get(&decoded).is_none() {
+            images.resources.set(&decoded, pair);
         }
     }
 
     for href in cover_hrefs {
         let dims = display_dims(args, href)?.unwrap_or(cover_dims);
         for key in [basename(href), href, &unquote(href)] {
-            if get(&images.resources, key).is_none() {
-                set(&mut images.resources, key, cover_pair());
-                set(&mut images.dims, key, dims);
+            if images.resources.get(key).is_none() {
+                images.resources.set(key, cover_pair());
+                images.dims.set(key, dims);
             }
         }
     }
     // The cover's page asks for its picture by this name (#32).
     if images.cover {
-        set(&mut images.resources, COVER_BASENAME, cover_pair());
-        set(&mut images.dims, COVER_BASENAME, cover_dims);
+        images.resources.set(COVER_BASENAME, cover_pair());
+        images.dims.set(COVER_BASENAME, cover_dims);
     }
     Ok(images)
 }
@@ -606,8 +634,8 @@ impl ImageStyles {
         if pictures.is_empty() {
             return Ok(styles);
         }
-        for (base, dims) in &images.dims {
-            if let Some((resource, _)) = get(&images.resources, base) {
+        for (base, dims) in &images.dims.items {
+            if let Some((resource, _)) = images.resources.get(base) {
                 styles.resource_dims.insert(resource.clone(), *dims);
             }
         }
@@ -786,20 +814,24 @@ fn build_plain_image_style_157(
 /// Drops each resource no entry shows, its `$164` and `$417` (:4910, #102). The cover stays:
 /// `$490` shows it.
 pub(crate) fn drop_unshown(g: &mut Generator, images: &mut Images, shown: &[&str]) {
-    let unshown: Vec<Pair> = images
-        .resources
-        .iter()
+    let shown: HashSet<&str> = shown.iter().copied().collect();
+    let unshown: HashSet<Pair> = (images.resources.items.iter())
         .map(|(_, pair)| pair)
-        .filter(|(res, _)| !shown.contains(&res.as_str()) && res != COVER_RESOURCE)
+        .filter(|(res, _)| !shown.contains(res.as_str()) && res != COVER_RESOURCE)
         .cloned()
         .collect();
     if unshown.is_empty() {
         return;
     }
-    let dead = |name: &str| unshown.iter().any(|(r, l)| r == name || l == name);
-    g.fragments
-        .retain(|f| !f.fid.as_ref().is_some_and(|fid| dead(fid.as_str())));
-    images.resources.retain(|(_, pair)| !unshown.contains(pair));
+    let dead: HashSet<&str> = (unshown.iter())
+        .flat_map(|(r, l)| [r.as_str(), l.as_str()])
+        .collect();
+    g.fragments.retain(|f| {
+        !f.fid
+            .as_ref()
+            .is_some_and(|fid| dead.contains(fid.as_str()))
+    });
+    images.resources.retain(|pair| !unshown.contains(pair));
 }
 
 /// The names `$419` lists for the pictures (:5148): the cover's, then each resource's.
@@ -808,7 +840,7 @@ pub(crate) fn entity_names(images: &Images) -> Vec<String> {
     if images.cover {
         names.extend([COVER_RESOURCE.to_owned(), COVER_LOCATION.to_owned()]);
     }
-    for (_, (res, loc)) in &images.resources {
+    for (_, (res, loc)) in &images.resources.items {
         names.extend([res.clone(), loc.clone()]);
     }
     names
