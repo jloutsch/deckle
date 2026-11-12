@@ -75,5 +75,7 @@
   "settings.language.label": "Sprache",
   "settings.language.note": "Die Texte der App. Die Zeitung und Ihre Bücher behalten ihre eigene Sprache.",
   "settings.language.draft": "Jede Übersetzung beginnt als KI-Entwurf, den Leserinnen und Leser korrigieren.",
-  "settings.language.help": "Beim Übersetzen helfen"
+  "settings.language.help": "Beim Übersetzen helfen",
+  "daily.run.notSent": "Nicht gesendet: {name} ({why})",
+  "daily.run.notSentNote": "Diese warten im Ausgang und gehen beim nächsten Push mit."
 }

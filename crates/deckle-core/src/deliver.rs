@@ -155,6 +155,15 @@ fn kindle_present(root: &Path) -> bool {
     root.join("documents").is_dir() && root.join("system").is_dir()
 }
 
+/// The drive refused a write as a whole: mounted read-only, or its folder isn't writable. Every
+/// other book would fail the same way, so a push stops instead of trying each.
+pub(crate) fn drive_refuses(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
+    )
+}
+
 /// `Ok` while the mass-storage Kindle at `root` is still there; else the error that stops
 /// whatever was writing to it. Every write to a mass-storage Kindle asks this first.
 pub(crate) fn kindle_still_there(root: &Path) -> Result<(), DeliverError> {
@@ -401,7 +410,16 @@ pub fn deliver_named_reporting(
         Target::MassStorage(dev) => {
             kindle_still_there(&dev.root)?;
             remove_leftovers(&dev.root.join("documents"));
-            let path = write_file(&dev.root.join("documents").join(&name), kfx)?;
+            let path =
+                write_file(&dev.root.join("documents").join(&name), kfx).map_err(|e| match e {
+                    DeliverError::Io { ref source, .. } if drive_refuses(source) => {
+                        DeliverError::Gone(format!(
+                            "the Kindle at {} can't be written to: {e}",
+                            dev.root.display()
+                        ))
+                    }
+                    e => e,
+                })?;
             warn(write_sidecars(&path, &opts.sidecars));
             warn(write_system_files(&dev.root, &opts.system_files));
             if let Some((thumb_name, jpeg)) = &opts.thumbnail {
@@ -1103,6 +1121,23 @@ mod tests {
             .unwrap_err();
         assert!(e.stops_push(), "{e}");
         assert_eq!(names(tmp.path()), Vec::<String>::new(), "nothing written");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_kindle_that_cant_be_written_to_stops_a_push() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let docs = tmp.path().join("documents");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::create_dir_all(tmp.path().join("system")).unwrap();
+        // Mounted read-only (a dirty FAT volume on macOS): every book would fail alike.
+        std::fs::set_permissions(&docs, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let target = kindle_at(tmp.path());
+        let r = deliver_named_on(b"x", "a.kfx", &mut Conn::new(&target), &Default::default());
+        std::fs::set_permissions(&docs, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let e = r.unwrap_err();
+        assert!(e.stops_push(), "{e}");
     }
 
     #[test]

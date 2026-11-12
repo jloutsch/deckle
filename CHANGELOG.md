@@ -29,9 +29,12 @@
   prepared book, a file the Kindle refused) stopped every push at that entry, so nothing after
   it went, ever. Now the rest go, and the push prints `not sent: <name>: <why>` for it on every
   push while it waits in the outbox; this holds for Kindles, Kobos and PocketBooks. A reader
-  unplugged mid-push stops it with one message instead of one per entry, and a Kobo or
-  PocketBook mounted at a fixed folder that's been unplugged gets nothing written into that
-  folder. A failed prune after the deliveries is a warning beside them, not an error that hid
+  unplugged mid-push, or one that can't be written to, stops it with one message instead of
+  one per entry, and a reader mounted at a fixed folder that's been unplugged gets nothing
+  written into that folder, whether by a push, a send, a put back or a restore. `digest push`
+  and `digest run` fail only when the push stopped or the run's own edition didn't go, so the
+  scheduler no longer prints the paper again all day for another book's sake; the Daily tab
+  lists what wasn't sent under the run's result. A failed prune after the deliveries is a warning beside them, not an error that hid
   them. A book and a PDF with the same name now both go; only a paper's dated edition queued in
   both forms sends just one, and if that one fails the other goes in its place. A book whose
   X-Ray, Word Wise or thumbnail couldn't be written is now counted as delivered with a warning,

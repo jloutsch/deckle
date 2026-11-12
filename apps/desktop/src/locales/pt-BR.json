@@ -75,5 +75,7 @@
   "settings.language.label": "Idioma",
   "settings.language.note": "Os textos do app. O jornal e seus livros mantêm o próprio idioma.",
   "settings.language.draft": "Cada tradução começa como um rascunho de IA que os leitores corrigem.",
-  "settings.language.help": "Ajudar a traduzir"
+  "settings.language.help": "Ajudar a traduzir",
+  "daily.run.notSent": "Não enviado: {name} ({why})",
+  "daily.run.notSentNote": "Eles esperam na caixa de saída e vão no próximo envio."
 }

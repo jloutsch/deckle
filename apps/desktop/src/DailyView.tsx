@@ -32,6 +32,8 @@ import { anyKindleHint } from "./papersView";
 import { keepUnfinished, savable } from "./subscriptions";
 import type { ExportConfig, PressSetupStatus, DailyConfig, DailyState, Day, EditionPreview, EmailConfig, EmailStatus, NextPaper, PagePlanRow, PapersView, ReadershipView, ReadingEntry, RunResult } from "./types";
 import { DEFAULT_EMAIL } from "./types";
+import { useT } from "./i18n";
+import { notSent, runFailed } from "./runResult";
 
 /** Amazon's Manage Your Content and Devices: the approved-sender list and the emailed Docs. */
 const MYCD = "https://www.amazon.com/mycd";
@@ -86,6 +88,7 @@ export default function DailyView({
   onOpenSettings?: (page: SettingsPage) => void;
 }) {
   const caps = useCapabilities();
+  const t = useT();
   const [state, setState] = useState<DailyState | null>(null);
   const [draft, setDraft] = useState<DailyConfig | null>(null);
   // Saving as you go (Daily tab redesign §4): the newest edit is in draftRef; `seq` counts edits,
@@ -608,8 +611,18 @@ export default function DailyView({
                 onDelivery={() => setRoom("delivery")}
               >
                 {result && (
-                  <div className={`run-result ${result.r.ok ? "ok" : "fail"}`}>
+                  <div className={`run-result ${runFailed(result.r) ? "fail" : "ok"}`}>
                     <div>{summary(result.r, result.send)}</div>
+                    {result.send && notSent(result.r.report).length > 0 && (
+                      <div className="not-sent">
+                        <ul>
+                          {notSent(result.r.report).map((n) => (
+                            <li key={n.name}>{t("daily.run.notSent", { name: n.name, why: n.why })}</li>
+                          ))}
+                        </ul>
+                        <p className="muted small">{t("daily.run.notSentNote")}</p>
+                      </div>
+                    )}
                     <div className="section-counts">
                       {counts(result.r, result.send).map((s) => (
                         <span key={s.title} className={s.unavailable && s.items === 0 ? "warn" : ""} title={s.unavailable ?? ""}>

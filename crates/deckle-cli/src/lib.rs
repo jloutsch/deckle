@@ -3560,7 +3560,19 @@ fn digest(
                 /// A reMarkable answered and took it.
                 #[serde(skip_serializing_if = "Option::is_none")]
                 remarkable: Option<&'a deckle_core::sync::RemarkablePush>,
+                /// This edition went to a reader in this run (a Kindle, a folder, a Kobo or a
+                /// PocketBook), whatever else in the outbox didn't.
+                edition_sent: bool,
             }
+            let stem = deckle_digest::edition_stem(&cfg, date);
+            let readers = [Some(&outcome), reader.as_ref()];
+            let edition_sent = readers.iter().flatten().any(|o| o.sent(&stem));
+            // Exit non-zero when this run's own edition didn't go, or a push stopped; another
+            // entry that didn't go is a warning (the daemon would otherwise print again).
+            let undelivered = readers
+                .iter()
+                .flatten()
+                .any(|o| o.stopped() || o.missed(&stem));
             let all = DigestRun {
                 build: &built,
                 run: report.as_ref(),
@@ -3572,6 +3584,7 @@ fn digest(
                 reader: reader.as_ref(),
                 remarkable_queued: rm_queued,
                 remarkable: remarkable.as_ref(),
+                edition_sent,
             };
             let failed = report.as_ref().and_then(|r| r.error.as_ref());
             emit(json, &all, || {
@@ -3615,8 +3628,7 @@ fn digest(
                 }
                 text
             })?;
-            let unsent = outcome.unsent() || reader.as_ref().is_some_and(|o| o.unsent());
-            Ok(if failed.is_some() || unsent {
+            Ok(if failed.is_some() || undelivered {
                 ExitCode::from(EXIT_FAILURE)
             } else {
                 ExitCode::SUCCESS
@@ -4161,19 +4173,40 @@ fn remarkable_lines(p: &deckle_core::sync::RemarkablePush) -> String {
 }
 
 impl DigestOutcome {
-    /// A push that left an entry unsent fails, as one that stopped at it did, though the rest
-    /// went.
+    /// A push fails only when it stopped (the device went away, or can't be written). An entry
+    /// that didn't go is said as a warning and waits in the outbox: one bad entry mustn't fail
+    /// every push, nor make the daemon print the paper again all day.
     fn exit_code(&self) -> ExitCode {
-        if self.unsent() {
+        if self.stopped() {
             ExitCode::FAILURE
         } else {
             ExitCode::SUCCESS
         }
     }
 
-    /// An outbox entry didn't go.
-    fn unsent(&self) -> bool {
-        self.flush.as_ref().is_some_and(|f| !f.failed.is_empty())
+    /// The push stopped before it was through.
+    fn stopped(&self) -> bool {
+        self.flush.as_ref().is_some_and(|f| f.stopped)
+    }
+
+    /// The edition `stem` (any of its forms: `.kfx`, `.pdf`, `.epub`, `.kepub.epub`) is among
+    /// what didn't go.
+    fn missed(&self, stem: &str) -> bool {
+        let edition = format!("{stem}.");
+        self.flush
+            .as_ref()
+            .is_some_and(|f| f.failed.iter().any(|(n, _)| n.starts_with(&edition)))
+    }
+
+    /// The edition `stem`, in one of its forms, was delivered.
+    fn sent(&self, stem: &str) -> bool {
+        let edition = format!("{stem}.");
+        self.flush.as_ref().is_some_and(|f| {
+            f.delivered.iter().any(|p| {
+                p.file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with(&edition))
+            })
+        })
     }
 
     fn describe(&self, queue: &deckle_core::queue::Queue) -> String {
@@ -6725,6 +6758,43 @@ mod tests {
     use super::*;
     use deckle_core::pipeline::XRayMode;
     use deckle_digest::reading::Outcome;
+
+    #[test]
+    fn only_a_stop_or_the_runs_own_edition_fails_the_run() {
+        let flush = |delivered: &[&str], failed: &[&str], stopped: bool| DigestOutcome {
+            flush: Some(deckle_core::queue::FlushReport {
+                delivered: delivered.iter().map(PathBuf::from).collect(),
+                failed: failed
+                    .iter()
+                    .map(|n| (n.to_string(), "why".to_owned()))
+                    .collect(),
+                stopped,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let stem = "deckle-daily-2026-10-23";
+        let other = flush(
+            &["/K/documents/deckle-daily-2026-10-23.kfx"],
+            &["broken.kfx"],
+            false,
+        );
+        assert!(other.sent(stem) && !other.missed(stem) && !other.stopped());
+        assert_eq!(other.exit_code(), ExitCode::SUCCESS);
+        let own = flush(&[], &["deckle-daily-2026-10-23.kepub.epub"], false);
+        assert!(own.missed(stem) && !own.sent(stem));
+        // A push alone has no edition of its own: only a stop fails it.
+        assert_eq!(own.exit_code(), ExitCode::SUCCESS);
+        let stopped = flush(
+            &["/K/documents/deckle-daily-2026-10-23.kfx"],
+            &["b.kfx"],
+            true,
+        );
+        assert_eq!(stopped.exit_code(), ExitCode::FAILURE);
+        // Another paper's edition isn't this one.
+        let kid = flush(&[], &["deckle-daily-kid-2026-10-23.kfx"], false);
+        assert!(!kid.missed(stem));
+    }
 
     #[test]
     fn a_send_to_an_unplugged_reader_writes_nothing_and_fails() {

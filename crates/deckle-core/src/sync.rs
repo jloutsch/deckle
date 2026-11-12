@@ -365,15 +365,22 @@ pub fn run_reader(
                         Ok(path) => path,
                         Err(e) => {
                             let gone_now = !reader.present();
+                            // A drive mounted read-only fails every entry alike: stop once.
+                            let refused = crate::deliver::drive_refuses(&e);
                             report.failed.push((
                                 name.clone(),
                                 if gone_now {
                                     gone()
+                                } else if refused {
+                                    format!(
+                                        "the {} can't be written to ({e}); the push stopped",
+                                        reader.name()
+                                    )
                                 } else {
                                     format!("writing {name}: {e}")
                                 },
                             ));
-                            if gone_now {
+                            if gone_now || refused {
                                 report.stopped = true;
                                 break;
                             }
