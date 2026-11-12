@@ -21,7 +21,13 @@ use crate::MAX_DEPTH;
 /// feed is refused, when an `<?xml … encoding="…"?>` declaration names an encoding the scan
 /// cannot read as the parser will: ISO-2022-JP, the "replacement" labels (ISO-2022-KR,
 /// ISO-2022-CN, HZ-GB-2312), a UTF-16 label on bytes that are not UTF-16 of that byte order,
-/// or any other label on bytes that are UTF-16.
+/// or any other label on bytes that are UTF-16; when a declaration is not plain
+/// `name="value"` pairs or names `encoding` twice; and when it names Shift_JIS, Big5, GBK or
+/// gb18030 (or an alias) and a `[` or `]` follows a byte of 0x80 or above.
+///
+/// The result is only guaranteed for UTF-8 input, and for the UTF-16 it detects. A caller
+/// whose parser honours other declared encodings must decode the text to UTF-8 first and scan
+/// that.
 pub fn xml_depth_over(xml: &[u8], limit: usize) -> bool {
     let utf16 = |bytes, little| Utf16 { bytes, little };
     let verdict = match xml {
@@ -128,6 +134,39 @@ fn label_mode(label: &str) -> Option<Mode> {
     }
 }
 
+/// Whether a declared label names Shift_JIS, Big5, GBK or gb18030, whose second bytes overlap
+/// ASCII (WHATWG labels, as `encoding_rs` reads them).
+fn is_multibyte_label(label: &str) -> bool {
+    matches!(
+        label
+            .trim_matches(|c: char| c.is_ascii_whitespace())
+            .to_ascii_lowercase()
+            .as_str(),
+        "shift_jis"
+            | "sjis"
+            | "windows-31j"
+            | "x-sjis"
+            | "ms_kanji"
+            | "csshiftjis"
+            | "ms932"
+            | "big5"
+            | "big5-hkscs"
+            | "cn-big5"
+            | "csbig5"
+            | "x-x-big5"
+            | "gbk"
+            | "gb2312"
+            | "chinese"
+            | "csgb2312"
+            | "csiso58gb231280"
+            | "gb_2312"
+            | "gb_2312-80"
+            | "iso-ir-58"
+            | "x-gbk"
+            | "gb18030"
+    )
+}
+
 /// The scan. It follows the XML rules where `roxmltree` and `quick-xml` agree, and where they
 /// differ on malformed input it follows `quick-xml`, which reads on where `roxmltree` stops
 /// with an error, or refuses. So the count is never lower than the nesting either parser
@@ -167,31 +206,91 @@ impl<U: Units> Scan<U> {
         if !is_decl {
             return false;
         }
-        let Some(at) = (i + 5..end).find(|&j| self.starts(j, b"encoding")) else {
+        // Read the pseudo-attributes one by one, quote-aware, so `encoding` is matched by its
+        // exact name. Anything the scan cannot read as `name = "value"`, and a second
+        // `encoding`, is refused.
+        let skip_space = |mut j: usize| {
+            while j < end && self.is_space(j) {
+                j += 1;
+            }
+            j
+        };
+        let mut label = None;
+        let mut j = i + 5;
+        loop {
+            j = skip_space(j);
+            if j >= end {
+                break;
+            }
+            let name = j;
+            while j < end && !self.is_space(j) && !self.is(j, b'=') {
+                j += 1;
+            }
+            let is_encoding = j - name == 8 && self.starts(name, b"encoding");
+            j = skip_space(j);
+            if !self.is(j, b'=') {
+                return true;
+            }
+            j = skip_space(j + 1);
+            if !(self.is(j, b'"') || self.is(j, b'\'')) {
+                return true;
+            }
+            let quote = self.u.at(j);
+            let Some(close) = (j + 1..end).find(|&k| self.u.at(k) == quote) else {
+                return true;
+            };
+            if is_encoding {
+                if label.is_some() {
+                    return true;
+                }
+                label = Some(
+                    (j + 1..close)
+                        .map(|k| char::from_u32(self.u.at(k)).unwrap_or('\u{FFFD}'))
+                        .collect::<String>(),
+                );
+            }
+            j = close + 1;
+        }
+        let Some(label) = label else {
             return false;
         };
-        let mut j = at + 8;
-        while j < end && self.is_space(j) {
-            j += 1;
+        if label_mode(&label) != Some(self.u.mode()) {
+            return true;
         }
-        if !self.is(j, b'=') {
-            return false;
-        }
-        j += 1;
-        while j < end && self.is_space(j) {
-            j += 1;
-        }
-        if !(self.is(j, b'"') || self.is(j, b'\'')) {
-            return false;
-        }
-        let quote = self.u.at(j);
-        let Some(close) = (j + 1..end).find(|&k| self.u.at(k) == quote) else {
-            return false;
+        // In Shift_JIS, Big5, GBK and gb18030 the second byte of a character can be `[` or
+        // `]`, which the byte scan would take for markup. Such text is refused; callers decode
+        // to UTF-8 first.
+        is_multibyte_label(&label)
+            && (1..self.n)
+                .any(|k| self.u.at(k - 1) >= 0x80 && (self.is(k, b'[') || self.is(k, b']')))
+    }
+
+    /// Past the `;` of a parameter-entity reference (`%name;`) whose name starts at `from`.
+    /// quick-xml passes over it; roxmltree stops with an error.
+    fn pe_reference(&self, from: usize) -> Result<usize, Verdict> {
+        let start_char = |c: u32| {
+            c >= 0x80 || c == u32::from(b'_') || c == u32::from(b':') || {
+                c < 0x80 && (c as u8).is_ascii_alphabetic()
+            }
         };
-        let label: String = (j + 1..close)
-            .map(|k| char::from_u32(self.u.at(k)).unwrap_or('\u{FFFD}'))
-            .collect();
-        label_mode(&label) != Some(self.u.mode())
+        let name_char = |c: u32| {
+            start_char(c)
+                || (c < 0x80 && (c as u8).is_ascii_digit())
+                || c == u32::from(b'-')
+                || c == u32::from(b'.')
+        };
+        if from >= self.n || !start_char(self.u.at(from)) {
+            return Err(Verdict::Malformed);
+        }
+        let mut j = from + 1;
+        while j < self.n && name_char(self.u.at(j)) {
+            j += 1;
+        }
+        if self.is(j, b';') {
+            Ok(j + 1)
+        } else {
+            Err(Verdict::Malformed)
+        }
     }
 
     fn is(&self, i: usize, c: u8) -> bool {
@@ -336,6 +435,8 @@ impl<U: Units> Scan<U> {
                     return Err(Verdict::Malformed);
                 }
                 j = end + 1;
+            } else if self.is(j, b'%') {
+                j = self.pe_reference(j + 1)?;
             } else if self.is_space(j) {
                 j += 1;
             } else {
@@ -1215,5 +1316,98 @@ mod tests {
         });
         assert!(parsed > 500, "only {parsed} documents parsed");
         assert!(deep > 0);
+    }
+
+    // --- Second QA round. ---
+
+    #[test]
+    fn a_parameter_entity_reference_in_the_subset_is_allowed() {
+        let xml = "<?xml version=\"1.0\"?><!DOCTYPE rss [<!ENTITY % HTMLlat1 PUBLIC \"-//W3C//ENTITIES Latin 1 for XHTML//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml-lat1.ent\"> %HTMLlat1; ]><rss version=\"2.0\"><channel><title>T</title><item><title>A</title><description>x</description></item></channel></rss>";
+        assert!(!xml_depth_over(xml.as_bytes(), MAX_DEPTH));
+        assert_eq!(depth(xml), Some(4));
+        // A `%` that is not a reference is still refused.
+        for bad in [
+            "<!DOCTYPE r [ % ]><r/>",
+            "<!DOCTYPE r [ %name ]><r/>",
+            "<!DOCTYPE r [ %;]><r/>",
+            "<!DOCTYPE r [ %a<b>; ]><r/>",
+        ] {
+            assert_eq!(depth(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_declaration_is_read_attribute_by_attribute() {
+        for xml in [
+            // `encoding` inside another value is not the encoding.
+            "<?xml version=\"1.0 encoding='utf-8'\" encoding=\"ISO-2022-JP\"?><r/>",
+            // Nor is an attribute whose name only ends in it.
+            "<?xml version=\"1.0\" xencoding=\"utf-8\" encoding=\"ISO-2022-JP\"?><r/>",
+            // Twice is refused, whatever the values.
+            "<?xml version=\"1.0\" encoding=\"utf-8\" encoding=\"utf-8\"?><r/>",
+            // An attribute the scan cannot read is refused.
+            "<?xml version=\"1.0\" encoding=utf-8?><r/>",
+            "<?xml version=\"1.0\" encoding \"utf-8\"?><r/>",
+        ] {
+            assert!(xml_depth_over(xml.as_bytes(), MAX_DEPTH), "{xml}");
+        }
+        for xml in [
+            "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?><r/>",
+            "<?xml version='1.0' encoding = 'ISO-8859-1' ?><r/>",
+            "<?xml version=\"1.0\"?><r/>",
+        ] {
+            assert!(!xml_depth_over(xml.as_bytes(), MAX_DEPTH), "{xml}");
+        }
+    }
+
+    #[test]
+    fn multibyte_encodings_refuse_a_bracket_after_a_high_byte() {
+        let doc = |enc: &str, body: &[u8]| {
+            let mut out = format!(
+                "<?xml version=\"1.0\" encoding=\"{enc}\"?><!DOCTYPE rss PUBLIC \"x\" \"y\">"
+            )
+            .into_bytes();
+            out.extend_from_slice(body);
+            out
+        };
+        for enc in [
+            "Shift_JIS",
+            "sjis",
+            "windows-31j",
+            "x-sjis",
+            "ms_kanji",
+            "csshiftjis",
+            "MS932",
+            "big5",
+            "big5-hkscs",
+            "cn-big5",
+            "csbig5",
+            "x-x-big5",
+            "GBK",
+            "gb2312",
+            "chinese",
+            "csgb2312",
+            "csiso58gb231280",
+            "gb_2312",
+            "gb_2312-80",
+            "iso-ir-58",
+            "x-gbk",
+            "GB18030",
+        ] {
+            for body in [&b"<rss>\x81[</rss>"[..], b"<rss><a t=\"\xa4]\"/></rss>"] {
+                assert!(xml_depth_over(&doc(enc, body), MAX_DEPTH), "{enc}");
+            }
+            // The same encodings without such a pair pass.
+            assert!(
+                !xml_depth_over(&doc(enc, b"<rss>\x82\xa0 [x] \xa4\x40</rss>"), MAX_DEPTH),
+                "{enc}"
+            );
+        }
+        // UTF-8 never has a bracket inside a character, so `é[` is fine there.
+        assert!(!xml_depth_over(
+            &doc("UTF-8", "<rss>é[x]é]</rss>".as_bytes()),
+            MAX_DEPTH
+        ));
+        assert!(!xml_depth_over("<rss>é[x]é]</rss>".as_bytes(), MAX_DEPTH));
     }
 }
