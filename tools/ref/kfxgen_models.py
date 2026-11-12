@@ -19,7 +19,13 @@ import zipfile
 import zlib
 from pathlib import Path
 
-CALIBRE_FONTS = Path("/Applications/calibre.app/Contents/Resources/resources/fonts/liberation")
+#: Calibre's Liberation fonts: $CALIBRE_FONTS, or where the macOS app keeps them.
+CALIBRE_FONTS = Path(
+    os.environ.get(
+        "CALIBRE_FONTS",
+        "/Applications/calibre.app/Contents/Resources/resources/fonts/liberation",
+    )
+)
 
 
 def shim(kfxgen, out):

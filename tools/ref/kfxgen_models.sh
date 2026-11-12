@@ -5,6 +5,7 @@
 # design, Oracles).
 #
 #   tools/ref/kfxgen_models.sh                                   # the committed fixtures
+#   tools/ref/kfxgen_models.sh --refresh-sources                 # ... from kfxgen's test_books
 #   DECKLE_KFXGEN_CORPUS_OUT=gutenberg/models \
 #     tools/ref/kfxgen_models.sh --corpus gutenberg/*.epub       # a corpus, outside git
 #
@@ -19,7 +20,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 KFXGEN="$(cd "${KFXGEN:-$ROOT/../kfxgen-public}" && pwd)"
-KFXGEN_REF="${KFXGEN_REF:-0bc705d}"
+# The commit the port targets, and the oldest the replay works with.
+KFXGEN_MIN=0bc705d3ec9489417db5112ef8b40e57da938bed
+KFXGEN_REF="${KFXGEN_REF:-$KFXGEN_MIN}"
 PY="${KFXGEN_PYTHON:-$KFXGEN/.venv/bin/python}"
 EBOOK_CONVERT="${EBOOK_CONVERT:-ebook-convert}"
 CALIBRE_CUSTOMIZE="${CALIBRE_CUSTOMIZE:-calibre-customize}"
@@ -27,7 +30,13 @@ OUT="$ROOT/fixtures/kfxgen/models"
 SOURCES="$ROOT/fixtures/kfxgen/sources"
 HOOK="$ROOT/tools/ref/kfxgen_hook"
 
-KFXGEN_COMMIT="$(git -C "$KFXGEN" rev-parse --short "$KFXGEN_REF^{commit}")"
+# One commit, whatever KFXGEN_REF names, and one that holds KFXGEN_MIN: a branch can be older.
+KFXGEN_FULL="$(git -C "$KFXGEN" rev-parse --verify --end-of-options "$KFXGEN_REF^{commit}")"
+git -C "$KFXGEN" merge-base --is-ancestor "$KFXGEN_MIN" "$KFXGEN_FULL" || {
+  echo "KFXGEN_REF $KFXGEN_REF ($KFXGEN_FULL) does not contain kfxgen $KFXGEN_MIN" >&2
+  exit 1
+}
+KFXGEN_COMMIT="$(git -C "$KFXGEN" rev-parse --short=7 "$KFXGEN_FULL")"
 export KFXGEN_COMMIT
 WORK="$(mktemp -d -t deckle-kfxgen-XXXXXX)"
 # The models are built beside OUT and take its place only when every one is made: a run
@@ -35,12 +44,10 @@ WORK="$(mktemp -d -t deckle-kfxgen-XXXXXX)"
 BUILD="$OUT.new"
 trap 'rm -rf "$WORK" "$BUILD"' EXIT
 
-# The export, with the hook. test_books is untracked in places, so it is the repo's own.
+# The export, with the hook.
 TREE="$WORK/kfxgen"
 mkdir -p "$TREE"
-git -C "$KFXGEN" archive "$KFXGEN_COMMIT" | tar -x -C "$TREE"
-rm -rf "$TREE/test_books"
-ln -s "$KFXGEN/test_books" "$TREE/test_books"
+git -C "$KFXGEN" archive "$KFXGEN_FULL" | tar -x -C "$TREE"
 "$PY" "$HOOK/inject.py" "$TREE"
 
 export CALIBRE_CONFIG_DIRECTORY="$WORK/calibre"
@@ -101,16 +108,29 @@ if [ "${1:-}" = "--corpus" ]; then
   exit 0
 fi
 
+REFRESH=
+case "${1:-}" in
+  "") ;;
+  --refresh-sources) REFRESH=1 ;;
+  *) echo "unknown argument: $1" >&2; exit 2 ;;
+esac
+
 rm -rf "$BUILD"
 mkdir -p "$BUILD" "$SOURCES"
 "$PY" "$ROOT/tools/ref/kfxgen_models.py" shim "$TREE" "$BUILD"
 "$PY" "$ROOT/tools/ref/kfxgen_models.py" args "$TREE" "$BUILD"
 
-# Calibre-path fixtures, one per feature (fixtures/kfxgen/README.md). Sources from kfxgen's
-# test_books/ are copied in when that folder has them; otherwise the committed copy is used.
+# Calibre-path fixtures, one per feature (fixtures/kfxgen/README.md). Their sources are the
+# committed sources/*.epub. kfxgen's test_books/ is untracked in places, so no commit pins
+# it: --refresh-sources copies from the kfxgen working tree, and says which sources changed.
 "$PY" "$ROOT/tools/ref/kfxgen_models.py" synth "$SOURCES" >/dev/null
 while IFS='|' read -r name src; do
-  [ -f "$TREE/test_books/$src" ] && cp "$TREE/test_books/$src" "$SOURCES/$name.epub"
+  if [ -n "$REFRESH" ] && [ -f "$KFXGEN/test_books/$src" ]; then
+    cmp -s "$KFXGEN/test_books/$src" "$SOURCES/$name.epub" || {
+      cp "$KFXGEN/test_books/$src" "$SOURCES/$name.epub"
+      echo "source $name: refreshed from test_books/$src"
+    }
+  fi
   [ -f "$SOURCES/$name.epub" ] || { echo "$name: no source (test_books/$src)" >&2; exit 1; }
 done <<'LIST'
 boxes|boxes/boxes-source.epub

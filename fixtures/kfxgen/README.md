@@ -35,7 +35,8 @@ them (calibre 9.18.0, Python 3.13.18, lxml 6.0.2). Regenerating expects the same
 handling shapes a Calibre-path fixture's `model.json`, so another version can change those, and
 possibly their `expected.kfx`. Rebuild all of them with `tools/ref/kfxgen_models.sh`; two runs
 give the same bytes. The script
-needs kfxgen `0bc705d` or later (the replay imports its `page_scale`). It exports commit
+needs kfxgen `0bc705d` or later (the replay imports its `page_scale`), and stops on a
+`KFXGEN_REF` that doesn't contain it. It exports commit
 `KFXGEN_REF` (default `0bc705d`) of the kfxgen repo `KFXGEN` (default `../kfxgen-public`, only
 read) with `git archive`, puts the hook into the export
 (`tools/ref/kfxgen_hook/inject.py` adds a call at the top of `generate_full_book`, and stops if
@@ -96,7 +97,11 @@ hrefs, unreadable JPEGs). The books are `ARG_BOOKS` in that script, their other 
 
 **Calibre path** (`ebook-convert` with kfxgen, CSS applied): the source is
 `sources/<name>.epub`. For each, the script also checks that replaying the model gives exactly
-the KFX `ebook-convert` wrote.
+the KFX `ebook-convert` wrote. The script builds from the committed sources. kfxgen's
+`test_books` is untracked in places, so no commit pins it: `kfxgen_models.sh --refresh-sources`
+copies the sources again from the kfxgen working tree and names each one that changed. The
+`fonts` source takes Liberation Serif from Calibre's fonts folder (`CALIBRE_FONTS`, by default
+the macOS app's).
 
 | Fixture | Source | Features |
 |---|---|---|
