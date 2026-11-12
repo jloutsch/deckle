@@ -545,8 +545,20 @@ pub(crate) fn write_beside_at(path: &Path, data: &[u8]) -> Result<(), Beside> {
         .file_name()
         .ok_or_else(|| Beside::File(std::io::Error::other("no file name")))?
         .to_string_lossy();
-    let part = dir.join(format!(".{name}.{}.part", std::process::id()));
-    let mut f = std::fs::File::create(&part).map_err(Beside::Folder)?;
+    let mut part = dir.join(format!(".{name}.{}.part", std::process::id()));
+    let mut f = match std::fs::File::create(&part) {
+        Ok(f) => f,
+        // A stale, read-only `.part` an earlier process with this id left: try one other name
+        // (still digits, so a later cleanup finds it) before calling the folder unwritable.
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos());
+            part = dir.join(format!(".{name}.{nanos}.part"));
+            std::fs::File::create(&part).map_err(Beside::Folder)?
+        }
+        Err(e) => return Err(Beside::Folder(e)),
+    };
     let written = (|| {
         write_data(&mut f, data)?;
         f.sync_all()?;
@@ -1116,6 +1128,23 @@ mod tests {
         write_file(&book, b"the new copy").unwrap();
         assert_eq!(std::fs::read(&book).unwrap(), b"the new copy");
         assert_eq!(names(tmp.path()), ["A - Book.kfx"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_stale_read_only_part_of_this_process_doesnt_read_as_a_refusing_drive() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let book = tmp.path().join("a.kfx");
+        // Left by an earlier process that had this one's id, and read-only.
+        let stale = tmp
+            .path()
+            .join(format!(".a.kfx.{}.part", std::process::id()));
+        std::fs::write(&stale, b"HALF").unwrap();
+        std::fs::set_permissions(&stale, std::fs::Permissions::from_mode(0o444)).unwrap();
+        let r = write_beside_at(&book, b"BOOK");
+        assert!(r.is_ok(), "{r:?}");
+        assert_eq!(std::fs::read(&book).unwrap(), b"BOOK");
     }
 
     #[test]
