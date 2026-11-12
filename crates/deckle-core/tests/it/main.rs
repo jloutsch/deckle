@@ -22,6 +22,7 @@ mod pipeline;
 mod preflight;
 mod previewer;
 mod recaps;
+mod state_file_guard;
 mod state_files;
 mod thumbnail;
 mod whoswho;
