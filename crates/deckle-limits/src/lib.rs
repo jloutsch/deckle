@@ -15,14 +15,11 @@ use std::io::{self, Read};
 
 #[cfg(feature = "xml")]
 mod xml;
-#[cfg(feature = "xml")]
-pub use xml::{XmlError, parse_xml, xml_depth_over};
 /// The `roxmltree` that [`parse_xml`] parses with, so callers name the same version.
 #[cfg(feature = "xml")]
 pub use roxmltree;
-
-#[cfg(feature = "state")]
-pub mod state_file;
+#[cfg(feature = "xml")]
+pub use xml::{XmlError, parse_xml, xml_depth_over};
 
 const MB: u64 = 1024 * 1024;
 const GB: u64 = 1024 * MB;
