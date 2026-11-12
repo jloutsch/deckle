@@ -558,7 +558,7 @@ pub(crate) fn build_chapter_content(
             ) {
                 (Some(name), _) if heading => {
                     let attrs = heading_attrs(fs, ch_idx == 0);
-                    heading_style(g, &mut styles, &sizes, chunk, &attrs, around)
+                    heading_style(g, &mut styles, &sizes, chunk, &attrs, around)?
                         .unwrap_or_else(|| name.clone())
                 }
                 (_, Some(anchor)) => {

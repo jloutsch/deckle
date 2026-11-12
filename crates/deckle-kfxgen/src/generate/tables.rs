@@ -168,6 +168,13 @@ pub(crate) fn read_table_block(b: &PyValue, at: &str) -> Result<Block, GenerateE
     if truthy(b.get("block_style")) {
         return Err(Unsupported("block styles"));
     }
+    // `_heading_near_start` (:1227) and `page_bidi` read these on any block.
+    if truthy(b.get("heading")) {
+        return Err(Unsupported("a table marked as a heading"));
+    }
+    if truthy(b.get("box")) {
+        return Err(Unsupported("boxes"));
+    }
     let text = match b.get("text") {
         Some(PyValue::Str(s)) => s.clone(),
         _ => return Err(model_err(format!("{at}.text: a string"))),
@@ -256,9 +263,14 @@ fn read_row(r: &PyValue, at: &str) -> Result<Row, GenerateError> {
         group_bidi: Bidi::read(r.get("group_bidi"), &format!("{at}.group_bidi"))?,
         anchor_keys: read_keys(r, at)?,
         cells,
-        source_order: opt(r.get("source_order"), PyValue::as_int, || {
-            model_err(format!("{at}.source_order: an int"))
-        })?,
+        // `rows[j].get("source_order", j)`: a None is sorted against ints, which raises.
+        source_order: match r.get("source_order") {
+            None => None,
+            Some(v) => Some(
+                v.as_int()
+                    .ok_or_else(|| model_err(format!("{at}.source_order: an int")))?,
+            ),
+        },
     })
 }
 

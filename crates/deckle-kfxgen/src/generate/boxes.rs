@@ -192,6 +192,9 @@ pub(crate) fn read_box(b: &PyValue, at: &str, depth: usize) -> Result<BoxBlock, 
     if truthy(d.get("float_wrapper")) {
         return Err(Unsupported("a box marked as a float's frame"));
     }
+    if truthy(d.get("clear")) {
+        return Err(Unsupported("clearing floats"));
+    }
     let spec = BoxSpec {
         border: read_border(d.get("border"), &format!("{at_box}.border"))?,
         background: opt_key(d, "background", &at_box, "an ARGB int", PyValue::as_int)?,
