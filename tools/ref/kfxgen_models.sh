@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Rebuild fixtures/kfxgen/models: kfxgen's generator input (model.json, resources/) and what
+# kfxgen makes from it (expected.kfx), the reference for crates/deckle-kfxgen (native KFX
+# design, Oracles).
+#
+#   tools/ref/kfxgen_models.sh                                   # the committed fixtures
+#   DECKLE_KFXGEN_CORPUS_OUT=gutenberg/models \
+#     tools/ref/kfxgen_models.sh --corpus gutenberg/*.epub       # a corpus, outside git
+#
+# Needs a kfxgen repo (KFXGEN, default ../kfxgen-public; only read) with its .venv, and calibre.
+# KFXGEN_REF is the kfxgen commit to take (default 0bc705d, the one the port targets); it must
+# be 0bc705d or later, since the replay imports kfxgen's page_scale. It is exported with git
+# archive, and the dump hook (tools/ref/kfxgen_hook) is put into the export.
+# Nothing is written in the kfxgen repo. Calibre runs with its own config folder holding only
+# that export, so your installed plugins (and the Previewer-based "KFX Output") are neither
+# used nor changed.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+KFXGEN="$(cd "${KFXGEN:-$ROOT/../kfxgen-public}" && pwd)"
+KFXGEN_REF="${KFXGEN_REF:-0bc705d}"
+PY="${KFXGEN_PYTHON:-$KFXGEN/.venv/bin/python}"
+EBOOK_CONVERT="${EBOOK_CONVERT:-ebook-convert}"
+CALIBRE_CUSTOMIZE="${CALIBRE_CUSTOMIZE:-calibre-customize}"
+OUT="$ROOT/fixtures/kfxgen/models"
+SOURCES="$ROOT/fixtures/kfxgen/sources"
+HOOK="$ROOT/tools/ref/kfxgen_hook"
+
+KFXGEN_COMMIT="$(git -C "$KFXGEN" rev-parse --short "$KFXGEN_REF^{commit}")"
+export KFXGEN_COMMIT
+WORK="$(mktemp -d -t deckle-kfxgen-XXXXXX)"
+trap 'rm -rf "$WORK"' EXIT
+
+# The export, with the hook. test_books is untracked in places, so it is the repo's own.
+TREE="$WORK/kfxgen"
+mkdir -p "$TREE"
+git -C "$KFXGEN" archive "$KFXGEN_COMMIT" | tar -x -C "$TREE"
+rm -rf "$TREE/test_books"
+ln -s "$KFXGEN/test_books" "$TREE/test_books"
+"$PY" "$HOOK/inject.py" "$TREE"
+
+export CALIBRE_CONFIG_DIRECTORY="$WORK/calibre"
+mkdir -p "$WORK/plugin"
+cp -R "$TREE/plugin/." "$WORK/plugin/"
+find "$WORK/plugin" \( -name __pycache__ -o -name '*.pyc' -o -name .DS_Store \) -prune -exec rm -rf {} +
+(cd "$WORK/plugin" && zip -rq "$WORK/kfxgen.zip" .)
+"$CALIBRE_CUSTOMIZE" -a "$WORK/kfxgen.zip" >/dev/null
+
+# calibre_model NAME EPUB DIR: dump NAME through ebook-convert into DIR/NAME, replay it, and
+# check the replay is ebook-convert's own output.
+calibre_model() {
+  local name="$1" epub="$2" dir="$3/$1"
+  rm -rf "$dir"
+  if ! KFXGEN_DUMP_MODEL="$dir" "$EBOOK_CONVERT" "$epub" "$WORK/$name.kfx" >"$WORK/$name.log" 2>&1; then
+    tail -20 "$WORK/$name.log" >&2
+    echo "$name: ebook-convert failed" >&2
+    exit 1
+  fi
+  [ -f "$dir/model.json" ] || {
+    echo "$name: no model.json, so calibre did not run kfxgen" >&2
+    exit 1
+  }
+  "$PY" "$HOOK/generate_from_model.py" "$TREE" "$dir" "$dir/expected.kfx" >/dev/null
+  cmp -s "$dir/expected.kfx" "$WORK/$name.kfx" || {
+    echo "$name: the replayed model makes different bytes from ebook-convert" >&2
+    exit 1
+  }
+  echo "calibre $name: $(wc -c <"$dir/expected.kfx" | tr -d ' ') bytes"
+}
+
+# record_tools DIR: the kfxgen commit and the tools that made DIR. Calibre's CSS handling
+# shapes a Calibre-path model.json, so another Calibre can make other fixtures.
+record_tools() {
+  echo "$KFXGEN_COMMIT" >"$1/KFXGEN_COMMIT"
+  {
+    echo "calibre: $("$EBOOK_CONVERT" --version | head -1)"
+    echo "kfxgen venv python: $("$PY" -c 'import platform; print(platform.python_version())')"
+    echo "kfxgen venv lxml: $("$PY" -c 'import lxml.etree; print(lxml.etree.__version__)')"
+  } >"$1/TOOLS"
+}
+
+if [ "${1:-}" = "--corpus" ]; then
+  shift
+  : "${DECKLE_KFXGEN_CORPUS_OUT:?set DECKLE_KFXGEN_CORPUS_OUT to the folder for the models}"
+  mkdir -p "$DECKLE_KFXGEN_CORPUS_OUT"
+  for epub in "$@"; do
+    calibre_model "$(basename "$epub" .epub)" "$epub" "$DECKLE_KFXGEN_CORPUS_OUT"
+  done
+  record_tools "$DECKLE_KFXGEN_CORPUS_OUT"
+  exit 0
+fi
+
+rm -rf "$OUT"
+mkdir -p "$OUT" "$SOURCES"
+"$PY" "$ROOT/tools/ref/kfxgen_models.py" shim "$TREE" "$OUT"
+"$PY" "$ROOT/tools/ref/kfxgen_models.py" args "$TREE" "$OUT"
+
+# Calibre-path fixtures, one per feature (fixtures/kfxgen/README.md). Sources from kfxgen's
+# test_books/ are copied in when that folder has them; otherwise the committed copy is used.
+"$PY" "$ROOT/tools/ref/kfxgen_models.py" synth "$SOURCES" >/dev/null
+while IFS='|' read -r name src; do
+  [ -f "$TREE/test_books/$src" ] && cp "$TREE/test_books/$src" "$SOURCES/$name.epub"
+  [ -f "$SOURCES/$name.epub" ] || { echo "$name: no source (test_books/$src)" >&2; exit 1; }
+done <<'LIST'
+boxes|boxes/boxes-source.epub
+rules_spaces|rules_722/r722-kfxgen.epub
+spacers|spacers_667/S667 kfxgen.epub
+notes|popup_notes/n445b-kfxgen.epub
+vertical|vertical_247/s746k.epub
+ruby_tcy|tcy_emphasis_748/s748k.epub
+page_list|landmarks_pages/l579-main.epub
+links|link_runs_726/s726k.epub
+link_greys|link_greys_741/s741k.epub
+navigation|navigation/nav-kfxgen.epub
+typography|typography/typography-new-source.epub
+colour|colour/colour-new-source.epub
+link_colours|link_colours_732/s732k.epub
+dark_boxes|dark_box_colours_734/c734k.epub
+drop_caps|drop_caps/drop-caps-new-source.epub
+figures|figures/figures-new-2-source.epub
+floats|floats/floats-fix-source.epub
+floats_697|floats_697/F697 kfxgen source.epub
+font_sizes|font_sizes/font-sizes-source.epub
+LIST
+for epub in "$SOURCES"/*.epub; do
+  calibre_model "$(basename "$epub" .epub)" "$epub" "$OUT"
+done
+record_tools "$OUT"
+du -sh "$ROOT/fixtures/kfxgen"

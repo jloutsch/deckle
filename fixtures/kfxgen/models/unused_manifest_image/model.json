@@ -1,0 +1,301 @@
+{
+ "schema": 1,
+ "kfxgen_version": "5.24.0",
+ "kfxgen_commit": "0bc705d",
+ "args": {
+  "$dict": [
+   [
+    "title",
+    "Unused Manifest Image"
+   ],
+   [
+    "author",
+    "Golden Author"
+   ],
+   [
+    "chapters",
+    [
+     {
+      "$dict": [
+       [
+        "title",
+        "Images"
+       ],
+       [
+        "text",
+        "Opening paragraph.\n\n\u0000IMG\u0001used.jpg\u0001a\u0002referenced\u0002image\u0000\n\nClosing paragraph."
+       ],
+       [
+        "blocks",
+        [
+         {
+          "$dict": [
+           [
+            "text",
+            "Opening paragraph."
+           ],
+           [
+            "spans",
+            []
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            false
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": [
+              [
+               "chapter_1.xhtml",
+               0
+              ]
+             ]
+            }
+           ],
+           [
+            "anchor_keys",
+            [
+             "chapter_1.xhtml"
+            ]
+           ],
+           [
+            "_spine_file",
+            0
+           ]
+          ]
+         },
+         {
+          "$dict": [
+           [
+            "text",
+            "\u0000IMG\u0001used.jpg\u0001a\u0002referenced\u0002image\u0000"
+           ],
+           [
+            "spans",
+            []
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            false
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": []
+            }
+           ],
+           [
+            "anchor_keys",
+            []
+           ],
+           [
+            "_spine_file",
+            0
+           ]
+          ]
+         },
+         {
+          "$dict": [
+           [
+            "text",
+            "Closing paragraph."
+           ],
+           [
+            "spans",
+            []
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            false
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": []
+            }
+           ],
+           [
+            "anchor_keys",
+            []
+           ],
+           [
+            "_spine_file",
+            0
+           ]
+          ]
+         }
+        ]
+       ],
+       [
+        "toc_level",
+        0
+       ]
+      ]
+     }
+    ]
+   ],
+   [
+    "asin",
+    null
+   ],
+   [
+    "cover_image",
+    {
+     "$bytes": "42955ff7e6260e8b8557187f47e98072c8192fb911d5bcdd0e34aa10ba58e88a"
+    }
+   ],
+   [
+    "language",
+    "en"
+   ],
+   [
+    "rtl",
+    false
+   ],
+   [
+    "writing_mode",
+    "horizontal-tb"
+   ],
+   [
+    "publisher",
+    "kfxgen"
+   ],
+   [
+    "issue_date",
+    null
+   ],
+   [
+    "authors",
+    [
+     "Golden Author"
+    ]
+   ],
+   [
+    "description",
+    null
+   ],
+   [
+    "images",
+    {
+     "$dict": [
+      [
+       "cover.jpg",
+       {
+        "$bytes": "42955ff7e6260e8b8557187f47e98072c8192fb911d5bcdd0e34aa10ba58e88a"
+       }
+      ],
+      [
+       "used.jpg",
+       {
+        "$bytes": "42955ff7e6260e8b8557187f47e98072c8192fb911d5bcdd0e34aa10ba58e88a"
+       }
+      ],
+      [
+       "unused.jpg",
+       {
+        "$bytes": "42955ff7e6260e8b8557187f47e98072c8192fb911d5bcdd0e34aa10ba58e88a"
+       }
+      ]
+     ]
+    }
+   ],
+   [
+    "font_table",
+    {
+     "$obj": "kfxgen.font_table.FontTable",
+     "state": {
+      "$dict": [
+       [
+        "faces",
+        []
+       ],
+       [
+        "_by_family",
+        {
+         "$dict": []
+        }
+       ]
+      ]
+     }
+    }
+   ],
+   [
+    "resolved_image_refs",
+    true
+   ],
+   [
+    "display_dims",
+    {
+     "$dict": []
+    }
+   ],
+   [
+    "footnote_keys",
+    {
+     "$set": []
+    }
+   ],
+   [
+    "landmarks",
+    []
+   ],
+   [
+    "page_list",
+    []
+   ],
+   [
+    "approximate_pages",
+    true
+   ]
+  ]
+ }
+}

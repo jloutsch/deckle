@@ -1,0 +1,280 @@
+{
+ "schema": 1,
+ "kfxgen_version": "5.24.0",
+ "kfxgen_commit": "0bc705d",
+ "args": {
+  "$dict": [
+   [
+    "title",
+    "Sub Super Marks Golden"
+   ],
+   [
+    "author",
+    "Golden Author"
+   ],
+   [
+    "chapters",
+    [
+     {
+      "$dict": [
+       [
+        "title",
+        "Marks"
+       ],
+       [
+        "text",
+        "Water is H2O and the note is here.1\n\nA second line with xi and yn together."
+       ],
+       [
+        "blocks",
+        [
+         {
+          "$dict": [
+           [
+            "text",
+            "Water is H2O and the note is here.1"
+           ],
+           [
+            "spans",
+            [
+             {
+              "$tuple": [
+               10,
+               1,
+               {
+                "$frozenset": [
+                 "sub"
+                ]
+               }
+              ]
+             },
+             {
+              "$tuple": [
+               34,
+               1,
+               {
+                "$frozenset": [
+                 "super"
+                ]
+               }
+              ]
+             }
+            ]
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            false
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": [
+              [
+               "chapter_1.xhtml",
+               0
+              ]
+             ]
+            }
+           ],
+           [
+            "anchor_keys",
+            [
+             "chapter_1.xhtml"
+            ]
+           ],
+           [
+            "_spine_file",
+            0
+           ]
+          ]
+         },
+         {
+          "$dict": [
+           [
+            "text",
+            "A second line with xi and yn together."
+           ],
+           [
+            "spans",
+            [
+             {
+              "$tuple": [
+               20,
+               1,
+               {
+                "$frozenset": [
+                 "sub"
+                ]
+               }
+              ]
+             },
+             {
+              "$tuple": [
+               27,
+               1,
+               {
+                "$frozenset": [
+                 "super"
+                ]
+               }
+              ]
+             }
+            ]
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            false
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": []
+            }
+           ],
+           [
+            "anchor_keys",
+            []
+           ],
+           [
+            "_spine_file",
+            0
+           ]
+          ]
+         }
+        ]
+       ],
+       [
+        "toc_level",
+        0
+       ]
+      ]
+     }
+    ]
+   ],
+   [
+    "asin",
+    null
+   ],
+   [
+    "cover_image",
+    null
+   ],
+   [
+    "language",
+    "en"
+   ],
+   [
+    "rtl",
+    false
+   ],
+   [
+    "writing_mode",
+    "horizontal-tb"
+   ],
+   [
+    "publisher",
+    "kfxgen"
+   ],
+   [
+    "issue_date",
+    null
+   ],
+   [
+    "authors",
+    [
+     "Golden Author"
+    ]
+   ],
+   [
+    "description",
+    null
+   ],
+   [
+    "images",
+    {
+     "$dict": []
+    }
+   ],
+   [
+    "font_table",
+    {
+     "$obj": "kfxgen.font_table.FontTable",
+     "state": {
+      "$dict": [
+       [
+        "faces",
+        []
+       ],
+       [
+        "_by_family",
+        {
+         "$dict": []
+        }
+       ]
+      ]
+     }
+    }
+   ],
+   [
+    "resolved_image_refs",
+    true
+   ],
+   [
+    "display_dims",
+    {
+     "$dict": []
+    }
+   ],
+   [
+    "footnote_keys",
+    {
+     "$set": []
+    }
+   ],
+   [
+    "landmarks",
+    []
+   ],
+   [
+    "page_list",
+    []
+   ],
+   [
+    "approximate_pages",
+    true
+   ]
+  ]
+ }
+}

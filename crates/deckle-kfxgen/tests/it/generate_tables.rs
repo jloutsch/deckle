@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! Tables against kfxgen's KFX (phase 1 plan, Task 8).
+use deckle_kfxgen::generate::{GenerateError, generate};
+use deckle_kfxgen::load::load_model;
+use deckle_kfxgen::pyvalue::PyValue;
+
+use crate::generate_inline::{entry, item};
+use crate::generate_skeleton::matches_kfxgen;
+
+#[test]
+fn table_cells_matches_kfxgen() {
+    matches_kfxgen("table_cells");
+}
+
+#[test]
+fn table_layout_matches_kfxgen() {
+    matches_kfxgen("table_layout");
+}
+
+#[test]
+fn table_paragraph_cells_matches_kfxgen() {
+    matches_kfxgen("table_paragraph_cells");
+}
+
+/// Borders, widths, padding, groups, header and empty cells, runs and ids no EPUB-made
+/// fixture reaches.
+#[test]
+fn table_parts_matches_kfxgen() {
+    matches_kfxgen("table_parts");
+}
+
+/// A chapter's title in or over a table.
+#[test]
+fn table_title_matches_kfxgen() {
+    matches_kfxgen("table_title");
+}
+
+/// kfxgen's `quantize` raises on a cell padding too wide for 28 digits (:2071): a model
+/// error naming the padding, not a panic or a padding of 0. The cell's table is 50% wide,
+/// so 1.5e24 ems is 9.375e24 %, 25 digits and 3 decimals: still written; 1.7e24 ems is 1.0625e25 %, one digit too many.
+#[test]
+fn a_padding_kfxgen_cannot_write_is_a_model_error() {
+    for (em, ok) in [(1.5e24, true), (1.7e24, false), (1e300, false)] {
+        let mut model = load_model(&deckle_kfx::fixtures::kfxgen("models/table_parts")).unwrap();
+        let chapter = item(entry(&mut model.args, "chapters"), 1);
+        let table = entry(item(entry(chapter, "blocks"), 1), "table");
+        let cell = item(entry(item(entry(table, "rows"), 0), "cells"), 0);
+        *entry(entry(cell, "padding"), "right") = PyValue::Float(em);
+        match generate(&model) {
+            Ok(_) => assert!(ok, "{em}"),
+            Err(GenerateError::Model(m)) => assert!(!ok && m.contains("padding"), "{em}: {m}"),
+            Err(e) => panic!("{em}: {e}"),
+        }
+    }
+}

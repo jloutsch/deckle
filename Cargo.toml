@@ -11,6 +11,7 @@ rust-version = "1.89"
 
 [workspace.dependencies]
 deckle-kfx = { path = "crates/deckle-kfx" }
+deckle-kfxgen = { path = "crates/deckle-kfxgen" }
 deckle-core = { path = "crates/deckle-core" }
 deckle-transport = { path = "crates/deckle-transport" }
 deckle-xray = { path = "crates/deckle-xray" }

@@ -1,0 +1,687 @@
+{
+ "schema": 1,
+ "kfxgen_version": "5.24.0",
+ "kfxgen_commit": "0bc705d",
+ "args": {
+  "$dict": [
+   [
+    "title",
+    "inline_runs"
+   ],
+   [
+    "author",
+    "Fixture Author"
+   ],
+   [
+    "chapters",
+    [
+     {
+      "$dict": [
+       [
+        "title",
+        "Runs"
+       ],
+       [
+        "text",
+        "Runs  with words\n\nSee the web and gone and CASE and file here.\n\nUp down top bottom under strike."
+       ],
+       [
+        "blocks",
+        [
+         {
+          "$dict": [
+           [
+            "text",
+            "Runs  with words"
+           ],
+           [
+            "spans",
+            [
+             {
+              "$tuple": [
+               0,
+               4,
+               {
+                "$frozenset": [
+                 "italic"
+                ]
+               }
+              ]
+             },
+             {
+              "$tuple": [
+               6,
+               4,
+               {
+                "$frozenset": [
+                 "not-bold"
+                ]
+               }
+              ]
+             }
+            ]
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            true
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": []
+            }
+           ],
+           [
+            "anchor_keys",
+            []
+           ],
+           [
+            "heading_level",
+            1
+           ]
+          ]
+         },
+         {
+          "$dict": [
+           [
+            "text",
+            "See the web and gone and CASE and file here."
+           ],
+           [
+            "spans",
+            [
+             {
+              "$tuple": [
+               8,
+               3,
+               {
+                "$frozenset": [
+                 {
+                  "$tuple": [
+                   "link",
+                   "url:https://example.com/a"
+                  ]
+                 }
+                ]
+               }
+              ]
+             },
+             {
+              "$tuple": [
+               16,
+               4,
+               {
+                "$frozenset": [
+                 {
+                  "$tuple": [
+                   "link",
+                   "missing.xhtml#x"
+                  ]
+                 }
+                ]
+               }
+              ]
+             },
+             {
+              "$tuple": [
+               25,
+               4,
+               {
+                "$frozenset": [
+                 {
+                  "$tuple": [
+                   "link",
+                   "C2.XHTML#T"
+                  ]
+                 }
+                ]
+               }
+              ]
+             },
+             {
+              "$tuple": [
+               34,
+               4,
+               {
+                "$frozenset": [
+                 {
+                  "$tuple": [
+                   "link",
+                   "c3.xhtml"
+                  ]
+                 }
+                ]
+               }
+              ]
+             },
+             {
+              "$tuple": [
+               39,
+               2,
+               {
+                "$frozenset": [
+                 "bold",
+                 {
+                  "$tuple": [
+                   "link",
+                   "c2.xhtml#t"
+                  ]
+                 }
+                ]
+               }
+              ]
+             },
+             {
+              "$tuple": [
+               41,
+               3,
+               {
+                "$frozenset": [
+                 {
+                  "$tuple": [
+                   "link",
+                   "c2.xhtml#t"
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            false
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": [
+              [
+               "c1.xhtml",
+               0
+              ]
+             ]
+            }
+           ],
+           [
+            "anchor_keys",
+            [
+             "c1.xhtml"
+            ]
+           ]
+          ]
+         },
+         {
+          "$dict": [
+           [
+            "text",
+            "Up down top bottom under strike."
+           ],
+           [
+            "spans",
+            [
+             {
+              "$tuple": [
+               0,
+               2,
+               {
+                "$frozenset": [
+                 "bold",
+                 "super"
+                ]
+               }
+              ]
+             },
+             {
+              "$tuple": [
+               3,
+               4,
+               {
+                "$frozenset": [
+                 "italic",
+                 "sub"
+                ]
+               }
+              ]
+             },
+             {
+              "$tuple": [
+               8,
+               3,
+               {
+                "$frozenset": [
+                 "text-top"
+                ]
+               }
+              ]
+             },
+             {
+              "$tuple": [
+               12,
+               6,
+               {
+                "$frozenset": [
+                 "text-bottom",
+                 "underline"
+                ]
+               }
+              ]
+             },
+             {
+              "$tuple": [
+               19,
+               5,
+               {
+                "$frozenset": [
+                 "underline"
+                ]
+               }
+              ]
+             },
+             {
+              "$tuple": [
+               25,
+               6,
+               {
+                "$frozenset": [
+                 "baseline",
+                 "line-through"
+                ]
+               }
+              ]
+             }
+            ]
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            false
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": []
+            }
+           ],
+           [
+            "anchor_keys",
+            []
+           ]
+          ]
+         }
+        ]
+       ],
+       [
+        "toc_level",
+        0
+       ]
+      ]
+     },
+     {
+      "$dict": [
+       [
+        "title",
+        "Two"
+       ],
+       [
+        "text",
+        "Two\n\nTarget sentence with a marker at the end of it."
+       ],
+       [
+        "blocks",
+        [
+         {
+          "$dict": [
+           [
+            "text",
+            "Two"
+           ],
+           [
+            "spans",
+            []
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            false
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": []
+            }
+           ],
+           [
+            "anchor_keys",
+            []
+           ]
+          ]
+         },
+         {
+          "$dict": [
+           [
+            "text",
+            "Target sentence with a marker at the end of it."
+           ],
+           [
+            "spans",
+            []
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            false
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": [
+              [
+               "c2.xhtml#t",
+               47
+              ],
+              [
+               "c2.xhtml#far",
+               900
+              ]
+             ]
+            }
+           ],
+           [
+            "anchor_keys",
+            [
+             "c2.xhtml#t",
+             "c2.xhtml#far"
+            ]
+           ]
+          ]
+         }
+        ]
+       ],
+       [
+        "toc_level",
+        0
+       ]
+      ]
+     },
+     {
+      "$dict": [
+       [
+        "title",
+        "Three"
+       ],
+       [
+        "text",
+        "Three\n\n  Indented start, bold here."
+       ],
+       [
+        "blocks",
+        [
+         {
+          "$dict": [
+           [
+            "text",
+            "Three"
+           ],
+           [
+            "spans",
+            []
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            true
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": []
+            }
+           ],
+           [
+            "anchor_keys",
+            [
+             "c3.xhtml"
+            ]
+           ],
+           [
+            "heading_level",
+            2
+           ]
+          ]
+         },
+         {
+          "$dict": [
+           [
+            "text",
+            "  Indented start, bold here."
+           ],
+           [
+            "spans",
+            [
+             {
+              "$tuple": [
+               23,
+               4,
+               {
+                "$frozenset": [
+                 "bold"
+                ]
+               }
+              ]
+             }
+            ]
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "preformatted",
+            false
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "heading",
+            false
+           ],
+           [
+            "row",
+            false
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": [
+              [
+               "c3.xhtml#m",
+               3
+              ]
+             ]
+            }
+           ],
+           [
+            "anchor_keys",
+            [
+             "c3.xhtml#m"
+            ]
+           ]
+          ]
+         }
+        ]
+       ],
+       [
+        "toc_level",
+        0
+       ]
+      ]
+     }
+    ]
+   ],
+   [
+    "asin",
+    null
+   ],
+   [
+    "cover_image",
+    null
+   ],
+   [
+    "language",
+    "en"
+   ],
+   [
+    "rtl",
+    false
+   ],
+   [
+    "writing_mode",
+    "horizontal-tb"
+   ],
+   [
+    "publisher",
+    "kfxgen"
+   ],
+   [
+    "issue_date",
+    null
+   ],
+   [
+    "authors",
+    null
+   ],
+   [
+    "description",
+    null
+   ],
+   [
+    "images",
+    null
+   ],
+   [
+    "font_table",
+    null
+   ],
+   [
+    "resolved_image_refs",
+    false
+   ],
+   [
+    "display_dims",
+    null
+   ],
+   [
+    "footnote_keys",
+    null
+   ],
+   [
+    "landmarks",
+    null
+   ],
+   [
+    "page_list",
+    null
+   ],
+   [
+    "approximate_pages",
+    true
+   ]
+  ]
+ }
+}
