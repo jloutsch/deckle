@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Whole books against kfxgen (phase 1 plan, Task 13).
 use deckle_kfxgen::generate::generate;
 use deckle_kfxgen::load::load_model;

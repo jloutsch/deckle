@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! A table's chunks: `_emit_table_chunks` (`native_generator.py:5993`), its container and
 //! cell entries, and where ids land in them.
 

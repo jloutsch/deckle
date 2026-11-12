@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Pictures among a paragraph's words, linked pictures, and paragraphs cut after their
 //! picture lines and at their empty lines, against kfxgen's KFX (phase 1 plan, Task 9c).
 use deckle_kfxgen::generate::{GenerateError, generate};

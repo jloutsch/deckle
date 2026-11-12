@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Pictures and the cover (`native_generator.py` at kfxgen `4b81651`): the `$164` resources and
 //! `$417` bytes `generate_full_book` makes from its `images` and `cover_image` (:4679–4849),
 //! the picture tokens a paragraph holds (`_token_resource` :1923, `_emit_text_chunks` :5454),

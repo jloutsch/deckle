@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! `cargo run --release -p deckle-kfxgen --example from_model -- <model_dir> <out.kfx>`: a dumped
 //! kfxgen model into KFX, printing how long `generate` took (loading and writing not counted).
 use std::time::Instant;

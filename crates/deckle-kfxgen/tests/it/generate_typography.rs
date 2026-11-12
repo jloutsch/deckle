@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Link colours, paragraph typography and contents entries inside a chapter against kfxgen's
 //! KFX (phase 1 plan, Task 12b).
 use deckle_kfxgen::generate::{GenerateError, generate};

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Frames against kfxgen's KFX: sized, floated and centred boxes, and a paragraph's floated
 //! pictures in a container of their own (phase 1 plan, Task 9b).
 use deckle_kfxgen::generate::{GenerateError, generate};

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Where the text's positions fall: `_build_position_data` (`native_generator.py:3290`) and the
 //! `$264`, `$265` and `$550` fragments built from it.
 use std::collections::{BTreeMap, BTreeSet};

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Block styles, boxes, rules, spaces, lists and pop-up notes against kfxgen's KFX (phase 1
 //! plan, Task 9).
 use deckle_kfxgen::generate::{GenerateError, generate};

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Pictures and the cover against kfxgen's KFX (phase 1 plan, Task 7).
 use deckle_kfxgen::generate::{GenerateError, generate};
 use deckle_kfxgen::load::load_model;

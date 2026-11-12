@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: GPL-3.0-only
 # From kfxgen 8f55440 (tests/unit/test_model_dump.py): its encoding tests, run against a stub
 # kfxgen package so they need no kfxgen tree. The test that replays kfxgen's golden inputs
 # stays out (it needs kfxgen's tests package); regenerating the fixtures proves it, since

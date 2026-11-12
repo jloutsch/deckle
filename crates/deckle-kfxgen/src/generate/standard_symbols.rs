@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! kfxgen's preloaded local symbols, `STANDARD_SYMBOLS` (`kfxlib_minimal/standard_symbols.py` at
 //! `4b81651`). They come first in its symbol table, so a book's symbols keep their order.
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! A paragraph's entries (`_emit_paragraph`, `native_generator.py:5745` at kfxgen `4b81651`):
 //! cut after its picture lines and at its empty lines (`_cut_after_picture_lines` :535), its
 //! pictures written among its words as Kindle Previewer 4.0.3 writes them (`_inline_pictures`

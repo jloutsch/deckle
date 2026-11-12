@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! The `$157` paragraph styles: [`Style157`] holds `build_fragment_157`'s arguments, [`Styles`]
 //! allocates one fragment per distinct set.
 use deckle_kfx::fragment::Fragment;

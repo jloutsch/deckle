@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: GPL-3.0-only
 # From kfxgen 8f55440 (plugin/kfxgen/model_dump.py). tools/ref/kfxgen_models.sh copies it into
 # an export of kfxgen as plugin/kfxgen/model_dump.py and calls it from generate_full_book.
 # The changes: the commit comes from $KFXGEN_COMMIT (the export has no .git), and loading

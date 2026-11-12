@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! kfxgen 0bc705d's `page_scale.py` (#754): the page width Kindle Previewer 4.0.3 measures a
 //! percentage against, 384pt (a 512px column) in a horizontal book and 480pt (640px) in a
 //! vertical one (P247j, #247). kfxgen's `convert` sets it around `generate_full_book`; the port

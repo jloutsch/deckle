@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! All integration tests in one binary: one link instead of one per file.
 
 mod corpus;

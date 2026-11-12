@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Writing direction and language: a block's, a container's and an inline element's
 //! direction, unicode-bidi and language as Kindle Previewer 4.0.3 writes them in `$157`
 //! (#246, #605, #710, #714), and the runs an inline element's direction lays out

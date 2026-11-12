@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Python's string and number semantics where kfxgen's output depends on them. Strings are
 //! indexed by code point (`char`), as Python indexes them. Character classes are Unicode 16.0:
 //! the tables below from calibre's Python 3.14 `unicodedata`, categories from the `regex` crate

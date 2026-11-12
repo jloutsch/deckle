@@ -134,8 +134,13 @@ the macOS app's).
 | `drop_caps` | kfxgen `test_books/drop_caps/drop-caps-new-source.epub` | drop caps of several sizes and lengths (#240) |
 | `figures` | kfxgen `test_books/figures/figures-new-2-source.epub` | figures and captions, a run in small caps |
 
+The sources from kfxgen's `test_books` were written by kfxgen's author for its tests: made-up
+text and test pictures, no other book's content. kfxgen does not publish all of them; the copies
+here are offered under the GNU General Public License, version 3, as kfxgen is.
+
 The `fonts` fixture embeds Liberation Serif 2.1.5 (SIL Open Font License 1.1), taken from
-calibre's bundled fonts. The faces of `font_faces` are TrueType fonts of one empty glyph that
+calibre's bundled fonts, in `sources/fonts.epub` and `models/fonts/resources/`. Its licence is
+`sources/LiberationSerif-OFL.txt`. The faces of `font_faces` are TrueType fonts of one empty glyph that
 `kfxgen_models.py` makes with fontTools (`_tiny_font`), holding no other font's data. No fixture
 contains MathML.
 

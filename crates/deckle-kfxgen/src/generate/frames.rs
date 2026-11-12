@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! Frames: a box written as Kindle Previewer's plain container (`_is_frame`,
 //! `native_generator.py:726`), a picture's size in a sized box (`_size_in_box` :224, #382), and
 //! a paragraph opening with floated pictures, written in a frame of its own

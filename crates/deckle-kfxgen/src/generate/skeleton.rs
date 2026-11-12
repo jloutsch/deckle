@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! `generate_full_book` (`native_generator.py:4549`): the book's ids, the fragments around its
 //! text, its symbol table, and the container.
 use std::collections::BTreeSet;

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 //! A paragraph's and a run's typography in a `$157`: small caps, case, letter spacing and
 //! colour (#239), text-orientation and emphasis marks (#247), a link's own colour (#728),
 //! a text colour measured against the page it is drawn on (#383), and drop caps (#240).

@@ -1,0 +1,23 @@
+deckle-kfxgen
+
+This crate is a Rust port of kfxgen (https://github.com/jloutsch/kfxgen) at commit
+0bc705d3ec9489417db5112ef8b40e57da938bed. The dump hook in tools/ref/kfxgen_hook runs inside
+kfxgen and is covered by this notice too.
+
+    kfxgen
+    Copyright (C) 2025-2026 Justin Loutsch
+    Licensed under the GNU General Public License, version 3.
+
+kfxgen is offered under version 3 of the licence only, not "or any later version". So this
+crate and the hook are GPL-3.0-only, while the rest of Deckle is GPL-3.0-or-later. A program
+built with this crate can be distributed under version 3. The licence text is the LICENSE file
+at the root of the repository.
+
+kfxgen includes a modified subset of kfxlib, from the KFX Input/Output plugins for calibre:
+
+    Copyright (C) 2016-2025 John Howell <jhowell@acm.org>
+    Licensed under the GNU General Public License v3.
+
+Parts of this crate follow kfxlib's behaviour as kfxgen uses it: how a decimal is written, the
+approximate locations and pages, and the count of `YJ_symbols` entries. The symbol names in
+src/generate/standard_symbols.rs are kfxgen's own (kfxgen's NOTICE), not kfxlib's.
