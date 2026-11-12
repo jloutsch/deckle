@@ -4,6 +4,9 @@
 //! the book's main text size (#241), line heights against its main line (#463), the book's
 //! alignment, indent, margins, weight, direction and language (:7735), and the book's heading printing
 //! as kfxgen's (#490, :7646).
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+
 use super::boxes::BoxStyle;
 use super::chunks::{Chunk, InCell, Marker, Node};
 use super::inline::run_font_size;
@@ -145,11 +148,32 @@ pub(crate) fn unit_symbol(u: &PyValue) -> Option<&str> {
 
 /// Characters by size or line height: a Python `Counter`, its counts summed in an i128 where
 /// Python's ints have no bound.
-type Counts = Vec<(f64, i128)>;
+#[derive(Default)]
+struct Counts {
+    list: Vec<(f64, i128)>,
+    /// Where in `list` a value stands. Never iterated.
+    at: HashMap<u64, usize>,
+}
+
+impl Counts {
+    fn add(&mut self, value: f64, n: i128) {
+        // As `==` has it: a zero of either sign is one value, a NaN none.
+        if value.is_nan() {
+            return self.list.push((value, n));
+        }
+        match self.at.entry((value + 0.0).to_bits()) {
+            Entry::Occupied(at) => self.list[*at.get()].1 += n,
+            Entry::Vacant(at) => {
+                at.insert(self.list.len());
+                self.list.push((value, n));
+            }
+        }
+    }
+}
 
 /// `_most` (:7163): the value most characters have, the smallest of a tie.
 fn most(counts: &Counts) -> Option<f64> {
-    let mut sorted = counts.clone();
+    let mut sorted = counts.list.clone();
     sorted.sort_by(|a, b| a.0.total_cmp(&b.0));
     let mut best: Option<(f64, i128)> = None;
     for (v, n) in sorted {
@@ -160,17 +184,10 @@ fn most(counts: &Counts) -> Option<f64> {
     best.map(|(v, _)| v)
 }
 
-fn add(counts: &mut Counts, value: f64, n: i128) {
-    match counts.iter_mut().find(|(v, _)| *v == value) {
-        Some((_, m)) => *m += n,
-        None => counts.push((value, n)),
-    }
-}
-
 /// `_chars_by_px` (:7147): a text entry's characters at their run's size, else at its CSS
 /// size (#375 review). A count goes below 0 where sized runs overlap, as in Python.
 fn chars_by_px(chunk: &Chunk) -> Counts {
-    let mut counts = Counts::new();
+    let mut counts = Counts::default();
     let Some(px) = chunk.style.as_ref().and_then(|b| b.font_size) else {
         return counts;
     };
@@ -180,11 +197,11 @@ fn chars_by_px(chunk: &Chunk) -> Counts {
     let mut in_runs = 0;
     for sp in &chunk.spans {
         if let Some(run_px) = run_font_size(&sp.flags).filter(|&p| p != 0.0) {
-            add(&mut counts, run_px, sp.len.into());
+            counts.add(run_px, sp.len.into());
             in_runs += i128::from(sp.len);
         }
     }
-    add(&mut counts, px, py::len(&chunk.text) as i128 - in_runs);
+    counts.add(px, py::len(&chunk.text) as i128 - in_runs);
     counts
 }
 
@@ -196,10 +213,10 @@ pub(crate) struct Sizes {
 
 impl Sizes {
     pub(crate) fn of(chunks: &[Chunk]) -> Self {
-        let (mut px, mut lines) = (Vec::new(), Vec::new());
+        let (mut px, mut lines) = (Counts::default(), Counts::default());
         for chunk in chunks {
-            for (size, n) in chars_by_px(chunk) {
-                add(&mut px, size, n);
+            for (size, n) in chars_by_px(chunk).list {
+                px.add(size, n);
             }
             let factor = chunk.style.as_ref().and_then(|bs| bs.line_height);
             if let Some(f) = factor.filter(|&f| f != 0.0)
@@ -207,7 +224,7 @@ impl Sizes {
                 && chunk.rule.is_none()
                 && chunk.picture.is_none()
             {
-                add(&mut lines, f, py::len(&chunk.text) as i128);
+                lines.add(f, py::len(&chunk.text) as i128);
             }
         }
         Sizes {
@@ -246,6 +263,7 @@ impl Sizes {
         }
         // `+counts`: the sizes some characters have.
         let sizes: Vec<f64> = chars_by_px(chunk)
+            .list
             .into_iter()
             .filter(|&(_, n)| n > 0)
             .map(|(px, _)| px)

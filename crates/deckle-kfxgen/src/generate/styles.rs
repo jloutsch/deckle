@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! The `$157` paragraph styles: [`Style157`] holds `build_fragment_157`'s arguments, [`Styles`]
 //! allocates one fragment per distinct set.
+use std::collections::HashMap;
+
 use deckle_kfx::fragment::Fragment;
 use deckle_kfx::ion::Value;
 
@@ -19,7 +21,7 @@ pub(crate) const LINE_EM: f64 = 1.2;
 
 /// `build_fragment_157`'s arguments that the ported paths set, defaulting as it does. Two
 /// styles are one when their arguments are, as `_allocate_style` keys them (:6950).
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Style157 {
     pub font_size: f64,
     pub line_height: f64,
@@ -90,7 +92,7 @@ impl Style157 {
 }
 
 /// The arguments of one of the builders `_allocate_style` calls.
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum StyleArgs {
     Text(Style157),
     Table(TableStyle),
@@ -111,7 +113,7 @@ impl From<Style157> for StyleArgs {
 }
 
 /// `rotation` (0bc705d :7019): how the margins of the styles written now move (#247).
-#[derive(Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub(crate) enum Rotation {
     #[default]
     None,
@@ -138,6 +140,8 @@ impl Rotation {
 #[derive(Default)]
 pub(crate) struct Styles {
     pub cache: Vec<(&'static str, StyleArgs, BidiKeys, Rotation, String)>,
+    /// Where in `cache` to look: its entries by what they print as. Never iterated.
+    index: HashMap<String, Vec<usize>>,
     counts: Vec<(&'static str, usize)>,
     pub rotation: Rotation,
     /// `open_fills`: the fill of each box and cell open around the styles written now (#383).
@@ -175,11 +179,21 @@ impl Styles {
             // there is unchanged (#383).
             *colour = on_page(*colour);
         }
-        if let Some((.., name)) = self.cache.iter().find(|(k, s, b, v, _)| {
-            *k == kind && *s == style && b[..] == *bidi && *v == self.rotation
-        }) {
+        // Equal entries print alike but for the sign of a zero, which `==` ignores: the
+        // entries that print as this one does are compared as kfxgen's dict compares them.
+        let printed =
+            format!("{kind} {style:?} {bidi:?} {:?}", self.rotation).replace("-0.0", "0.0");
+        let alike = self.index.entry(printed).or_default();
+        if let Some((.., name)) = alike
+            .iter()
+            .map(|&i| &self.cache[i])
+            .find(|(k, s, b, v, _)| {
+                *k == kind && *s == style && b[..] == *bidi && *v == self.rotation
+            })
+        {
             return name.clone();
         }
+        alike.push(self.cache.len());
         let idx = match self.counts.iter_mut().find(|(k, _)| *k == kind) {
             Some((_, n)) => {
                 *n += 1;

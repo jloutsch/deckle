@@ -388,9 +388,10 @@ impl InlineStyles {
         let text = &chunk.text;
         let mut out = Vec::new();
         let mut last = 0;
+        let mut slicer = py::Slicer::new(text);
         for item in chunk.among_words() {
             let k = item.at() as usize;
-            let words = py::take(py::skip(text, last), k.saturating_sub(last));
+            let words = slicer.slice(last, k);
             if !words.is_empty() {
                 out.push(Value::string(words));
             }
@@ -400,7 +401,7 @@ impl InlineStyles {
             });
             last = k + 1;
         }
-        let words = py::skip(text, last);
+        let words = slicer.from(last);
         if !words.is_empty() {
             out.push(Value::string(words));
         }

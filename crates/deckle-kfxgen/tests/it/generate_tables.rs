@@ -136,7 +136,8 @@ fn put(dict: &mut PyValue, key: &str, value: PyValue) {
 fn keys_kfxgen_reads_on_another_block_are_refused() {
     let dict = |k: &str, v: PyValue| PyValue::Dict(vec![(PyValue::Str(k.into()), v)]);
     let rtl = || dict("direction", PyValue::Str("rtl".into()));
-    let cases: Vec<(&str, &str, Box<dyn Fn(&mut PyValue)>, &str)> = vec![
+    type Edit<'a> = Box<dyn Fn(&mut PyValue) + 'a>;
+    let cases: Vec<(&str, &str, Edit<'_>, &str)> = vec![
         (
             "table_parts",
             "table",

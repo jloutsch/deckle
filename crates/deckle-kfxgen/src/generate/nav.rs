@@ -157,8 +157,15 @@ fn nest_nav_entries(entries: &[NavEntry]) -> Result<(Vec<Vec<usize>>, Vec<usize>
     let mut children = vec![Vec::new(); entries.len()];
     let mut depths = vec![1; entries.len()];
     let mut roots = Vec::new();
+    // The entries before this one that can still be a parent: each shallower than the next.
+    let mut open: Vec<usize> = Vec::new();
     for (i, e) in entries.iter().enumerate() {
-        match (0..i).rev().find(|&j| entries[j].level < e.level) {
+        while open.last().is_some_and(|&j| entries[j].level >= e.level) {
+            open.pop();
+        }
+        let parent = open.last().copied();
+        open.push(i);
+        match parent {
             Some(parent) => {
                 children[parent].push(i);
                 depths[i] = depths[parent] + 1;
