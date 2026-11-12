@@ -20,6 +20,26 @@ pub fn read<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, String> {
     owner(path, load(path))
 }
 
+/// [`read`] for a file that may hold a secret (an API key, a password): the message names the
+/// line, the column and the kind of error, never serde's text, which can quote a value.
+pub fn read_secret<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, String> {
+    read_with(path, |text| {
+        serde_json::from_str(text).map_err(|e| without_values(&e))
+    })
+}
+
+/// A JSON error with nothing of the file's content in it.
+fn without_values(e: &serde_json::Error) -> String {
+    use serde_json::error::Category;
+    let what = match e.classify() {
+        Category::Io => "could not be read",
+        Category::Syntax => "not valid JSON",
+        Category::Data => "a value of the wrong kind",
+        Category::Eof => "the file ends too soon",
+    };
+    format!("line {}, column {}: {what}", e.line(), e.column())
+}
+
 /// [`read`] for a file that is not JSON.
 pub fn read_with<T>(
     path: &Path,
@@ -35,7 +55,12 @@ pub fn save_owner<T: DeserializeOwned>(
     bytes: &[u8],
     secret: bool,
 ) -> Result<(), String> {
-    read::<T>(path)?;
+    // A secret file's message must not quote its content.
+    if secret {
+        read_secret::<T>(path)?;
+    } else {
+        read::<T>(path)?;
+    }
     save(path, bytes, secret).map_err(|e| e.to_string())
 }
 

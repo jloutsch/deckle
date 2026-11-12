@@ -96,7 +96,7 @@ pub fn secrets_path(config: &Path) -> PathBuf {
 /// does not parse or cannot be read is an error naming it: a new library id would make every
 /// reader see a different library, so nothing is saved over it.
 pub fn load_secrets(path: &Path) -> Result<Secrets, String> {
-    let mut s: Secrets = deckle_core::state_file::read(path)?.unwrap_or_default();
+    let mut s: Secrets = deckle_core::state_file::read_secret(path)?.unwrap_or_default();
     if s.library_uuid.is_empty() {
         s.library_uuid = uuid::Uuid::new_v4().to_string();
         if let Err(e) = save_secrets(path, &s) {

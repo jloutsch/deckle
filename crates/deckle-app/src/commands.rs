@@ -793,7 +793,7 @@ fn md5ish(bytes: &[u8]) -> u64 {
 /// The settings; the defaults when there is no file yet. A file that is there but does not parse
 /// or cannot be read is an error naming it (#26): it holds the API keys and the per-book presets.
 pub fn load_settings_from(file: &Path) -> Result<Settings, String> {
-    Ok(deckle_core::state_file::read(file)?.unwrap_or_default())
+    Ok(deckle_core::state_file::read_secret(file)?.unwrap_or_default())
 }
 
 /// Saves the settings, private to the owner (0600). Refused while the file on disk is damaged or
@@ -2264,6 +2264,33 @@ mod tests {
             assert!(e.contains(&file.display().to_string()), "{e}");
         }
         assert_eq!(std::fs::read(file).unwrap(), truncated);
+    }
+
+    /// A key pasted into a field of another type: serde's message would quote it. The damage
+    /// note names the line and column only, so the key never reaches the web app.
+    #[test]
+    fn a_key_in_a_damaged_settings_file_is_never_quoted() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = settings_state(dir.path());
+        let key = "sk-made-up-key-0001";
+        std::fs::write(
+            &state.settings_file,
+            format!("{{\n  \"llm_api_key\": \"\",\n  \"xray\": \"{key}\"\n}}"),
+        )
+        .unwrap();
+        let shown = get_settings(&state);
+        let note = shown.damaged.clone().expect("damaged");
+        assert!(note.contains("line 3"), "{note}");
+        let masked = serde_json::to_string(&get_settings_masked(&state)).unwrap();
+        let errors = [
+            set_settings(&state, Settings::default()).unwrap_err(),
+            set_settings_masked(&state, Settings::default()).unwrap_err(),
+            set_illustrations_key_at(&state.settings_file, "k").unwrap_err(),
+            load_settings_from(&state.settings_file).unwrap_err(),
+        ];
+        for text in [note, masked].iter().chain(&errors) {
+            assert!(!text.contains(key), "{text}");
+        }
     }
 
     /// Damaged in a folder where no copy can be kept: every save is refused. Skipped as root.
