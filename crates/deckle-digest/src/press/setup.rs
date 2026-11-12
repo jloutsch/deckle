@@ -23,30 +23,63 @@ fn unsupported() -> PressError {
     PressError::new(PressErrorCode::Unsupported)
 }
 
+#[derive(Serialize, Deserialize)]
+struct Identity {
+    producer_id: Uuid,
+}
+
 /// Get or create this installation's local identity. Corrupt existing identities fail closed;
 /// never put this file in the shared folder or regenerate it silently after a reinstall.
+/// The file appears under its name only once complete (temp file, then hard link), so a
+/// second process starting at the same time reads the winner's id, never a partial file.
 pub fn producer_identity(path: &Path) -> Result<Uuid, PressError> {
-    #[derive(Serialize, Deserialize)]
-    struct Identity {
-        producer_id: Uuid,
+    match fs::symlink_metadata(path) {
+        Ok(_) => return read_identity(path),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+        Err(_) => return Err(storage()),
     }
-    match OpenOptions::new().write(true).create_new(true).open(path) {
-        Ok(mut f) => {
-            let id = Uuid::new_v4();
-            f.write_all(&serde_json::to_vec(&Identity { producer_id: id }).map_err(|_| storage())?)
+    let dir = path.parent().ok_or_else(storage)?;
+    let name = path.file_name().ok_or_else(storage)?.to_string_lossy();
+    let temp = dir.join(format!("{name}.{}.tmp", Uuid::new_v4()));
+    let id = Uuid::new_v4();
+    let written = (|| {
+        let mut f = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        f.write_all(&serde_json::to_vec(&Identity { producer_id: id })?)?;
+        f.sync_all()?;
+        fs::hard_link(&temp, path)
+    })();
+    let _ = fs::remove_file(&temp);
+    match written {
+        Ok(()) => {
+            #[cfg(unix)]
+            fs::File::open(dir)
+                .and_then(|d| d.sync_all())
                 .map_err(|_| storage())?;
-            f.sync_all().map_err(|_| storage())?;
             Ok(id)
         }
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            let bytes = bounded_regular(path)?;
-            let identity: Identity = serde_json::from_slice(&bytes).map_err(|_| unsupported())?;
-            if identity.producer_id.is_nil() {
-                return Err(unsupported());
-            }
-            Ok(identity.producer_id)
-        }
+        // Another process published first: use its identity.
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => read_identity(path),
         Err(_) => Err(storage()),
+    }
+}
+
+/// Two processes repairing a damaged file at once could each write a different id, and a new
+/// id orphans every folder bound to the old one, so a damaged file is never replaced here.
+fn read_identity(path: &Path) -> Result<Uuid, PressError> {
+    let bytes = bounded_regular(path)?;
+    match serde_json::from_slice::<Identity>(&bytes) {
+        Ok(identity) if !identity.producer_id.is_nil() => Ok(identity.producer_id),
+        _ => Err(PressError::with_detail(
+            PressErrorCode::Unsupported,
+            format!(
+                "{} is empty or damaged; if this machine has no press folders yet, \
+                 delete it and start Deckle again",
+                path.display()
+            ),
+        )),
     }
 }
 
