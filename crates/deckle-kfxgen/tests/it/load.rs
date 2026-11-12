@@ -113,3 +113,22 @@ fn pyvalue_reads_every_tag() {
     assert!(matches!(&items[10], PyValue::Obj { class, .. } if class == "kfxgen.font_table.Face"));
     assert_eq!(items[10].get("weight"), Some(&PyValue::Int(400)));
 }
+
+/// serde_json parses floats inexactly unless `float_roundtrip` is on (issue #7).
+#[test]
+fn floats_load_exactly() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("model.json"),
+        r#"{"schema": 1, "args": {"$dict": [["x", 12.219999999999999]]}}"#,
+    )
+    .unwrap();
+    let m = load_model(dir.path()).unwrap();
+    let Some(PyValue::Float(x)) = m.args.get("x") else {
+        panic!("not a float");
+    };
+    assert_eq!(
+        x.to_bits(),
+        "12.219999999999999".parse::<f64>().unwrap().to_bits()
+    );
+}
