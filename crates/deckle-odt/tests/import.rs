@@ -373,3 +373,27 @@ fn lists_nested_a_hundred_thousand_deep_are_refused() {
         "{err}"
     );
 }
+
+/// A flat `.fodt` nested too deep says so, not "not an OpenDocument text file" (QA, 127 lists).
+#[test]
+fn a_flat_document_nested_too_deep_says_so() {
+    let n = 127;
+    let fodt = format!(
+        "<office:document xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" \
+         xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" \
+         office:mimetype=\"application/vnd.oasis.opendocument.text\"><office:body><office:text>\
+         {}<text:p>Inside</text:p>{}</office:text></office:body></office:document>",
+        "<text:list><text:list-item>".repeat(n),
+        "</text:list-item></text:list>".repeat(n)
+    );
+    let err = to_epub(fodt.as_bytes(), "stem").map(|_| ()).unwrap_err();
+    assert!(
+        matches!(&err, OdtError::Corrupt(m) if m == "the flat document: this file is nested more than 256 levels deep"),
+        "{err}"
+    );
+    // Text that is not XML at all is still "not an OpenDocument text file".
+    assert!(matches!(
+        to_epub(b"<not xml", "stem").map(|_| ()),
+        Err(OdtError::NotOdf)
+    ));
+}

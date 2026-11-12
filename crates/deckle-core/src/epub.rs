@@ -20,6 +20,13 @@ impl EpubReader {
         if let Ok(mut f) = zip.by_name("META-INF/encryption.xml") {
             let mut xml = String::new();
             let _ = f.read_to_string(&mut xml);
+            // Refused for its depth or entities, it says so rather than counting as DRM.
+            if let Err(
+                e @ (deckle_limits::XmlError::TooDeep | deckle_limits::XmlError::EntityMarkup),
+            ) = deckle_limits::parse_xml(&xml, Default::default())
+            {
+                return Err(InspectError::Xml(format!("META-INF/encryption.xml: {e}")));
+            }
             if encryption_is_drm(&xml) {
                 return Err(InspectError::Drm);
             }

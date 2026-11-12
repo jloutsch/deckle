@@ -35,7 +35,14 @@ pub fn from_epub(epub: &[u8], screen: Screen, page: (f32, f32)) -> Result<Made, 
         Ok(out)
     };
     let container = String::from_utf8_lossy(&read("META-INF/container.xml")?).into_owned();
-    let opf_path = deckle_limits::parse_xml(&container, Default::default())
+    let container = match deckle_limits::parse_xml(&container, Default::default()) {
+        // Refused for its depth or entities, it says so rather than "no OPF named".
+        Err(e @ (deckle_limits::XmlError::TooDeep | deckle_limits::XmlError::EntityMarkup)) => {
+            return Err(format!("container.xml: {e}"));
+        }
+        parsed => parsed,
+    };
+    let opf_path = container
         .ok()
         .and_then(|d| {
             d.descendants()
@@ -473,6 +480,28 @@ mod tests {
         assert_eq!(
             from_epub(&epub, RM2, PAGE).unwrap_err(),
             "the comic has no pages"
+        );
+    }
+
+    /// A container.xml nested too deep says so, not "no OPF named in container.xml".
+    #[test]
+    fn a_container_nested_too_deep_says_so() {
+        let deep = format!(
+            "<container>{}{}</container>",
+            "<x>".repeat(300),
+            "</x>".repeat(300)
+        );
+        let mut zw = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        zw.start_file(
+            "META-INF/container.xml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zw.write_all(deep.as_bytes()).unwrap();
+        let epub = zw.finish().unwrap().into_inner();
+        assert_eq!(
+            from_epub(&epub, RM2, PAGE).unwrap_err(),
+            "container.xml: this file is nested more than 256 levels deep"
         );
     }
 
