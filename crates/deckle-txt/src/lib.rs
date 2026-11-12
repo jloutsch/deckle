@@ -20,7 +20,7 @@ use text::{Item, escape, gutenberg, items, language_tag};
 pub type Files = Vec<(String, Vec<u8>)>;
 
 /// Larger than any real book; anything bigger is almost certainly not one.
-const MAX_BYTES: u64 = 50 * 1024 * 1024;
+const MAX_BYTES: u64 = deckle_limits::MAX_IMPORT_BYTES;
 /// A book with no headings is split into files of about this size, so Previewer gets
 /// reasonably sized chapters.
 const SPLIT_BYTES: usize = 200_000;

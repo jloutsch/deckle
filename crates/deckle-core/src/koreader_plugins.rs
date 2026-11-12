@@ -63,7 +63,7 @@ pub const BUILTIN: &[&str] = &[
 ];
 
 /// The largest plugin archive Deckle takes, unpacked.
-pub const MAX_BYTES: u64 = 20 * 1024 * 1024;
+pub const MAX_BYTES: u64 = deckle_limits::MAX_PLUGIN_BYTES;
 /// Where replaced and removed plugins are kept, in KOReader's folder.
 pub const BACKUP_DIR: &str = "deckle-backup/plugins";
 /// Where Deckle remembers each plugin's source, in KOReader's folder.

@@ -55,6 +55,14 @@ pub const MAX_PDF_PAGE_POINTS: f32 = 14_400.0;
 pub const MAX_TXT_CHAPTERS: usize = 10_000;
 /// KFX: the symbol table's `max_id`.
 pub const MAX_KFX_SYMBOLS: u32 = 1_000_000;
+/// ODT, FB2, RTF, TXT, MOBI and Markdown: the file (ODT: unpacked), read whole.
+pub const MAX_IMPORT_BYTES: u64 = 50 * MB;
+/// PDF: the file.
+pub const MAX_PDF_BYTES: u64 = 200 * MB;
+/// ODT, FB2, RTF: one embedded picture.
+pub const MAX_EMBEDDED_IMAGE_BYTES: u64 = 10 * MB;
+/// A KOReader plugin archive, unpacked.
+pub const MAX_PLUGIN_BYTES: u64 = 20 * MB;
 
 /// Largest reservation made from a size a file declares (rule 1 of the size-limits design):
 /// `Vec::with_capacity(declared.min(MAX_RESERVE))`.

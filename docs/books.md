@@ -81,6 +81,9 @@ the limit, instead of slowing the computer or crashing. Real books are far insid
 | CBZ, CBR: the whole archive, unpacked | 4 GB |
 | CBZ, CBR: one page | 256 MB |
 | DOCX: the whole document, unpacked, pictures included | 50 MB |
+| ODT, FB2, RTF, TXT, MOBI, Markdown: the file (ODT unpacked) | 50 MB |
+| ODT, FB2, RTF: one embedded picture | 10 MB |
+| PDF: the file | 200 MB |
 | TXT: chapters (past this, the rest stays in the last one) | 10,000 |
 | MOBI, AZW3: one embedded font, unpacked | 32 MB |
 | MOBI, AZW3: all embedded fonts, unpacked | 256 MB |
