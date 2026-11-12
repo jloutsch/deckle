@@ -72,7 +72,8 @@ fn tagx(rec: &[u8], start: usize) -> (usize, Vec<[u8; 4]>) {
     if rec.get(start..start + 4) != Some(b"TAGX") {
         return (0, Vec::new());
     }
-    let first = be32(rec, start + 4).unwrap_or(12) as usize;
+    // The block's length, held to the record: rows past its end aren't there to read.
+    let first = (be32(rec, start + 4).unwrap_or(12) as usize).min(rec.len() - start);
     let control = be32(rec, start + 8).unwrap_or(0) as usize;
     let mut rows = Vec::new();
     let mut i = 12;
@@ -255,6 +256,19 @@ mod tests {
         let index = read(&db, 0, 1).unwrap();
         assert!(index.entries.len() <= 2, "{}", index.entries.len());
         assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_tagx_length_past_its_record_is_held_to_the_record() {
+        // A TAGX block claiming 4 GB: one row is there, the rest is not looped over.
+        let mut rec = b"TAGX".to_vec();
+        rec.extend(u32::MAX.to_be_bytes());
+        rec.extend(1u32.to_be_bytes());
+        rec.extend([1, 1, 0x01, 0]);
+        let start = std::time::Instant::now();
+        let (control, rows) = tagx(&rec, 0);
+        assert_eq!((control, rows), (1, vec![[1, 1, 0x01, 0]]));
+        assert!(start.elapsed() < std::time::Duration::from_millis(100));
     }
 
     #[test]
