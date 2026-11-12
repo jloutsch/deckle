@@ -131,8 +131,9 @@ pub fn collect_position_map_info(book: &mut Book) -> Result<Vec<ContentChunk>, F
 }
 
 /// How many positions the book's content can hold (size-limits design): a position a character
-/// of text and one for each element. Counted over the storylines (`$259`) and the text (`$145`)
-/// as every string's characters plus one for every other value, so it is never below the real
+/// of text and one for each element. Counted over the storylines (`$259`), the text (`$145`)
+/// and the section page templates (`$260`, whose elements a fixed-layout book positions) as
+/// every string's characters plus one for every other value, so it is never below the real
 /// count; resources hold no positions and don't count.
 pub(crate) fn content_size(book: &Book) -> u64 {
     fn weigh(v: &Value) -> u64 {
@@ -146,10 +147,10 @@ pub(crate) fn content_size(book: &Book) -> u64 {
             _ => 1,
         }
     }
-    let (story, text) = (Sym::new("$259"), Sym::new("$145"));
+    let kinds = [Sym::new("$259"), Sym::new("$145"), Sym::new("$260")];
     book.fragments
         .iter()
-        .filter(|f| f.ftype == story || f.ftype == text)
+        .filter(|f| kinds.contains(&f.ftype))
         .fold(0u64, |t, f| t.saturating_add(weigh(&f.value)))
 }
 
