@@ -541,6 +541,10 @@ impl PressJournal {
             .map(|j| j.input.clone())
             .ok_or_else(conflict)
     }
+    /// Whether the journal still records this job, finished or not.
+    pub fn holds_job(&self, job_id: Uuid) -> bool {
+        self.data.jobs.iter().any(|j| j.id == job_id)
+    }
     pub fn active(&self) -> Option<JobLease> {
         self.data
             .jobs

@@ -322,6 +322,7 @@ struct Engine {
     reconciled: HashMap<PathBuf, (String, bool)>,
     running: Option<Running>,
     lock: Option<File>,
+    swept: bool,
 }
 impl Engine {
     fn new(options: WorkerOptions) -> Self {
@@ -335,6 +336,7 @@ impl Engine {
             reconciled: HashMap::new(),
             running: None,
             lock: None,
+            swept: false,
         }
     }
     fn stop_child(&mut self) -> Result<(), PressError> {
@@ -344,7 +346,7 @@ impl Engine {
             running.child.wait().map_err(|_| storage())?;
         }
         if let Some(running) = self.running.take() {
-            cleanup_attempt(&running.descriptor)?;
+            cleanup_attempt(&running.descriptor, self.journal.as_ref())?;
         }
         Ok(())
     }
@@ -416,7 +418,12 @@ impl Engine {
         self.producer = Some(press::setup::producer_identity(
             &self.options.root.join("producer.json"),
         )?);
-        self.journal = Some(PressJournal::open(&self.options.root.join("journal"))?);
+        let journal = PressJournal::open(&self.options.root.join("journal"))?;
+        if !self.swept {
+            sweep_jobs(&self.options.root.join("jobs"), &journal);
+            self.swept = true;
+        }
+        self.journal = Some(journal);
         Ok(true)
     }
     fn policies(
@@ -547,45 +554,52 @@ impl Engine {
                 failed?;
             } else if let Some(exit) = running.child.try_wait().map_err(|_| storage())? {
                 let running = self.running.take().unwrap();
-                if exit.success() {
-                    let parent = running.descriptor.parent().unwrap();
-                    let bytes = press::scan::read_control(parent, Path::new("result.json"))?;
-                    let result: WorkerResult =
-                        serde_json::from_slice(&bytes).map_err(|_| build_error())?;
-                    if result.lease != running.lease {
-                        return Err(build_error());
-                    }
-                    if let Some(code) = result.error_code {
-                        if !matches!(
-                            code,
-                            PressErrorCode::SourceFailure
-                                | PressErrorCode::BuildFailed
-                                | PressErrorCode::StorageUnavailable
-                                | PressErrorCode::Unsupported
-                        ) {
+                // Clean up even when recording the result fails; the folder stays until
+                // the journal has recorded the job.
+                let recorded = (|| {
+                    if exit.success() {
+                        let parent = running.descriptor.parent().unwrap();
+                        let bytes = press::scan::read_control(parent, Path::new("result.json"))?;
+                        let result: WorkerResult =
+                            serde_json::from_slice(&bytes).map_err(|_| build_error())?;
+                        if result.lease != running.lease {
                             return Err(build_error());
                         }
-                        self.journal.as_mut().unwrap().fail(
-                            &running.lease,
-                            code,
-                            (self.options.clock)(),
-                        )?;
-                    } else {
-                        let artifact = FreshArtifact {
-                            bundle: parent
-                                .join("attempt")
-                                .join(format!("{}.deckle", running.lease.edition_id)),
-                            manifest_sha256: result.manifest_sha256,
-                        };
-                        press::publish_result(
-                            self.journal.as_mut().unwrap(),
-                            &running.lease,
-                            &artifact,
-                            || (self.options.clock)(),
-                        )?;
+                        if let Some(code) = result.error_code {
+                            if !matches!(
+                                code,
+                                PressErrorCode::SourceFailure
+                                    | PressErrorCode::BuildFailed
+                                    | PressErrorCode::StorageUnavailable
+                                    | PressErrorCode::Unsupported
+                            ) {
+                                return Err(build_error());
+                            }
+                            self.journal.as_mut().unwrap().fail(
+                                &running.lease,
+                                code,
+                                (self.options.clock)(),
+                            )?;
+                        } else {
+                            let artifact = FreshArtifact {
+                                bundle: parent
+                                    .join("attempt")
+                                    .join(format!("{}.deckle", running.lease.edition_id)),
+                                manifest_sha256: result.manifest_sha256,
+                            };
+                            press::publish_result(
+                                self.journal.as_mut().unwrap(),
+                                &running.lease,
+                                &artifact,
+                                || (self.options.clock)(),
+                            )?;
+                        }
                     }
-                }
-                cleanup_attempt(&running.descriptor)?;
+                    Ok(())
+                })();
+                let cleaned = cleanup_attempt(&running.descriptor, self.journal.as_ref());
+                recorded?;
+                cleaned?;
                 // A failed child remains active for bounded recovery below.
             }
         }
@@ -801,16 +815,65 @@ impl Drop for Engine {
 
 /// Only a positively reaped child's unique staging is removable. Neither shared outputs
 /// nor archived results are under this path, and private descriptor reads reject links.
-fn cleanup_attempt(descriptor: &Path) -> Result<(), PressError> {
+/// Once the attempt is gone and the journal has recorded the job's result (the lease is no
+/// longer the live one), the whole `jobs/<id>` folder goes too.
+fn cleanup_attempt(descriptor: &Path, journal: Option<&PressJournal>) -> Result<(), PressError> {
     let job = read_job(descriptor).map_err(|_| storage())?;
     match fs::symlink_metadata(&job.work) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
         Ok(meta)
             if meta.file_type().is_dir()
                 && job.work.canonicalize().ok().as_deref() == Some(job.work.as_path()) =>
         {
-            fs::remove_dir_all(&job.work).map_err(|_| storage())
+            fs::remove_dir_all(&job.work).map_err(|_| storage())?;
+        }
+        _ => return Err(storage()),
+    }
+    if journal.is_some_and(|j| j.active().as_ref() != Some(&job.lease)) {
+        remove_job_folder(descriptor.parent().ok_or_else(storage)?)?;
+    }
+    Ok(())
+}
+fn remove_job_folder(dir: &Path) -> Result<(), PressError> {
+    match fs::symlink_metadata(dir) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(meta)
+            if meta.file_type().is_dir() && dir.canonicalize().ok().as_deref() == Some(dir) =>
+        {
+            fs::remove_dir_all(dir).map_err(|_| storage())
         }
         _ => Err(storage()),
+    }
+}
+/// At start. Job folder names are random, so each `job.json` says which job a folder is for.
+/// A folder older than a day whose job the journal no longer holds, or whose `job.json`
+/// cannot be read, is left from an earlier run and is removed. Folder times are the file
+/// system's, so they are compared with the system clock, not the press clock.
+fn sweep_jobs(jobs: &Path, journal: &PressJournal) {
+    let now = std::time::SystemTime::now();
+    let Ok(entries) = fs::read_dir(jobs) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        let Ok(meta) = fs::symlink_metadata(&dir) else {
+            continue;
+        };
+        let named = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| Uuid::parse_str(name).is_ok());
+        let old = meta.modified().is_ok_and(|at| {
+            now.duration_since(at)
+                .is_ok_and(|age| age >= std::time::Duration::from_secs(24 * 3600))
+        });
+        if !named || !meta.file_type().is_dir() || !old {
+            continue;
+        }
+        let held =
+            read_job(&dir.join("job.json")).is_ok_and(|job| journal.holds_job(job.lease.job_id));
+        if !held {
+            let _ = remove_job_folder(&dir);
+        }
     }
 }

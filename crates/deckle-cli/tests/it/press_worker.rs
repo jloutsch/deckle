@@ -37,8 +37,11 @@ fn worker_fixture() {
         count.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
         if url.starts_with("https://example.invalid/selected-") { Ok(format!("<html><head><title>{url}</title></head><body><article><h1>{url}</h1>{}</article></body></html>", "<p>Fictional selected article about a town library and its repaired roof.</p>".repeat(100)).into_bytes()) } else if url=="https://example.invalid/feed" {Ok(br#"<rss version="2.0"><channel><title>Fake wire</title><item><title>Library reopened</title><link>https://example.invalid/story</link><description>Repairs are complete.</description></item></channel></rss>"#.to_vec())}else{Err("fake source unavailable".into())}
     }).unwrap();
+    // Outside the job folder, which the supervisor removes once the result is recorded:
+    // <base>/private/jobs/<id>/job.json -> <base>/source-count.
+    let base = Path::new(&job).ancestors().nth(4).unwrap();
     std::fs::write(
-        Path::new(&job).with_file_name("source-count"),
+        base.join("source-count"),
         count.load(std::sync::atomic::Ordering::SeqCst).to_string(),
     )
     .unwrap();
@@ -233,17 +236,11 @@ fn press_worker_real_child_publishes_and_restart_does_not_refetch() {
     until(&f, &mut w, PressState::Published);
     drop(w);
     let first = status(&f).unwrap();
-    let attempt = std::fs::read_dir(f.root.join("jobs"))
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .path();
-    assert_eq!(
-        std::fs::read_to_string(attempt.join("source-count")).unwrap(),
-        "1"
-    );
-    let attempts = std::fs::read_dir(f.root.join("jobs")).unwrap().count();
+    let counted = f.root.parent().unwrap().join("source-count");
+    assert_eq!(std::fs::read_to_string(&counted).unwrap(), "1");
+    // A finished job leaves no folder under jobs/.
+    assert_eq!(std::fs::read_dir(f.root.join("jobs")).unwrap().count(), 0);
+    std::fs::remove_file(&counted).unwrap();
     let mut w = PressSupervisor::with_options(f.options.clone());
     for _ in 0..10 {
         let _ = w.tick(std::slice::from_ref(&f.cfg), Utc::now());
@@ -251,10 +248,42 @@ fn press_worker_real_child_publishes_and_restart_does_not_refetch() {
     }
     drop(w);
     assert_eq!(status(&f).unwrap(), first);
-    assert_eq!(
-        std::fs::read_dir(f.root.join("jobs")).unwrap().count(),
-        attempts
-    );
+    assert!(!counted.exists(), "restart must not build again");
+    assert_eq!(std::fs::read_dir(f.root.join("jobs")).unwrap().count(), 0);
+}
+#[test]
+fn press_worker_removes_stale_job_folders_at_start() {
+    let f = fixture("TEST HANG");
+    let mut w = PressSupervisor::with_options(f.options.clone());
+    until(&f, &mut w, PressState::Building);
+    drop(w);
+    let jobs = f.root.join("jobs");
+    // The interrupted job is still held by the journal; keep its folder even when old.
+    let held = std::fs::read_dir(&jobs)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let damaged = jobs.join(Uuid::new_v4().to_string());
+    std::fs::create_dir(&damaged).unwrap();
+    std::fs::write(damaged.join("job.json"), b"{").unwrap();
+    let recent = jobs.join(Uuid::new_v4().to_string());
+    std::fs::create_dir(&recent).unwrap();
+    std::fs::write(recent.join("job.json"), b"{").unwrap();
+    let two_days_ago = std::time::SystemTime::now() - Duration::from_secs(2 * 24 * 3600);
+    for dir in [&held, &damaged] {
+        std::fs::File::open(dir)
+            .unwrap()
+            .set_modified(two_days_ago)
+            .unwrap();
+    }
+    let mut w = PressSupervisor::with_options(f.options.clone());
+    until(&f, &mut w, PressState::Building);
+    drop(w);
+    assert!(!damaged.exists(), "an old unreadable job folder is removed");
+    assert!(held.exists(), "a job the journal holds keeps its folder");
+    assert!(recent.exists(), "a folder under a day old is kept");
 }
 #[test]
 fn press_worker_scheduled_lock_does_not_start_deadline_and_opt_out_rejects_queued() {
@@ -574,7 +603,6 @@ fn press_worker_same_paper_two_enabled_folders_and_offline_old_folder() {
     let second_status = published.unwrap_or_else(|| {
         panic!("second root must publish with first offline; last status: {last_status:?}")
     });
-    assert_eq!(std::fs::read_dir(f.root.join("jobs")).unwrap().count(), 2);
     assert_ne!(first.job_id, second_status.job_id);
     assert_ne!(first.result, second_status.result);
     assert!(
@@ -583,6 +611,8 @@ fn press_worker_same_paper_two_enabled_folders_and_offline_old_folder() {
             .exists()
     );
     drop(w);
+    // The status is written before the finished job's folder is removed.
+    assert_eq!(std::fs::read_dir(f.root.join("jobs")).unwrap().count(), 0);
     let j = press::PressJournal::open(&f.root.join("journal")).unwrap();
     assert_eq!(j.binding_for_request(first.request_id).unwrap(), f.binding);
     assert_eq!(
@@ -624,7 +654,9 @@ fn press_worker_old_orphan_attempt_cannot_publish_after_restart() {
         .count();
     assert_eq!(dirs, 1);
     assert!(old.with_file_name("result.json").exists());
-    assert_eq!(std::fs::read_dir(f.root.join("jobs")).unwrap().count(), 2);
+    // The interrupted attempt's folder stays: its result was never recorded. The
+    // finished attempt's folder is removed.
+    assert_eq!(std::fs::read_dir(f.root.join("jobs")).unwrap().count(), 1);
 }
 #[test]
 #[ignore = "requires an explicitly built desktop executable"]
@@ -935,7 +967,6 @@ fn press_worker_protocol_smoke_exchange() {
     assert_eq!(published.job_id, other.job_id);
     assert_eq!(published.result, other.result);
     assert!(queued.revision < building.revision && building.revision < published.revision);
-    assert_eq!(std::fs::read_dir(f.root.join("jobs")).unwrap().count(), 1);
     assert_eq!(std::fs::read(&legacy).unwrap(), legacy_before);
     assert_eq!(std::fs::read(&marks).unwrap(), marks_before);
     let result = published.result.as_ref().unwrap();
@@ -970,10 +1001,12 @@ fn press_worker_protocol_smoke_exchange() {
         );
     }
     drop(worker);
+    // The status is written before the finished job's folder is removed.
+    assert_eq!(std::fs::read_dir(f.root.join("jobs")).unwrap().count(), 0);
     let mut worker = PressSupervisor::with_options(f.options.clone());
     worker.tick(std::slice::from_ref(&f.cfg), now).unwrap();
     assert_eq!(status(&f).unwrap(), published);
-    assert_eq!(std::fs::read_dir(f.root.join("jobs")).unwrap().count(), 1);
+    assert_eq!(std::fs::read_dir(f.root.join("jobs")).unwrap().count(), 0);
     if let Some(output) = std::env::var_os("DECKLE_PRESS_SMOKE_OUTPUT") {
         let output = Path::new(&output);
         std::fs::create_dir(output).expect("smoke output must not already exist");
