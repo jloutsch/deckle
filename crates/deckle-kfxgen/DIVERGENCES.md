@@ -70,6 +70,15 @@ is a `GenerateError::Model` naming the spans, where kfxgen writes a book. kfxgen
 paragraph's runs to its text but not a cell's, and the positions map walks from the run's
 start. No converted book has such a run: a run's offsets count characters of the cell.
 
+## Units and font locations that name the book's own symbols
+
+A length's unit and a font face's `location` come from the model as strings, and kfxgen writes
+each as a symbol whatever it is. A unit that is not `$` and a number (KFX's own symbols, as the
+converter writes them), a face's `location` that is not `resource/font` and a number (as
+kfxgen's font table names them), and two faces of one location are each a
+`GenerateError::Model`. Any other name can be one the book already has: a font located at `c0`
+takes the first chapter's id, and one at a picture's is dropped with that picture.
+
 ## Run sizes and monospace families of another type
 
 The converter writes a run's size flag as `("size", px)`, px an int or float (`css_font_size`,

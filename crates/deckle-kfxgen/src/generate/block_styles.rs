@@ -132,7 +132,15 @@ pub(crate) fn read_length(v: &PyValue) -> Option<Length> {
     };
     let m = m.as_str()?;
     py::checked_decimal(m)?;
-    Some((m.to_owned(), u.as_str()?.to_owned()))
+    Some((m.to_owned(), unit_symbol(u)?.to_owned()))
+}
+
+/// A length's unit: one of KFX's own symbols, `$` and its number. Any other name would be
+/// written as a symbol of the book's, and can be one it already has (DIVERGENCES.md).
+pub(crate) fn unit_symbol(u: &PyValue) -> Option<&str> {
+    let u = u.as_str()?;
+    let digits = u.strip_prefix('$')?;
+    (digits.bytes().all(|b| b.is_ascii_digit()) && digits.parse::<u32>().is_ok()).then_some(u)
 }
 
 /// Characters by size or line height: a Python `Counter`, its counts summed in an i128 where

@@ -260,6 +260,9 @@ fn block_typography_of_another_shape_is_a_model_error() {
         ("small_caps", PyValue::Int(1)),
         ("text_emphasis", PyValue::Int(1)),
         ("letter_spacing", s("1em")),
+        // A unit that is no KFX symbol (issue #12).
+        ("letter_spacing", PyValue::Tuple(vec![s("1"), s("em")])),
+        ("letter_spacing", PyValue::Tuple(vec![s("1"), s("c0")])),
         ("colour", s("red")),
         ("drop_cap", s("1")),
     ] {

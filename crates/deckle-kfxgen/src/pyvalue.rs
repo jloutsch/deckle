@@ -172,12 +172,16 @@ impl PyValue {
 
     /// `d.get(key)` for a dict with string keys, or an object's attribute.
     pub fn get(&self, key: &str) -> Option<&PyValue> {
-        match self {
+        // A loop, not a call per object: objects nested without end must not overflow the stack.
+        let mut v = self;
+        while let PyValue::Obj { state, .. } = v {
+            v = state;
+        }
+        match v {
             PyValue::Dict(pairs) => pairs
                 .iter()
                 .find(|(k, _)| matches!(k, PyValue::Str(s) if s == key))
                 .map(|(_, v)| v),
-            PyValue::Obj { state, .. } => state.get(key),
             _ => None,
         }
     }

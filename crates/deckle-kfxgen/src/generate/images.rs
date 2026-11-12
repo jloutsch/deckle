@@ -478,7 +478,8 @@ pub(crate) fn add_cover_page(chapters: &mut Vec<Chapter>, images: &Images) {
         first.writing_mode = first_writing_mode(blocks);
     }
     for link in chapters.iter_mut().flat_map(|c| &mut c.toc_links) {
-        link.target += 1;
+        // Saturating: a target past every chapter stays past them.
+        link.target = link.target.saturating_add(1);
     }
     chapters.insert(0, Chapter::cover());
 }

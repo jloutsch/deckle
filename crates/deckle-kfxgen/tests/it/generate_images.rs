@@ -4,7 +4,7 @@ use deckle_kfxgen::generate::{GenerateError, generate};
 use deckle_kfxgen::load::load_model;
 use deckle_kfxgen::pyvalue::PyValue;
 
-use crate::generate_inline::entry;
+use crate::generate_inline::{entry, item};
 use crate::generate_skeleton::matches_kfxgen;
 
 #[test]
@@ -94,4 +94,22 @@ fn a_cover_neither_jpeg_nor_png_is_a_model_error() {
         generate(&model),
         Err(GenerateError::Model(m)) if m.contains("cover_image")
     ));
+}
+
+/// A contents line at a level or to a chapter at an i64's edge is no panic (issue #12).
+#[test]
+fn a_contents_line_at_an_i64_edge_does_not_panic() {
+    for (key, value) in [("level", i64::MIN), ("target_chapter_idx", i64::MAX)] {
+        let mut model = load_model(&deckle_kfx::fixtures::kfxgen("models/cover_paths")).unwrap();
+        let chapter = item(entry(&mut model.args, "chapters"), 2);
+        let link = item(entry(chapter, "toc_links"), 0);
+        *entry(link, key) = PyValue::Int(value);
+        let result = generate(&model);
+        if key == "level" {
+            assert!(
+                matches!(result, Err(GenerateError::Unsupported(_))),
+                "{key}"
+            );
+        }
+    }
 }

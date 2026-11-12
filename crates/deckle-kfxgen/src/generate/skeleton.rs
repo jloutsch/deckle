@@ -81,7 +81,11 @@ pub(crate) fn generate_full_book(args: &PyValue) -> Result<GenerateOutput, Gener
     };
     for (key, _) in pairs {
         if !key.as_str().is_some_and(|k| PARAMS.contains(&k)) {
-            return Err(model_err(format!("args: no parameter {key:?}")));
+            // Not `{key:?}`: printing a key nested without end overflows the stack.
+            return Err(model_err(match key.as_str() {
+                Some(k) => format!("args: no parameter {k:?}"),
+                None => "args: a parameter name that is not a string".to_owned(),
+            }));
         }
     }
     let title = required_str(args, "title")?;
