@@ -47,6 +47,10 @@ identify coalesced work. Only `published` and `result_removed` carry a required
 `edition.json` bytes; clients independently check it and all listed assets before
 Ready. Publication is local and may arrive before assets through sync.
 
+A status file already present for a request ID means the producer does not process that
+request, whoever wrote the file. This adds no new power: anyone who can write the folder can
+already delete the request itself.
+
 `result_removed` also requires `removed_at` and the safe message
 `Fresh edition is no longer available; print another`. Other states omit these
 tombstone fields. A tombstone supersedes published status. Keep it for 30 days
