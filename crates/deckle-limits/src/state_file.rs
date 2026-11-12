@@ -25,6 +25,18 @@ pub enum Loaded<T> {
     Unreadable(io::Error),
 }
 
+impl<T> Loaded<T> {
+    /// Whether the caller may save over the file: false when it exists but could not be read,
+    /// and when it is damaged and no copy of it could be kept, because a save would then lose
+    /// the only copy.
+    pub fn may_replace(&self) -> bool {
+        !matches!(
+            self,
+            Loaded::Unreadable(_) | Loaded::Damaged { kept_at: None, .. }
+        )
+    }
+}
+
 /// Reads and parses `path`. A file that exists but does not parse is copied to
 /// `<name>.damaged-<UTC timestamp>` beside it and reported as `Damaged`; it is not removed.
 pub fn load<T: DeserializeOwned>(path: &Path) -> Loaded<T> {
@@ -60,6 +72,10 @@ pub fn load_with<T>(path: &Path, parse: impl Fn(&str) -> Result<T, String>) -> L
 /// `<name>.damaged-<UTC timestamp>` beside it, unless a copy with the same bytes is already
 /// there. Returns the copy's path.
 fn keep_copy(path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
+    keep_copy_stamped(path, bytes, &utc_stamp(SystemTime::now()))
+}
+
+fn keep_copy_stamped(path: &Path, bytes: &[u8], stamp: &str) -> io::Result<PathBuf> {
     let dir = parent_of(path);
     let name = path
         .file_name()
@@ -82,25 +98,60 @@ fn keep_copy(path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
         }
     }
 
-    let stamp = utc_stamp(SystemTime::now());
     let named = |suffix: &str| {
         let mut n = prefix.clone();
-        n.push(&stamp);
+        n.push(stamp);
         n.push(suffix);
         dir.join(n)
     };
-    let mut copy = named("");
-    let mut k = 2;
-    while copy.symlink_metadata().is_ok() {
-        copy = named(&format!("-{k}"));
-        k += 1;
+    // The copy gets the damaged file's mode, so a secret file's copy stays private. Until the
+    // mode is read it is 0600.
+    #[cfg(unix)]
+    let mode = {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(path).map_or(0o600, |m| m.permissions().mode() & 0o777)
+    };
+    for k in 1..=1000 {
+        let copy = if k == 1 {
+            named("")
+        } else {
+            named(&format!("-{k}"))
+        };
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(mode);
+        }
+        let mut file = match options.open(&copy) {
+            Ok(file) => file,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        };
+        // The bytes that were read, not the file as it is now: those are what was damaged.
+        let written = (|| {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                // The umask may have narrowed the mode at creation.
+                file.set_permissions(fs::Permissions::from_mode(mode))?;
+            }
+            file.write_all(bytes)?;
+            file.sync_all()
+        })();
+        if let Err(e) = written {
+            // Made above with `create_new`, so it is this call's own file.
+            drop(file);
+            let _ = fs::remove_file(&copy);
+            return Err(e);
+        }
+        return Ok(copy);
     }
-    // `fs::copy` keeps the file's mode, so a secret file's copy stays private.
-    if let Err(e) = fs::copy(path, &copy) {
-        let _ = fs::remove_file(&copy);
-        return Err(e);
-    }
-    Ok(copy)
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "no free name for the damaged copy",
+    ))
 }
 
 /// The folder `path` is in; `.` for a bare file name.
@@ -114,7 +165,11 @@ fn parent_of(path: &Path) -> &Path {
 /// Writes `bytes` to a temp file beside `path`, syncs it, and renames it into place.
 ///
 /// A `secret` file is always left 0600, whatever mode the old file had. Any other file keeps
-/// the old file's mode; a new one is 0600. Missing folders are made.
+/// the old file's mode; a new one gets the default mode, as `fs::write` would make it (0666
+/// less the umask). Missing folders are made.
+///
+/// A file that exists but cannot be read is never replaced: `save` fails with the read error.
+/// When `path` is a symbolic link, the file it points to is written and the link stays.
 pub fn save(path: &Path, bytes: &[u8], secret: bool) -> io::Result<()> {
     save_with(path, bytes, secret, |from, to| fs::rename(from, to))
 }
@@ -127,29 +182,43 @@ fn save_with(
     rename: impl FnOnce(&Path, &Path) -> io::Result<()>,
 ) -> io::Result<()> {
     let named = |e: io::Error| io::Error::new(e.kind(), format!("{}: {e}", path.display()));
+    let target = resolve_links(path).map_err(named)?;
+    let path = target.as_path();
+
+    // Nothing would be left of a file that cannot be read, so it is not replaced.
+    match fs::File::open(path).and_then(|mut f| io::Read::read(&mut f, &mut [0u8; 1])) {
+        Ok(_) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(named(e)),
+    }
+
     let dir = parent_of(path);
     fs::create_dir_all(dir).map_err(named)?;
-    // Created 0600 on Unix.
-    let mut tmp = tempfile::NamedTempFile::new_in(dir).map_err(named)?;
-    tmp.write_all(bytes).map_err(named)?;
+    #[allow(unused_mut)]
+    let mut builder = tempfile::Builder::new();
     #[cfg(unix)]
-    {
+    let exact_mode = {
         use std::os::unix::fs::PermissionsExt;
-        let mode = if secret {
-            Some(0o600)
-        } else {
-            fs::metadata(path)
-                .ok()
-                .map(|m| m.permissions().mode() & 0o7777)
-        };
-        if let Some(mode) = mode {
-            tmp.as_file()
-                .set_permissions(fs::Permissions::from_mode(mode))
-                .map_err(named)?;
-        }
-    }
+        let old = fs::metadata(path)
+            .ok()
+            .map(|m| m.permissions().mode() & 0o7777);
+        let exact = if secret { Some(0o600) } else { old };
+        // A new file that is not secret is created 0666 and the umask narrows it, as with
+        // `fs::write`. The others are set exactly below.
+        builder.permissions(fs::Permissions::from_mode(exact.unwrap_or(0o666)));
+        exact
+    };
     #[cfg(not(unix))]
     let _ = secret;
+    let mut tmp = builder.tempfile_in(dir).map_err(named)?;
+    #[cfg(unix)]
+    if let Some(mode) = exact_mode {
+        use std::os::unix::fs::PermissionsExt;
+        tmp.as_file()
+            .set_permissions(fs::Permissions::from_mode(mode))
+            .map_err(named)?;
+    }
+    tmp.write_all(bytes).map_err(named)?;
     tmp.as_file().sync_all().map_err(named)?;
     // From here the temp file is removed when `tmp` drops, unless the rename took it.
     let mut tmp = tmp.into_temp_path();
@@ -160,6 +229,25 @@ fn save_with(
     #[cfg(unix)]
     let _ = fs::File::open(dir).and_then(|d| d.sync_all());
     Ok(())
+}
+
+/// The file `path` names, following symbolic links (a dangling link gives where it points).
+fn resolve_links(path: &Path) -> io::Result<PathBuf> {
+    let mut p = path.to_path_buf();
+    for _ in 0..40 {
+        match fs::symlink_metadata(&p) {
+            Ok(m) if m.file_type().is_symlink() => {
+                let to = fs::read_link(&p)?;
+                p = if to.is_absolute() {
+                    to
+                } else {
+                    parent_of(&p).join(to)
+                };
+            }
+            _ => return Ok(p),
+        }
+    }
+    Err(io::Error::other("too many levels of symbolic links"))
 }
 
 /// `20261112T140355Z` for a time.
@@ -500,9 +588,167 @@ mod tests {
             save(&path, b"{}", false).unwrap();
             assert_eq!(mode_of(&path), mode);
         }
+    }
+
+    // --- Repros from QA review. ---
+
+    #[cfg(unix)]
+    #[test]
+    fn repro_save_never_replaces_a_file_it_cannot_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("daemon.json");
+        fs::write(&path, VALID).unwrap();
+        set_mode(&path, 0o000);
+        if fs::read(&path).is_ok() {
+            eprintln!("skipped: running as root, permissions do not stop a read");
+            return;
+        }
+        let e = save(&path, b"{}", false).unwrap_err();
+        set_mode(&path, 0o600);
+        assert_eq!(e.kind(), io::ErrorKind::PermissionDenied, "{e}");
+        assert!(e.to_string().contains("daemon.json"), "{e}");
+        assert_eq!(fs::read(&path).unwrap(), VALID.as_bytes(), "not replaced");
+        assert_eq!(names_in(dir.path()), ["daemon.json"], "no temp file left");
+    }
+
+    #[test]
+    fn save_refuses_a_folder_where_the_file_should_be() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::create_dir(&path).unwrap();
+        fs::write(path.join("inside"), b"x").unwrap();
+        assert!(save(&path, b"{}", true).is_err());
+        assert_eq!(fs::read(path.join("inside")).unwrap(), b"x");
+    }
+
+    #[test]
+    fn may_replace_is_false_only_when_nothing_of_the_file_is_kept() {
+        assert!(Loaded::<()>::Missing.may_replace());
+        assert!(Loaded::Ok(()).may_replace());
+        assert!(
+            Loaded::<()>::Damaged {
+                kept_at: Some(PathBuf::from("x.damaged-1")),
+                why: String::new()
+            }
+            .may_replace()
+        );
+        assert!(
+            !Loaded::<()>::Damaged {
+                kept_at: None,
+                why: String::new()
+            }
+            .may_replace()
+        );
+        assert!(!Loaded::<()>::Unreadable(io::Error::other("no")).may_replace());
+    }
+
+    #[test]
+    fn repro_the_copy_holds_the_bytes_load_read() {
+        // The file changed after it was read: the copy is of what was read, which is what the
+        // owner is told was damaged.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(&path, b"changed since").unwrap();
+        let kept = keep_copy(&path, TRUNCATED.as_bytes()).unwrap();
+        assert_eq!(fs::read(&kept).unwrap(), TRUNCATED.as_bytes());
+    }
+
+    #[test]
+    fn repro_a_name_already_taken_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(&path, TRUNCATED).unwrap();
+        let stamp = "20261112T140355Z";
+        let taken = dir.path().join(format!("settings.json.damaged-{stamp}"));
+        let taken_2 = dir.path().join(format!("settings.json.damaged-{stamp}-2"));
+        fs::write(&taken, b"someone else's").unwrap();
+        fs::write(&taken_2, b"and another").unwrap();
+        let kept = keep_copy_stamped(&path, TRUNCATED.as_bytes(), stamp).unwrap();
+        assert_eq!(
+            kept,
+            dir.path().join(format!("settings.json.damaged-{stamp}-3"))
+        );
+        assert_eq!(fs::read(&kept).unwrap(), TRUNCATED.as_bytes());
+        assert_eq!(fs::read(&taken).unwrap(), b"someone else's");
+        assert_eq!(fs::read(&taken_2).unwrap(), b"and another");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_damaged_copy_has_the_source_files_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        for mode in [0o600, 0o640, 0o644] {
+            let path = dir.path().join(format!("s{mode:o}.json"));
+            fs::write(&path, TRUNCATED).unwrap();
+            set_mode(&path, mode);
+            let kept = keep_copy(&path, TRUNCATED.as_bytes()).unwrap();
+            assert_eq!(mode_of(&kept), mode);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repro_a_new_file_that_is_not_secret_gets_the_default_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        // What `fs::write` makes here: 0666 less the process's umask.
+        let probe = dir.path().join("probe");
+        fs::write(&probe, b"").unwrap();
         let fresh = dir.path().join("fresh.json");
         save(&fresh, b"{}", false).unwrap();
-        assert_eq!(mode_of(&fresh), 0o600);
+        assert_eq!(mode_of(&fresh), mode_of(&probe));
+        assert_ne!(
+            mode_of(&fresh),
+            0o600,
+            "this test needs a umask that is not 077"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repro_save_through_a_symlink_writes_the_target_and_keeps_the_link() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("real")).unwrap();
+        let target = dir.path().join("real/settings.json");
+        fs::write(&target, VALID).unwrap();
+        set_mode(&target, 0o644);
+        let link = dir.path().join("settings.json");
+        symlink("real/settings.json", &link).unwrap();
+
+        save(&link, b"{}", true).unwrap();
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read(&target).unwrap(), b"{}");
+        assert_eq!(mode_of(&target), 0o600, "secret, so 0600 on the target");
+        assert_eq!(names_in(&dir.path().join("real")), ["settings.json"]);
+
+        // A link to a link, with an absolute target.
+        let link2 = dir.path().join("again.json");
+        symlink(&link, &link2).unwrap();
+        save(&link2, b"[]", false).unwrap();
+        assert!(
+            fs::symlink_metadata(&link2)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read(&target).unwrap(), b"[]");
+
+        // A dangling link: the file is made where it points.
+        let dangling = dir.path().join("dangling.json");
+        symlink("real/new.json", &dangling).unwrap();
+        save(&dangling, b"1", false).unwrap();
+        assert!(
+            fs::symlink_metadata(&dangling)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read(dir.path().join("real/new.json")).unwrap(), b"1");
     }
 
     #[test]
