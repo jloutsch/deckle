@@ -16,6 +16,11 @@
   most 256 MB and the comic 4 GB, instead of unpacked whole to a temp folder first; a page
   with an absolute path, a `..` or a link is refused. A text file with more than 10,000
   headings keeps the rest in its last chapter.
+- **Huge pages and pictures no longer exhaust memory.** A PDF page box wider than the PDF
+  specification allows (a 2 KB file asked for 20 GB and aborted) is laid out as 14,400 pt wide,
+  and a page rendered as a picture is held to 100 megapixels, rendered smaller when it's bigger.
+  A picture in a book, a chosen cover or a web photo over 100 megapixels is refused before it
+  is decoded; comic pages keep `image`'s own limit.
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in

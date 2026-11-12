@@ -530,7 +530,7 @@ pub fn eink_photo(bytes: &[u8]) -> Option<Vec<u8>> {
 
 /// A photo as a JPEG at most 1000 px wide, grayscale or in color. `None` as for [`eink_photo`].
 pub fn photo(bytes: &[u8], photos: Photos) -> Option<Vec<u8>> {
-    let img = image::load_from_memory(bytes).ok()?;
+    let img = deckle_core::image_cap::load(bytes).ok()?;
     if img.width().min(img.height()) < MIN_PHOTO_SIDE {
         return None;
     }
@@ -560,6 +560,10 @@ pub fn master_photo(bytes: &[u8]) -> Option<Vec<u8>> {
         .into_decoder()
         .ok()?;
     let orientation = decoder.orientation().ok();
+    let (w, h) = decoder.dimensions();
+    if !deckle_core::image_cap::fits(w, h) {
+        return None;
+    }
     let mut img = image::DynamicImage::from_decoder(decoder).ok()?;
     if let Some(o) = orientation {
         img.apply_orientation(o);
@@ -593,7 +597,7 @@ pub fn gray_jpeg(jpeg: &[u8]) -> Vec<u8> {
     if gray {
         return jpeg.to_vec();
     }
-    let Ok(img) = image::load_from_memory(jpeg) else {
+    let Ok(img) = deckle_core::image_cap::load(jpeg) else {
         return jpeg.to_vec();
     };
     let mut out = Vec::new();
@@ -608,7 +612,7 @@ pub fn gray_jpeg(jpeg: &[u8]) -> Vec<u8> {
 /// A 64-bit difference hash: the picture's gradient at 9×8. Copies of one photo from a CDN
 /// (other sizes, crops, recompression) land a few bits apart.
 pub fn photo_hash(jpeg: &[u8]) -> Option<u64> {
-    let small = image::load_from_memory(jpeg)
+    let small = deckle_core::image_cap::load(jpeg)
         .ok()?
         .resize_exact(9, 8, image::imageops::FilterType::Triangle)
         .to_luma8();
@@ -722,7 +726,8 @@ pub fn fetch_photos_with(
 /// Whether an e-ink JPEG is big enough to sit inside the text. (Resizing only ever shrinks
 /// wide photos, so a small image's size here is its original size.)
 fn clears_inline_size(jpeg: &[u8]) -> bool {
-    image::load_from_memory(jpeg).is_ok_and(|i| i.width().min(i.height()) >= MIN_INLINE_PHOTO_SIDE)
+    deckle_core::image_cap::load(jpeg)
+        .is_ok_and(|i| i.width().min(i.height()) >= MIN_INLINE_PHOTO_SIDE)
 }
 
 /// Removes `<div class="figure">` wrappers left with nothing in them.

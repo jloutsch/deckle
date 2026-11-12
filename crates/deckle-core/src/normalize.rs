@@ -255,7 +255,7 @@ pub fn normalize(
             continue;
         };
         let is_cover = Some(idx) == cover_idx;
-        let Ok(mut img) = image::load_from_memory(&data) else {
+        let Ok(mut img) = crate::image_cap::load(&data) else {
             report
                 .warnings
                 .push(format!("could not decode image {}", item.href));

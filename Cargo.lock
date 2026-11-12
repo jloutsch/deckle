@@ -1670,6 +1670,7 @@ dependencies = [
 name = "deckle-pdf"
 version = "0.13.0"
 dependencies = [
+ "deckle-limits",
  "image",
  "pdfium-render",
  "roxmltree",

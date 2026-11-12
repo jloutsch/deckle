@@ -85,6 +85,9 @@ the limit, instead of slowing the computer or crashing. Real books are far insid
 | MOBI, AZW3: one embedded font, unpacked | 32 MB |
 | MOBI, AZW3: all embedded fonts, unpacked | 256 MB |
 | MOBI, AZW3: the text, unpacked | 256 MB |
+| PDF: page width (wider pages are laid out as 14,400 pt) | 14,400 pt |
+| PDF: a page rendered as a picture (a larger one renders smaller) | 100 megapixels |
+| A picture in a book, a cover or a web photo (not comic pages) | 100 megapixels |
 
 The numbers are in one place, `crates/deckle-limits`.
 
