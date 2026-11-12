@@ -22,7 +22,7 @@ use super::{GenerateError, py};
 use GenerateError::Unsupported;
 
 /// Python's truth of a number from the model.
-fn truthy(n: Option<f64>) -> Option<f64> {
+fn nonzero(n: Option<f64>) -> Option<f64> {
     n.filter(|&n| n != 0.0)
 }
 
@@ -32,7 +32,7 @@ fn truthy(n: Option<f64>) -> Option<f64> {
 pub(crate) fn is_frame(b: &BoxSpec) -> bool {
     b.float_wrapper
         || b.horizontal && !(b.border.is_some() || b.background.is_some())
-        || truthy(b.width).is_some()
+        || nonzero(b.width).is_some()
             && !(b.border.is_some()
                 || b.background.is_some()
                 || b.float.as_deref().is_some_and(|s| !s.is_empty()))
@@ -41,7 +41,7 @@ pub(crate) fn is_frame(b: &BoxSpec) -> bool {
 /// `_emit_box_chunks` (:5978): in a sized box, each picture's size is a share of the box, as
 /// Previewer writes it (#382). Set on the chunk, not the token, whose length the runs count.
 pub(crate) fn size_pictures_in_box(b: &BoxSpec, chunks: &mut [Chunk]) -> Result<(), GenerateError> {
-    let Some(width) = truthy(b.width) else {
+    let Some(width) = nonzero(b.width) else {
         return Ok(());
     };
     for p in chunks.iter_mut().filter_map(|c| c.picture.as_mut()) {
@@ -78,7 +78,7 @@ fn size_in_box(
         _ => 1.0,
     };
     let px = m[2].parse::<f64>().unwrap() * per_unit;
-    let pct = match truthy(width_px) {
+    let pct = match nonzero(width_px) {
         Some(box_px) => px / box_px * 100.0,
         None => px / column_px() * 100.0 / width * 100.0,
     };

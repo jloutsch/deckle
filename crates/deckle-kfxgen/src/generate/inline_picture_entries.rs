@@ -30,7 +30,7 @@ pub(crate) struct InlinePicture {
 
 /// Each picture among words, in reading order, an id of its own after the entries' (:6683),
 /// and its paragraph's size (:7835).
-pub(crate) fn number(
+pub(crate) fn number_pictures(
     chunks: &mut [Chunk],
     font_size: impl Fn(&Chunk) -> f64,
     next_id: &mut i64,
@@ -69,7 +69,7 @@ pub(crate) struct InlineStyles {
 }
 
 /// `_INLINE_VALIGN_SYMBOLS` (:245).
-fn valign_symbol(va: &str) -> Option<&'static str> {
+fn inline_valign_symbol(va: &str) -> Option<&'static str> {
     Some(match va {
         "middle" => "$320",
         "top" => "$58",
@@ -254,7 +254,7 @@ fn inline_key(
         w_em = h_em * width / height;
     }
     let va = extras.get("va").copied();
-    let valign = va.and_then(valign_symbol);
+    let valign = va.and_then(inline_valign_symbol);
     let shift = match (valign, va) {
         (None, Some(va)) => valign_shift(va)?,
         _ => None,
@@ -418,7 +418,7 @@ impl InlineStyles {
 /// Pushes `$265`'s (offset, id, offset into the entry, kept beside another at its offset) and
 /// the section's (id, length, offset into the entry). Returns the offsets taken beyond its
 /// text's, a 縦中横's characters but the first.
-pub(crate) fn place(
+pub(crate) fn place_among_words(
     chunk: &Chunk,
     pos: i64,
     char_offset: i64,

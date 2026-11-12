@@ -178,7 +178,7 @@ pub(crate) fn eat_split_title(blocks: &[Block], title: &str) -> Option<Eaten> {
 pub(crate) fn title_in_table(blocks: &[Block], title: &str) -> bool {
     match first_unboxed(blocks).and_then(|b| b.table.as_deref()) {
         Some(t) => {
-            tables::opens_with_title(t, title)
+            tables::table_opens_with_title(t, title)
                 || eat_split_title(drop_edge_rules(blocks), title).is_some()
         }
         None => false,

@@ -63,7 +63,7 @@ pub(crate) fn build_position_data(section_names: &[String], data: &ChapterData) 
             };
             entries.push((char_offset, pid, 0, false));
             if !chunk.pictures.is_empty() || !chunk.tcys.is_empty() {
-                char_offset += inline_picture_entries::place(
+                char_offset += inline_picture_entries::place_among_words(
                     chunk,
                     pid,
                     char_offset,

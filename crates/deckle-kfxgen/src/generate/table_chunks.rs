@@ -207,7 +207,7 @@ pub(crate) fn emit_table_chunks(block: &Block, t: &Table, chunks: &mut Vec<Chunk
 /// `_attach_keys` (:5899): the chunk at `index`, or the first row of the table it opens:
 /// rows, not the `$278`, are link targets (#219); or the first entry in the box it opens
 /// (#238).
-pub(crate) fn link_target(chunks: &[Chunk], index: usize) -> usize {
+pub(crate) fn link_target_index(chunks: &[Chunk], index: usize) -> usize {
     match chunks[index].marker {
         Some(Marker::Open(Node::Table(_))) => {}
         Some(Marker::Open(Node::Box(_))) => {

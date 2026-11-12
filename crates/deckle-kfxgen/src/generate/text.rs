@@ -267,7 +267,7 @@ pub(crate) fn build_chapter_content(
                     // `_emitted_content` (:5940): a table of rows with no cells, a box of
                     // paragraphs that emitted nothing, is only its markers.
                     if !pending.is_empty() && chunks[first..].iter().any(Chunk::is_content) {
-                        let at = table_chunks::link_target(&chunks, first);
+                        let at = table_chunks::link_target_index(&chunks, first);
                         chunks[at].anchors.attach(&pending);
                         pending.clear();
                     }
@@ -323,7 +323,7 @@ pub(crate) fn build_chapter_content(
         if !carried.is_empty() {
             // A table's first row, a box's first entry, not the container (#219, #238); the
             // offsets of the block kfxgen's heading prints, else the chapter's start (:6622).
-            let at = table_chunks::link_target(&chunks, start_idx);
+            let at = table_chunks::link_target_index(&chunks, start_idx);
             let offsets = if Some(at) == heading_chunk {
                 heading_offsets
             } else {
@@ -360,7 +360,7 @@ pub(crate) fn build_chapter_content(
     let sizes = Sizes::of(&chunks);
     for (ch_idx, &(start, end)) in chapter_chunk_ranges.iter().enumerate() {
         let fs = chapters[ch_idx].font_size;
-        inline_picture_entries::number(
+        inline_picture_entries::number_pictures(
             &mut chunks[start..end],
             |c| sizes.block_font_size(fs, c),
             &mut content_pos_id,

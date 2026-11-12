@@ -90,7 +90,8 @@ pub(crate) struct Paragraph {
     pub heading: bool,
 }
 
-fn opt<T>(
+/// An optional model value: None when absent or None, else `read` of it or `err`.
+pub(crate) fn opt<T>(
     v: Option<&PyValue>,
     read: impl FnOnce(&PyValue) -> Option<T>,
     err: impl FnOnce() -> GenerateError,
@@ -351,8 +352,8 @@ pub(crate) fn dedupe(keys: impl IntoIterator<Item = String>) -> Vec<String> {
         .collect()
 }
 
-/// `_block_keys` (:1110): every anchor key a block holds, its table's included.
-pub(crate) fn block_keys(b: &Block) -> Vec<String> {
+/// `_block_keys` (:1110) short of boxes: every anchor key a block holds, its table's included.
+pub(crate) fn block_and_table_keys(b: &Block) -> Vec<String> {
     let mut keys = b.anchors.keys.clone();
     if let Some(t) = &b.table {
         keys.extend(t.anchor_keys.iter().cloned());
@@ -398,7 +399,7 @@ pub(crate) fn source_order(rows: &[Row]) -> Vec<usize> {
 }
 
 /// `_table_opens_with_title` (:1469): the first row with text opens with `title`.
-pub(crate) fn opens_with_title(t: &Table, title: &str) -> bool {
+pub(crate) fn table_opens_with_title(t: &Table, title: &str) -> bool {
     source_order(&t.rows)
         .into_iter()
         .map(|j| row_text(&t.rows[j]))

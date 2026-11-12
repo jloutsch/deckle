@@ -3,7 +3,7 @@
 //! (`build_table_style_157`, `native_generator.py:3808`), a cell's (`build_cell_style_157`
 //! :4015, from `_cell_style` :7326) and a row's or row group's border (`build_part_style_157`
 //! :4007), and the table's `$152` columns.
-use deckle_kfx::ion::{Decimal, Struct, Value};
+use deckle_kfx::ion::{Struct, Value};
 
 use super::block_styles::BlockStyle;
 use super::chunks::{Marker, Node};
@@ -135,7 +135,7 @@ pub(crate) fn align_symbol(align: &str) -> Option<&'static str> {
 }
 
 /// `inline_style.VALIGN_MAP` (:939).
-fn valign_symbol(valign: &str) -> Option<&'static str> {
+fn cell_valign_symbol(valign: &str) -> Option<&'static str> {
     match valign {
         "top" => Some("$58"),
         "middle" => Some("$320"),
@@ -287,17 +287,13 @@ pub(crate) fn padding_values(
     Some(out)
 }
 
-fn decimal(text: &str) -> Decimal {
-    py::decimal(text)
-}
-
 /// `build_table_style_157` (:3808).
 pub(crate) fn build_table_style_157(g: &mut Generator, name: &str, s: &TableStyle) -> Value {
     g.local(name);
     let Value::Struct(mut v) = st([
-        ("$16", measure(decimal("1"), "$505")),
-        ("$65", measure(decimal("100"), "$314")),
-        ("$42", measure(decimal("1"), "$310")),
+        ("$16", measure(py::decimal("1"), "$505")),
+        ("$65", measure(py::decimal("100"), "$314")),
+        ("$42", measure(py::decimal("1"), "$310")),
         ("$173", sym(name)),
         ("$83", Value::Int(4286611584)),
     ]) else {
@@ -334,8 +330,8 @@ pub(crate) fn build_part_style_157(g: &mut Generator, name: &str, s: &PartStyle)
 /// `build_cell_style_157` (:4015).
 pub(crate) fn build_cell_style_157(g: &mut Generator, name: &str, s: &CellStyle) -> Value {
     g.local(name);
-    let lh = |v: &str| measure(decimal(v), "$310");
-    let pct = |v: &str| measure(decimal(v), "$314");
+    let lh = |v: &str| measure(py::decimal(v), "$310");
+    let pct = |v: &str| measure(py::decimal(v), "$314");
     // 1px (0.45pt) at the sides, as a share of the page (#754, 0bc705d :4057).
     let side = py::format_g(py::round(0.45 / page_pt() * 100.0, 3), 6);
     let Value::Struct(mut v) = st([
@@ -347,7 +343,7 @@ pub(crate) fn build_cell_style_157(g: &mut Generator, name: &str, s: &CellStyle)
     ]) else {
         unreachable!()
     };
-    if let Some(valign) = valign_symbol(&s.valign) {
+    if let Some(valign) = cell_valign_symbol(&s.valign) {
         // First, where it has always been written.
         v.0.insert(0, ("$633".into(), sym(valign)));
     }

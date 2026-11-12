@@ -14,7 +14,7 @@ use super::frames;
 use super::images::{IMG_TOKEN, Images};
 use super::inline;
 use super::styles::{LINE_EM, g6};
-use super::table_chunks::{emit_table_chunks, link_target};
+use super::table_chunks::{emit_table_chunks, link_target_index};
 use super::table_styles::{apply_border, border_style_symbol, padding_values, side_keys};
 use super::tables::{self, Border, Padding, read_border, read_padding, read_sides};
 use super::title::opens_with_title;
@@ -78,19 +78,17 @@ pub(crate) struct RuleStyle {
     pub height: Option<(f64, String)>,
 }
 
-fn opt<T>(
+/// `tables::opt` of `d[key]`, its error naming the key.
+fn opt_key<T>(
     d: &PyValue,
     key: &str,
     at: &str,
     expected: &str,
     read: impl FnOnce(&PyValue) -> Option<T>,
 ) -> Result<Option<T>, GenerateError> {
-    match d.get(key) {
-        None | Some(PyValue::None) => Ok(None),
-        Some(v) => read(v)
-            .map(Some)
-            .ok_or_else(|| model_err(format!("{at}.{key}: {expected}"))),
-    }
+    tables::opt(d.get(key), read, || {
+        model_err(format!("{at}.{key}: {expected}"))
+    })
 }
 
 /// `(n, unit)`.
@@ -129,17 +127,17 @@ pub(crate) fn read_rule(b: &PyValue, at: &str) -> Result<RuleStyle, GenerateErro
     }
     let border = read_rule_border(r.get("border"), &format!("{at}.border"))?;
     Ok(RuleStyle {
-        space_above: opt(r, "space_above", &at, "a number", number)?,
-        space_below: opt(r, "space_below", &at, "a number", number)?,
-        width: opt(r, "width", &at, "(n, unit)", measure_of)?,
-        align: opt(r, "align", &at, "a string", |v| {
+        space_above: opt_key(r, "space_above", &at, "a number", number)?,
+        space_below: opt_key(r, "space_below", &at, "a number", number)?,
+        width: opt_key(r, "width", &at, "(n, unit)", measure_of)?,
+        align: opt_key(r, "align", &at, "a string", |v| {
             v.as_str().map(str::to_owned)
         })?,
-        margin_left: opt(r, "margin_left", &at, "a number", number)?,
-        margin_right: opt(r, "margin_right", &at, "a number", number)?,
+        margin_left: opt_key(r, "margin_left", &at, "a number", number)?,
+        margin_right: opt_key(r, "margin_right", &at, "a number", number)?,
         border,
-        fill: opt(r, "fill", &at, "an ARGB int", PyValue::as_int)?,
-        height: opt(r, "height", &at, "(n, unit)", measure_of)?,
+        fill: opt_key(r, "fill", &at, "an ARGB int", PyValue::as_int)?,
+        height: opt_key(r, "height", &at, "(n, unit)", measure_of)?,
     })
 }
 
@@ -196,15 +194,15 @@ pub(crate) fn read_box(b: &PyValue, at: &str, depth: usize) -> Result<BoxBlock, 
     }
     let spec = BoxSpec {
         border: read_border(d.get("border"), &format!("{at_box}.border"))?,
-        background: opt(d, "background", &at_box, "an ARGB int", PyValue::as_int)?,
+        background: opt_key(d, "background", &at_box, "an ARGB int", PyValue::as_int)?,
         padding: read_padding(d.get("padding"), &format!("{at_box}.padding"))?,
-        font_px: opt(d, "font_px", &at_box, "a number", number)?,
-        margin_left: opt(d, "margin_left", &at_box, "a number", number)?,
-        margin_right: opt(d, "margin_right", &at_box, "a number", number)?,
+        font_px: opt_key(d, "font_px", &at_box, "a number", number)?,
+        margin_left: opt_key(d, "margin_left", &at_box, "a number", number)?,
+        margin_right: opt_key(d, "margin_right", &at_box, "a number", number)?,
         bidi: Bidi::read(d.get("bidi"), &format!("{at_box}.bidi"))?,
-        width: opt(d, "width", &at_box, "a number", number)?,
-        width_px: opt(d, "width_px", &at_box, "a number", number)?,
-        float: opt(d, "float", &at_box, "a string", |v| {
+        width: opt_key(d, "width", &at_box, "a number", number)?,
+        width_px: opt_key(d, "width_px", &at_box, "a number", number)?,
+        float: opt_key(d, "float", &at_box, "a string", |v| {
             v.as_str().map(str::to_owned)
         })?,
         centred: truthy(d.get("centred")),
@@ -318,7 +316,7 @@ pub(crate) fn emit_box_chunks(
             unplaced
         };
         if !pending.is_empty() && chunks[first..].iter().any(Chunk::is_content) {
-            let at = link_target(chunks, first);
+            let at = link_target_index(chunks, first);
             chunks[at].anchors.attach(&pending);
             pending.clear();
         }
@@ -330,7 +328,7 @@ pub(crate) fn emit_box_chunks(
 
 /// `_block_keys` (:1110): every anchor key a block holds, in a box or a table included.
 pub(crate) fn block_keys(b: &Block) -> Vec<String> {
-    let mut keys = super::tables::block_keys(b);
+    let mut keys = super::tables::block_and_table_keys(b);
     if let Some(bx) = &b.boxed {
         for kid in &bx.blocks {
             keys.extend(block_keys(kid));
