@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Adding a book again under a name that differs only in case keeps it.** On a Mac (or any
+  case-insensitive disk), adding `mini.epub` when the library held `Mini.epub` deleted the copy
+  just written, and a library scan then removed the loose file too, leaving no copy of the
+  book. The library now keeps the one file.
+- **Two different files with the same name are two books.** A text, Word, RTF or comic file
+  without its own identifier is known by its title and author, and a text file's title is its
+  name, so adding `home/notes.txt` replaced the book from `work/notes.txt`. Such a file now
+  updates a book only when it's the same file or the library's own copy; anything else is filed
+  as a new book. An EPUB with the publisher's identifier still updates its book in place.
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in
