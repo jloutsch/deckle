@@ -309,11 +309,23 @@ impl PressJournal {
         self.ensure_healthy()?;
         let root = std::fs::canonicalize(binding.root).map_err(|_| journal::storage())?;
         let mut data = self.data.clone();
-        if data.bindings.iter().any(|b| {
+        if let Some(old) = data.bindings.iter().find(|b| {
             b.root == root
                 && (b.producer_id != binding.producer_id || b.paper_id != binding.paper_id)
         }) {
-            return Err(conflict());
+            // One folder, one paper: the folder moves to the new paper only once nothing of
+            // the old one is left, so no accepted request is ever delivered as another paper.
+            let old = PressBinding {
+                root: old.root.clone(),
+                producer_id: old.producer_id,
+                paper_id: old.paper_id,
+            };
+            let new = PressBinding {
+                root,
+                producer_id: binding.producer_id,
+                paper_id: binding.paper_id,
+            };
+            return super::retention::replace_binding(self, &old, new, enabled, stopped);
         }
         if let Some(b) = data.bindings.iter_mut().find(|b| {
             b.producer_id == binding.producer_id && b.paper_id == binding.paper_id && b.root == root
@@ -804,6 +816,63 @@ fn refusal_forgotten_at(e: &Entry) -> DateTime<Utc> {
         return seen.max(expiry);
     }
     seen
+}
+fn same_binding(b: &PressBinding, root: &Path, producer: Uuid, paper: Uuid) -> bool {
+    b.root == root && b.producer_id == producer && b.paper_id == paper
+}
+impl PressJournal {
+    /// Whether this binding still has work that is not finished: a pending, building or
+    /// publishing request, or an unfinished job.
+    pub(crate) fn binding_busy(&self, b: &PressBinding) -> bool {
+        self.data.entries.iter().any(|e| {
+            same_binding(b, &e.root, e.request.producer_id, e.request.paper_id)
+                && !terminal(e.status.state)
+        }) || self
+            .data
+            .jobs
+            .iter()
+            .any(|j| same_binding(b, &j.root, j.producer, j.paper) && !j.terminal)
+    }
+    /// Request IDs the journal holds for this binding.
+    pub(crate) fn binding_requests(&self, b: &PressBinding) -> Vec<Uuid> {
+        self.data
+            .entries
+            .iter()
+            .filter(|e| same_binding(b, &e.root, e.request.producer_id, e.request.paper_id))
+            .map(|e| e.request.request_id)
+            .collect()
+    }
+    /// One commit: drop everything of `old` and bind its folder to `new`. The caller has
+    /// already removed every output and status file `old` had.
+    pub(crate) fn commit_replacement(
+        &mut self,
+        old: &PressBinding,
+        new: PressBinding,
+        enabled: bool,
+        stopped: bool,
+    ) -> Result<(), PressError> {
+        self.ensure_healthy()?;
+        if self.binding_busy(old) {
+            return Err(conflict());
+        }
+        let mut data = self.data.clone();
+        data.entries
+            .retain(|e| !same_binding(old, &e.root, e.request.producer_id, e.request.paper_id));
+        data.jobs
+            .retain(|j| !same_binding(old, &j.root, j.producer, j.paper));
+        data.outputs
+            .retain(|o| !same_binding(old, &o.lease.root, o.lease.producer_id, o.lease.paper_id));
+        data.bindings
+            .retain(|b| !same_binding(old, &b.root, b.producer_id, b.paper_id));
+        data.bindings.push(Binding {
+            root: new.root,
+            producer_id: new.producer_id,
+            paper_id: new.paper_id,
+            enabled,
+            stopped,
+        });
+        self.commit(data)
+    }
 }
 /// Terminal entries one folder may hold before its new requests are left unanswered. A
 /// backstop: entries are never forgotten early, since a live request would be built again.

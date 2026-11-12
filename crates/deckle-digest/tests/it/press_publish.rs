@@ -737,3 +737,166 @@ fn press_late_request_gets_one_expired_status_and_no_journal_entry() {
         .unwrap();
     assert!(j.status(recent.request_id).is_some());
 }
+
+fn manifest(b: &PressBinding) -> ProducerManifest {
+    ProducerManifest {
+        format: "deckle-press".into(),
+        version: 1,
+        producer_id: b.producer_id,
+        paper_id: b.paper_id,
+        paper_name: "Test".into(),
+        enabled: true,
+        operations: vec![PressOperation::FreshFull],
+        reading_editions: true,
+        updated_at: now(),
+    }
+}
+/// Publish `count` editions for `b`, six minutes apart, and return their bundle paths.
+fn publish_editions(
+    d: &Path,
+    j: &mut PressJournal,
+    b: &PressBinding,
+    count: i64,
+) -> Vec<(std::path::PathBuf, std::path::PathBuf, Uuid)> {
+    (0..count)
+        .map(|i| {
+            let at = now() + Duration::minutes(6 * i);
+            let (l, id) = admit(j, b, at);
+            let a = artifact(d, &l);
+            let s = publish_result(j, &l, &a, || at).unwrap();
+            let archive = d.join(format!(
+                "journal/archive/{}/{}.deckle",
+                l.paper_id, l.edition_id
+            ));
+            (b.root.join(s.result.unwrap().bundle), archive, id)
+        })
+        .collect()
+}
+/// Stop configuring paper A in this folder and connect it to paper B instead.
+fn reconnect(j: &mut PressJournal, a: &PressBinding) -> PressBinding {
+    j.set_binding_policy(a, false, false).unwrap();
+    let b = PressBinding {
+        paper_id: Uuid::new_v4(),
+        ..a.clone()
+    };
+    setup::disconnect_manifest(&a.root, &manifest(a)).unwrap();
+    setup::write_manifest(&b, &manifest(&b)).unwrap();
+    b
+}
+#[test]
+fn press_replace_binding_removes_the_old_papers_outputs_and_statuses() {
+    let d = tempfile::tempdir().unwrap();
+    let (mut j, a) = setup(d.path());
+    // Ten editions in the last hour: newer than 48 hours and more than seven.
+    let published = publish_editions(d.path(), &mut j, &a, 10);
+    let b = reconnect(&mut j, &a);
+    j.register_binding(b.clone(), true, false).unwrap();
+    for (bundle, archive, id) in &published {
+        assert!(!bundle.exists(), "{}", bundle.display());
+        assert!(!archive.exists(), "{}", archive.display());
+        assert!(!status_path(&a, *id).exists());
+        assert!(j.status(*id).is_none());
+    }
+    assert_eq!(j.bindings(), vec![b.clone()]);
+    drop(j);
+    let mut j = PressJournal::open(&d.path().join("journal")).unwrap();
+    let later = now() + Duration::hours(2);
+    let request = request_at(&b, later, later + Duration::hours(24));
+    j.accept_in(&b, request.clone(), "b", later).unwrap();
+    let lease = j.admit(later).unwrap().unwrap();
+    assert_eq!(lease.paper_id, b.paper_id);
+}
+#[test]
+fn press_replace_binding_waits_for_the_old_papers_pending_requests() {
+    let d = tempfile::tempdir().unwrap();
+    let (mut j, a) = setup(d.path());
+    let pending = request_at(&a, now(), now() + Duration::hours(24));
+    j.accept_in(&a, pending.clone(), "pending", now()).unwrap();
+    let b = reconnect(&mut j, &a);
+    assert_eq!(
+        j.register_binding(b.clone(), true, false).unwrap_err().code,
+        PressErrorCode::ProtocolConflict
+    );
+    assert_eq!(j.bindings(), vec![a.clone()]);
+    assert!(j.status(pending.request_id).is_some());
+}
+#[test]
+fn press_replace_binding_needs_the_folder_to_name_the_new_paper() {
+    let d = tempfile::tempdir().unwrap();
+    let (mut j, a) = setup(d.path());
+    let published = publish_editions(d.path(), &mut j, &a, 1);
+    j.set_binding_policy(&a, false, false).unwrap();
+    let b = PressBinding {
+        paper_id: Uuid::new_v4(),
+        ..a.clone()
+    };
+    // The folder still names paper A.
+    assert_eq!(
+        j.register_binding(b, true, false).unwrap_err().code,
+        PressErrorCode::ProtocolConflict
+    );
+    assert!(published[0].0.exists());
+}
+#[test]
+fn press_replace_binding_refuses_an_unverifiable_bundle_and_names_it() {
+    let d = tempfile::tempdir().unwrap();
+    let (mut j, a) = setup(d.path());
+    let published = publish_editions(d.path(), &mut j, &a, 2);
+    let b = reconnect(&mut j, &a);
+    let extra = published[1].0.join(".DS_Store");
+    fs::write(&extra, b"finder").unwrap();
+    let error = j.register_binding(b.clone(), true, false).unwrap_err();
+    assert_eq!(error.code, PressErrorCode::ProtocolConflict);
+    assert!(
+        error
+            .to_string()
+            .contains(&published[1].0.display().to_string()),
+        "{error}"
+    );
+    assert_eq!(fs::read(&extra).unwrap(), b"finder");
+    // A crash here leaves a journal that opens, still bound to A.
+    drop(j);
+    let mut j = PressJournal::open(&d.path().join("journal")).unwrap();
+    assert_eq!(j.bindings(), vec![a.clone()]);
+    // Once the owner removes the stray file, the next attempt finishes the move.
+    fs::remove_file(&extra).unwrap();
+    j.register_binding(b.clone(), true, false).unwrap();
+    assert!(!published[1].0.exists());
+    assert_eq!(j.bindings(), vec![b]);
+}
+#[test]
+fn press_replace_binding_removes_unpublished_intents_and_stages() {
+    let d = tempfile::tempdir().unwrap();
+    let (mut j, a) = setup(d.path());
+    let (l, _) = admit(&mut j, &a, now());
+    let built = artifact(d.path(), &l);
+    // The deadline passes just before the final rename: an archived copy, a recorded
+    // intent and a shared staging folder are left behind.
+    let mut calls = 0;
+    assert!(
+        publish_result(&mut j, &l, &built, || {
+            calls += 1;
+            if calls == 3 { l.deadline } else { now() }
+        })
+        .is_err()
+    );
+    j.fail(&l, PressErrorCode::TimedOut, now()).unwrap();
+    let archived = d.path().join(format!(
+        "journal/archive/{}/{}.deckle",
+        l.paper_id, l.edition_id
+    ));
+    assert!(archived.exists());
+    let editions = a.root.join(".deckle-press/editions");
+    assert_eq!(
+        fs::read_dir(&editions).unwrap().count(),
+        1,
+        "one staging folder"
+    );
+    let b = reconnect(&mut j, &a);
+    j.register_binding(b.clone(), true, false).unwrap();
+    assert!(!archived.exists());
+    assert_eq!(fs::read_dir(&editions).unwrap().count(), 0);
+    drop(j);
+    let j = PressJournal::open(&d.path().join("journal")).unwrap();
+    assert_eq!(j.bindings(), vec![b]);
+}

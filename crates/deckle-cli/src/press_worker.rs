@@ -347,8 +347,11 @@ struct Engine {
 impl Engine {
     fn folder_report(&self) -> String {
         self.folder_errors
-            .values()
-            .map(|e| e.to_string())
+            .iter()
+            .map(|(root, e)| match e.detail {
+                Some(_) => e.to_string(),
+                None => format!("fresh-paper folder {}: {e}", root.display()),
+            })
             .collect::<Vec<_>>()
             .join("; ")
     }
@@ -510,15 +513,23 @@ impl Engine {
                         deckle_digest::papers::paper_path(&self.options.config_path, paper.slug())
                     };
                     let mut copy = paper.clone();
-                    press::setup::reconcile_with_watcher(
+                    // A failure is this folder's policy error: it is retried next tick and
+                    // never blocks other folders. Admission below is computed independently.
+                    match press::setup::reconcile_with_watcher(
                         papers,
                         &mut copy,
                         index,
                         producer,
                         &path,
                         || Ok(()),
-                    )?;
-                    self.reconciled.insert(binding.root.clone(), stamp);
+                    ) {
+                        Ok(()) => {
+                            self.reconciled.insert(binding.root.clone(), stamp);
+                        }
+                        Err(e) => {
+                            self.folder_errors.insert(binding.root.clone(), e);
+                        }
+                    }
                 }
                 let path = if paper.slug() == deckle_digest::papers::MAIN {
                     self.options.config_path.clone()
@@ -539,15 +550,21 @@ impl Engine {
                     .with_timezone(&deckle_digest::tz::local_tz())
                     .date_naive();
                 let stopped = press::read_stop(&paper.press_state(), today).is_some();
-                bindings.push((binding.clone(), paper.clone(), index));
                 let policy = (binding.clone(), enabled, stopped);
                 if self.registered.get(&binding.root) != Some(&policy) {
-                    self.journal
-                        .as_mut()
-                        .unwrap()
-                        .register_binding(binding, enabled, stopped)?;
+                    // A folder still bound to another paper (or otherwise refused) is left
+                    // out: its old binding is disabled below, and other folders go on.
+                    if let Err(e) = self.journal.as_mut().unwrap().register_binding(
+                        binding.clone(),
+                        enabled,
+                        stopped,
+                    ) {
+                        self.folder_errors.insert(binding.root.clone(), e);
+                        continue;
+                    }
                     self.registered.insert(policy.0.root.clone(), policy);
                 }
+                bindings.push((binding, paper.clone(), index));
             }
         }
         // A removed/invalid mapping may still have durable queued work. Explicitly disable

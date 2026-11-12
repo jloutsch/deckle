@@ -1914,3 +1914,62 @@ fn press_worker_full_request_history_leaves_new_requests_unanswered() {
     assert!(j.status(f.request.request_id).is_none());
     assert_eq!(j.statuses().len(), 1000);
 }
+#[test]
+fn press_worker_one_folder_in_conflict_does_not_block_another_paper() {
+    let f = fixture("Healthy paper");
+    // Another folder the journal binds to paper Z, which still has a request waiting, now
+    // configured for a different paper: registering it is a conflict.
+    let stuck = f.root.parent().unwrap().join("stuck");
+    std::fs::create_dir(&stuck).unwrap();
+    let z = PressBinding {
+        root: stuck.canonicalize().unwrap(),
+        producer_id: f.binding.producer_id,
+        paper_id: Uuid::new_v4(),
+    };
+    press::setup::write_manifest(
+        &z,
+        &ProducerManifest {
+            format: "deckle-press".into(),
+            version: 1,
+            producer_id: z.producer_id,
+            paper_id: z.paper_id,
+            paper_name: "Z".into(),
+            enabled: true,
+            operations: vec![PressOperation::FreshFull],
+            reading_editions: true,
+            updated_at: Utc::now(),
+        },
+    )
+    .unwrap();
+    let mut j = press::PressJournal::open(&f.root.join("journal")).unwrap();
+    j.register_binding(z.clone(), true, false).unwrap();
+    let mut waiting = f.request.clone();
+    waiting.request_id = Uuid::new_v4();
+    waiting.paper_id = z.paper_id;
+    j.accept_in(&z, waiting, "z", Utc::now()).unwrap();
+    drop(j);
+    let mut other = f.cfg.clone();
+    other.title = "Other paper".into();
+    other.paper_id = Some(Uuid::new_v4());
+    other.export[0].dir = stuck.display().to_string();
+    let papers = [f.cfg.clone(), other];
+    let mut w = PressSupervisor::with_options(f.options.clone());
+    let end = Instant::now() + Duration::from_secs(30);
+    let mut errors = Vec::new();
+    while !status(&f).is_some_and(|s| s.state == PressState::Published) {
+        assert!(
+            Instant::now() < end,
+            "the healthy paper was blocked: {:?} {errors:?}",
+            status(&f)
+        );
+        if let Err(e) = w.tick(&papers, Utc::now()) {
+            errors.push(e);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    drop(w);
+    assert!(
+        !errors.is_empty(),
+        "the conflicting folder's error is reported"
+    );
+}

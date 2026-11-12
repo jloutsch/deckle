@@ -34,12 +34,18 @@ pub(crate) fn binding(lease: &JobLease) -> PressBinding {
     }
 }
 pub(crate) fn check_binding(b: &PressBinding) -> Result<(), PressError> {
+    check_folder(b)?;
+    setup::owned_manifest(b)?.ok_or_else(conflict)?;
+    Ok(())
+}
+/// Every `check_binding` check except the owned manifest. Used only when replacing a
+/// binding, where the manifest already names the new paper.
+pub(crate) fn check_folder(b: &PressBinding) -> Result<(), PressError> {
     directory(&b.root, false)?;
     if fs::canonicalize(&b.root).map_err(|_| storage())? != b.root {
         return Err(conflict());
     }
     directory(&b.root.join(".deckle-press"), false)?;
-    setup::owned_manifest(b)?.ok_or_else(conflict)?;
     Ok(())
 }
 pub(crate) fn editions(b: &PressBinding, create: bool) -> Result<PathBuf, PressError> {
