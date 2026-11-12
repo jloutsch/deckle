@@ -415,17 +415,20 @@ fn build_fragment_585(g: &mut Generator, table_version: i64) -> Fragment {
     Fragment::root("$585", st([("$590", Value::List(features))]))
 }
 
-/// `_declare_table_viewer` (:2718): `yj_table_viewer` after `yj_table`, once a table with the
-/// zoom button is written (#254, #272).
-fn declare_table_viewer(g: &mut Generator) {
-    g.local("yj_table_viewer");
-    if let Some(features) = g
-        .fragments
+/// The `$585` fragment's feature list.
+fn features(g: &mut Generator) -> Option<&mut Vec<Value>> {
+    g.fragments
         .get_single_mut(&"$585".into())
         .and_then(|f| f.value.as_struct_mut())
         .and_then(|s| s.get_mut("$590"))
         .and_then(Value::as_list_mut)
-    {
+}
+
+/// `_declare_table_viewer` (:2718): `yj_table_viewer` after `yj_table`, once a table with the
+/// zoom button is written (#254, #272).
+fn declare_table_viewer(g: &mut Generator) {
+    g.local("yj_table_viewer");
+    if let Some(features) = features(g) {
         features.insert(1, feature("com.amazon.yjconversion", "yj_table_viewer", 1));
     }
 }
@@ -433,13 +436,7 @@ fn declare_table_viewer(g: &mut Generator) {
 /// `_declare_feature` (:2365): `name` 1.0 appended to `$585`.
 fn declare_feature(g: &mut Generator, name: &str) {
     g.local(name);
-    if let Some(features) = g
-        .fragments
-        .get_single_mut(&"$585".into())
-        .and_then(|f| f.value.as_struct_mut())
-        .and_then(|s| s.get_mut("$590"))
-        .and_then(Value::as_list_mut)
-    {
+    if let Some(features) = features(g) {
         features.push(feature("com.amazon.yjconversion", name, 1));
     }
 }
@@ -460,13 +457,7 @@ fn declare_content_features(g: &mut Generator, max_section_pids: i64) {
     for name in &pictures {
         g.local(name);
     }
-    let Some(features) = g
-        .fragments
-        .get_single_mut(&"$585".into())
-        .and_then(|f| f.value.as_struct_mut())
-        .and_then(|s| s.get_mut("$590"))
-        .and_then(Value::as_list_mut)
-    else {
+    let Some(features) = features(g) else {
         return;
     };
     // After yj_table and its viewer, where it stood before (#455).
@@ -572,13 +563,7 @@ fn declare_writing_mode_features(
     };
     for (n, (name, major)) in add.into_iter().enumerate() {
         g.local(name);
-        if let Some(features) = g
-            .fragments
-            .get_single_mut(&"$585".into())
-            .and_then(|f| f.value.as_struct_mut())
-            .and_then(|s| s.get_mut("$590"))
-            .and_then(Value::as_list_mut)
-        {
+        if let Some(features) = features(g) {
             features.insert(n, feature("com.amazon.yjconversion", name, major));
         }
     }
