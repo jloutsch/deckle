@@ -50,14 +50,25 @@ fn position_location_and_capability_fragments_match_golden() {
 }
 
 #[test]
-fn positions_past_the_books_bytes_are_refused() {
+fn positions_past_the_books_text_are_refused() {
+    use deckle_kfx::ion::Value;
     let kpf = read_kpf(&deckle_kfx::fixtures::path("deckle-mini.kpf")).unwrap();
     let mut book = Book::from_kpf(kpf, "CR!TEST");
-    assert!(book.input_bytes > 0, "the bytes read come with the book");
     fix_structural(&mut book).unwrap();
     let has_text = create_content_fragments(&mut book);
-    // As if the KPF were 10 bytes: its positions can't fit in them.
-    book.input_bytes = 10;
+    // The first section's position count (`$611`) claimed as a billion: far more than the
+    // characters and elements its storylines hold.
+    let counts = book.fragments.get_single_mut(&Sym::new("$611")).unwrap();
+    let first = counts
+        .value
+        .as_struct_mut()
+        .unwrap()
+        .get_mut("$181")
+        .unwrap();
+    first.as_list_mut().unwrap()[0]
+        .as_struct_mut()
+        .unwrap()
+        .insert("$144", Value::Int(1_000_000_000));
     let e = create_position_and_location_maps(&mut book, has_text).unwrap_err();
     assert!(e.to_string().contains("positions"), "{e}");
 }

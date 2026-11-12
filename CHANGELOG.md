@@ -23,7 +23,9 @@
   is decoded; comic pages keep `image`'s own limit.
 - **A hostile KFX or KPF is refused instead of filling memory.** A symbol table claiming more
   than a million symbols, an entity table whose rows add up to more than the file, and
-  positions or page ranges that add up to more than the book's bytes are each refused.
+  positions or page ranges past what the book's text can hold (one a character, one an
+  element) are each refused. Pictures and fonts in the book hold no positions, so padding
+  them doesn't raise the limit.
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in

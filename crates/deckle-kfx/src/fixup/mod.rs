@@ -43,14 +43,10 @@ pub struct Book {
     pub container_id: String,
     pub is_prepub: bool,
     pub warnings: Vec<String>,
-    /// Bytes the book was read from: no position can lie past them, so they bound the
-    /// positions and page ranges the book declares (size-limits design).
-    pub input_bytes: u64,
 }
 
 impl Book {
     pub fn from_kpf(kpf: Kpf, container_id: &str) -> Self {
-        let input_bytes = kpf.budget.used();
         let mut budget = kpf.budget;
         let source_epub = kpf
             .source_epub
@@ -64,7 +60,6 @@ impl Book {
             container_id: container_id.to_owned(),
             is_prepub: kpf.is_prepub,
             warnings: Vec::new(),
-            input_bytes,
         }
     }
 

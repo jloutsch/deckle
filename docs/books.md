@@ -92,7 +92,7 @@ the limit, instead of slowing the computer or crashing. Real books are far insid
 | PDF: a page rendered as a picture (a larger one renders smaller) | 100 megapixels |
 | A picture in a book, a cover or a web photo (not comic pages) | 100 megapixels |
 | KFX, KPF: symbols in the symbol table | 1,000,000 |
-| KFX, KPF: positions and page ranges, all together | the size of the file |
+| KFX, KPF: positions and page ranges, all together | one a character of the book's text, one an element |
 
 The numbers are in one place, `crates/deckle-limits`.
 

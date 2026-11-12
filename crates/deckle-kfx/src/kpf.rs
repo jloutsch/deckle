@@ -538,6 +538,39 @@ mod tests {
     }
 
     #[test]
+    fn a_max_id_row_past_the_limit_is_refused() {
+        // The KDF's own `max_id` row, the path without a symbol table fragment.
+        let run = |max_id: i64| {
+            let mut symtab = SymbolTable::yj_default();
+            let row = Row {
+                id: "max_id".into(),
+                payload_type: "blob".into(),
+                payload: crate::ion::encode_single(&Value::Int(max_id), &symtab).unwrap(),
+            };
+            let (mut fragments, mut have) = (FragmentList::new(), false);
+            let r = process_row(
+                &row,
+                &HashMap::new(),
+                &HashMap::new(),
+                &mut symtab,
+                &mut fragments,
+                &mut have,
+                &HashMap::new(),
+                "",
+            );
+            (r, symtab)
+        };
+        let start = std::time::Instant::now();
+        for bad in [50_000_000, i64::from(u32::MAX), -1] {
+            assert!(matches!(run(bad).0, Err(KpfError::Ion { .. })), "{bad}");
+        }
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        let (r, symtab) = run(900);
+        r.unwrap();
+        assert!(symtab.len() > 800);
+    }
+
+    #[test]
     fn the_budget_left_over_comes_back_with_the_book() {
         let path = crate::fixtures::path("deckle-mini.kpf");
         let k = read_kpf(&path).unwrap();
