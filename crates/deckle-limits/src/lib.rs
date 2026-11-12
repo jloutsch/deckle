@@ -21,6 +21,9 @@ pub use roxmltree;
 #[cfg(feature = "xml")]
 pub use xml::{XmlError, parse_xml, xml_depth_over};
 
+#[cfg(feature = "state")]
+pub mod state_file;
+
 const MB: u64 = 1024 * 1024;
 const GB: u64 = 1024 * MB;
 
