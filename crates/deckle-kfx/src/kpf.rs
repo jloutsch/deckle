@@ -345,7 +345,8 @@ fn process_row(
             } else if id == "max_id" {
                 if !*have_symtab {
                     let max_id = decode_single(data, symtab).map_err(ion_err)?;
-                    let max_id = max_id.as_int().unwrap_or(0) as u32;
+                    let max_id = crate::symtab::checked_max_id(max_id.as_int().unwrap_or(0))
+                        .map_err(ion_err)?;
                     *symtab = SymbolTable::with_yj_max_id(
                         max_id.saturating_sub(crate::symtab::SYSTEM_SYMBOL_COUNT),
                     );

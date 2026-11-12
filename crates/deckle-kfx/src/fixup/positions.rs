@@ -80,7 +80,10 @@ pub fn collect_position_map_info(book: &mut Book) -> Result<Vec<ContentChunk>, F
             .and_then(Value::as_list)
             .cloned()
             .unwrap_or_default();
-        contains.push(Value::List(vec![Value::Int(count + 1), Value::Int(0)]));
+        contains.push(Value::List(vec![
+            Value::Int(count.saturating_add(1)),
+            Value::Int(0),
+        ]));
         let (mut pid, mut eid, mut eid_offset) = (0i64, 0i64, 0i64);
         for (i, pi) in contains.iter().enumerate() {
             let (next_pid, next_eid, next_offset) = match pi {
@@ -108,7 +111,7 @@ pub fn collect_position_map_info(book: &mut Book) -> Result<Vec<ContentChunk>, F
                     pid: pid + section_start_pid,
                     eid,
                     eid_offset,
-                    length: next_pid - pid,
+                    length: next_pid.saturating_sub(pid),
                     section: section.clone(),
                 });
             }
@@ -122,6 +125,17 @@ pub fn collect_position_map_info(book: &mut Book) -> Result<Vec<ContentChunk>, F
             ));
         }
         section_start_pid += count;
+    }
+    // Locations and pages are made a position at a time: positions past the bytes the book
+    // was read from are declared, not real.
+    let total = pos_info
+        .iter()
+        .fold(0u64, |t, c| t.saturating_add(c.length.max(0) as u64));
+    if total > book.input_bytes {
+        return Err(FixupError::Malformed(format!(
+            "the book's positions add up to {total}, more than its {} bytes",
+            book.input_bytes
+        )));
     }
     Ok(pos_info)
 }

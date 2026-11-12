@@ -48,6 +48,24 @@ fn approximate_pages_match_pages_golden() {
 }
 
 #[test]
+fn a_position_range_past_the_books_bytes_is_refused() {
+    use deckle_kfx::ion::Value;
+    // `$264` lists each section's eids, a run as `[start, count]`; a count of five million in
+    // a book of a few hundred kilobytes took 641 MB.
+    let (mut book, _) = prepared("deckle-mini-pdoc-nopages.golden.kfx");
+    let pm = book.fragments.get_single_mut(&Sym::new("$264")).unwrap();
+    let sect = pm.value.as_list_mut().unwrap()[0].as_struct_mut().unwrap();
+    let eids = sect.get_mut("$181").unwrap().as_list_mut().unwrap();
+    eids.push(Value::List(vec![
+        Value::Int(1_000_000),
+        Value::Int(5_000_000_000),
+    ]));
+    let start = std::time::Instant::now();
+    assert!(add_approximate_pages(&mut book, None).is_err());
+    assert!(start.elapsed() < std::time::Duration::from_secs(5));
+}
+
+#[test]
 fn page_list_entry_landmarks_become_a_page_list() {
     use deckle_kfx::ion::{Struct, Value};
     let (mut book, _) = prepared("deckle-mini-pdoc-nopages.golden.kfx");

@@ -168,10 +168,19 @@ pub fn read_kfx(data: &[u8]) -> Result<KfxDoc, ContainerError> {
             tbl_off.ok_or(ContainerError::Truncated)? as usize,
             tbl_len as usize,
         )?;
+        // Rows may all point at one entity: together they can't hold more than the file.
+        let mut held = deckle_limits::Budget::new(data.len() as u64);
+        for row in table.as_chunks::<24>().0 {
+            held.add(u64le(&row[16..24])).map_err(|_| {
+                ContainerError::Malformed("entities add up to more than the file".into())
+            })?;
+        }
         for row in table.as_chunks::<24>().0 {
             let id_idnum = u32le(&row[0..4]);
             let type_idnum = u32le(&row[4..8]);
-            let ent_off = header_len + u64le(&row[8..16]) as usize;
+            let ent_off = header_len
+                .checked_add(u64le(&row[8..16]) as usize)
+                .ok_or(ContainerError::Truncated)?;
             let ent_len = u64le(&row[16..24]) as usize;
             let ent = slice(data, ent_off, ent_len)?;
             entities.push(read_entity(ent, id_idnum, type_idnum, &symtab)?);
@@ -485,4 +494,37 @@ fn write_entity(f: &Fragment, symtab: &SymbolTable) -> Result<Vec<u8>, Container
         ent.extend_from_slice(&encode_single(&f.value, symtab)?);
     }
     Ok(ent)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entity_rows_that_add_up_past_the_file_are_refused() {
+        let mut data =
+            std::fs::read(crate::fixtures::path("deckle-mini-pdoc-nopages.golden.kfx")).unwrap();
+        assert!(read_kfx(&data).is_ok());
+        // Every row of the entity table pointed at the whole entity area.
+        let header_len = u32le(&data[6..10]) as usize;
+        let (cinfo_off, cinfo_len) = (u32le(&data[10..14]), u32le(&data[14..18]));
+        let cinfo = decode_single(
+            slice(&data, cinfo_off as usize, cinfo_len as usize).unwrap(),
+            &SymbolTable::yj_default(),
+        )
+        .unwrap();
+        let c = cinfo.as_struct().unwrap();
+        let off = c.get("$413").and_then(Value::as_int).unwrap() as usize;
+        let len = c.get("$414").and_then(Value::as_int).unwrap() as usize;
+        let area = (data.len() - header_len) as u64;
+        for row in data[off..off + len].as_chunks_mut::<24>().0 {
+            row[8..16].copy_from_slice(&0u64.to_le_bytes());
+            row[16..24].copy_from_slice(&area.to_le_bytes());
+        }
+        let e = read_kfx(&data).err().unwrap();
+        assert!(
+            e.to_string().contains("add up to more than the file"),
+            "{e}"
+        );
+    }
 }

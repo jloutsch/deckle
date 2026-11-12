@@ -464,6 +464,7 @@ fn pos_info_for_pages(book: &mut Book) -> Result<Vec<ContentChunk>, FixupError> 
         return Ok(Vec::new());
     };
     let mut eid_section: HashMap<i64, Sym> = HashMap::new();
+    let mut ranged = 0u64;
     if let Some(pm) = book
         .fragments
         .get_single(&Sym::new("$264"))
@@ -481,8 +482,16 @@ fn pos_info_for_pages(book: &mut Book) -> Result<Vec<ContentChunk>, FixupError> 
                     }
                     Value::List(range) if range.len() == 2 => {
                         if let (Some(start), Some(n)) = (range[0].as_int(), range[1].as_int()) {
+                            // One key a position: the runs together can't pass the book's bytes.
+                            ranged = ranged.saturating_add(n.max(0) as u64);
+                            if ranged > book.input_bytes {
+                                return Err(FixupError::Malformed(format!(
+                                    "the book's position ranges pass its {} bytes",
+                                    book.input_bytes
+                                )));
+                            }
                             for k in 0..n {
-                                eid_section.insert(start + k, name.clone());
+                                eid_section.insert(start.saturating_add(k), name.clone());
                             }
                         }
                     }
@@ -508,9 +517,18 @@ fn pos_info_for_pages(book: &mut Book) -> Result<Vec<ContentChunk>, FixupError> 
             pid,
             eid,
             eid_offset: offset,
-            length: next - pid,
+            length: next.saturating_sub(pid),
             section,
         });
+    }
+    let total = out
+        .iter()
+        .fold(0u64, |t, c| t.saturating_add(c.length.max(0) as u64));
+    if total > book.input_bytes {
+        return Err(FixupError::Malformed(format!(
+            "the book's positions add up to {total}, more than its {} bytes",
+            book.input_bytes
+        )));
     }
     Ok(out)
 }
