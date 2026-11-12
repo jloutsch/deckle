@@ -30,7 +30,10 @@ HOOK="$ROOT/tools/ref/kfxgen_hook"
 KFXGEN_COMMIT="$(git -C "$KFXGEN" rev-parse --short "$KFXGEN_REF^{commit}")"
 export KFXGEN_COMMIT
 WORK="$(mktemp -d -t deckle-kfxgen-XXXXXX)"
-trap 'rm -rf "$WORK"' EXIT
+# The models are built beside OUT and take its place only when every one is made: a run
+# that fails leaves the committed fixtures as they were.
+BUILD="$OUT.new"
+trap 'rm -rf "$WORK" "$BUILD"' EXIT
 
 # The export, with the hook. test_books is untracked in places, so it is the repo's own.
 TREE="$WORK/kfxgen"
@@ -84,6 +87,13 @@ if [ "${1:-}" = "--corpus" ]; then
   shift
   : "${DECKLE_KFXGEN_CORPUS_OUT:?set DECKLE_KFXGEN_CORPUS_OUT to the folder for the models}"
   mkdir -p "$DECKLE_KFXGEN_CORPUS_OUT"
+  # Checked before any model is touched: an empty name's folder is the whole corpus.
+  for epub in "$@"; do
+    [ -f "$epub" ] && [ -n "$(basename "$epub" .epub)" ] || {
+      echo "--corpus: not an EPUB file: '$epub'" >&2
+      exit 1
+    }
+  done
   for epub in "$@"; do
     calibre_model "$(basename "$epub" .epub)" "$epub" "$DECKLE_KFXGEN_CORPUS_OUT"
   done
@@ -91,10 +101,10 @@ if [ "${1:-}" = "--corpus" ]; then
   exit 0
 fi
 
-rm -rf "$OUT"
-mkdir -p "$OUT" "$SOURCES"
-"$PY" "$ROOT/tools/ref/kfxgen_models.py" shim "$TREE" "$OUT"
-"$PY" "$ROOT/tools/ref/kfxgen_models.py" args "$TREE" "$OUT"
+rm -rf "$BUILD"
+mkdir -p "$BUILD" "$SOURCES"
+"$PY" "$ROOT/tools/ref/kfxgen_models.py" shim "$TREE" "$BUILD"
+"$PY" "$ROOT/tools/ref/kfxgen_models.py" args "$TREE" "$BUILD"
 
 # Calibre-path fixtures, one per feature (fixtures/kfxgen/README.md). Sources from kfxgen's
 # test_books/ are copied in when that folder has them; otherwise the committed copy is used.
@@ -124,7 +134,9 @@ floats_697|floats_697/F697 kfxgen source.epub
 font_sizes|font_sizes/font-sizes-source.epub
 LIST
 for epub in "$SOURCES"/*.epub; do
-  calibre_model "$(basename "$epub" .epub)" "$epub" "$OUT"
+  calibre_model "$(basename "$epub" .epub)" "$epub" "$BUILD"
 done
-record_tools "$OUT"
+record_tools "$BUILD"
+rm -rf "$OUT"
+mv "$BUILD" "$OUT"
 du -sh "$ROOT/fixtures/kfxgen"
