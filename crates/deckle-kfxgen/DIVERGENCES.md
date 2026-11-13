@@ -535,6 +535,13 @@ together against `deckle_limits::MAX_STYLE_RULES`, where `css::parse_sheet` coun
 own, and refuses a file the flattener gives more classes than that limit
 (`stylesheet.css`'s rules for the file).
 
+Calibre also holds every file's styles until the book is done, without limit. The port counts
+the units of all a book's files together against `deckle_limits::MAX_BOOK_CASCADE_DECLS` (3
+million, about 400 MB of styles) and refuses the book past it (`css::Error::BookCascade`): a book
+of 200 files of 6,000 elements with 2,000 styles of their own each is refused at its 78th file,
+in about 2 seconds. The fixture books use at most 4,196 units, 200 chapters of an ordinary novel
+135,800.
+
 ## Class names from letters outside ASCII
 
 The flattener names a class after the element's first class, made ASCII by Calibre's
@@ -568,11 +575,11 @@ cap.
 
 ## Values the flattener writes back
 
-Calibre writes each class as text (`key: value;`) and css_parser reads `stylesheet.css` back. The
-port writes each value as css_parser writes values (`22.0pt` is `22pt`, `#eeeeee` is `#eee`) and
-drops one it cannot read, value by value: a value whose text would end its declaration or rule
-early (an attribute value holding `;` or `}`, such as `<font face="a;b">`) is read by Calibre with
-the rest of the sheet changed around it, and by the port as one value or none.
+Calibre writes each class as text (`.name {key: value; …}`) and css_parser reads `stylesheet.css`
+back. The port reads each class's block back with its own declaration reader, so `;` and
+`!important` inside an attribute's value come back as Calibre's do. A `}` inside one (`<font
+face="a}b">`) ends the rule in Calibre's sheet and changes the rules after it; the port reads it
+within its own block only.
 
 ## Fake margins on elements the flattener leaves
 

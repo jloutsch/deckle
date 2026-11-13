@@ -19,16 +19,18 @@
 //! charged against [`deckle_limits::MAX_CASCADE_DECLS`] for the copy it makes. A class made
 //! from first-pass declarations is not charged again: each element's first-pass declarations
 //! are let go as it is flattened. The classes a file names are bounded by
-//! [`MAX_STYLE_RULES`].
+//! [`MAX_STYLE_RULES`]. The book holds every file's styles and classes until it is done: the
+//! units of its files together are bounded by [`MAX_BOOK_CASCADE_DECLS`].
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use deckle_limits::MAX_STYLE_RULES;
+use cssparser::{Parser, ParserInput};
+use deckle_limits::{MAX_BOOK_CASCADE_DECLS, MAX_STYLE_RULES};
 
 use super::cascade::{Spent, Units, decl_units, run};
-use super::value::write_value;
-use super::{Cascaded, Decl, Decls, Error, Origin, Profile, Rule, normalize};
+use super::value::{declarations, write_value};
+use super::{Cascaded, Decls, Error, Origin, Profile, Rule, normalize};
 use crate::dom::{Dom, NodeId, XHTML_NS, py_space};
 
 /// The SVG namespace: Calibre flattens SVG elements too.
@@ -94,6 +96,9 @@ pub struct ClassNamer {
     pub(crate) classes: Vec<Class>,
     /// A name → its classes (two only where Calibre's numbering repeats a name).
     by_name: HashMap<String, Vec<u32>>,
+    /// The units the book's files flattened so far used, both cascades of each
+    /// ([`MAX_BOOK_CASCADE_DECLS`]).
+    units: usize,
 }
 
 /// One rule of the stylesheet Calibre writes.
@@ -107,6 +112,12 @@ pub(crate) struct Class {
 }
 
 impl ClassNamer {
+    /// The units of [`deckle_limits::MAX_CASCADE_DECLS`] the book's files flattened so far used
+    /// together, counted against [`MAX_BOOK_CASCADE_DECLS`].
+    pub fn units(&self) -> usize {
+        self.units
+    }
+
     /// `klass + str(names[klass] or '')`, counted.
     fn next_name(&mut self, klass: &str) -> String {
         let n = self.counts.entry(klass.to_owned()).or_insert(0);
@@ -128,6 +139,17 @@ impl ClassNamer {
             decls: Arc::new(decls),
         });
         id
+    }
+
+    /// The element classes named `name`, in the order they were made, which is their order in
+    /// `stylesheet.css` (a stable sort by name).
+    pub(crate) fn own_classes(&self, name: &str) -> impl Iterator<Item = u32> + '_ {
+        self.by_name
+            .get(name)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|&id| self.classes[id as usize].pseudo.is_none())
     }
 
     /// The element's own class named `name`, as `RemoveFakeMargins` finds it by its selector
@@ -202,7 +224,7 @@ pub struct Flat {
     pub pseudo: Vec<Vec<(&'static str, Decls)>>,
     /// Each element's `class` attribute after flattening, the names in byte order (Calibre
     /// writes them in a set's order, which varies from run to run).
-    pub class: Vec<Option<String>>,
+    pub class: Vec<Option<Arc<str>>>,
     /// Each element's declarations from `html.css` alone in the second cascade.
     pub(crate) ua: Vec<Arc<Decls>>,
     /// The class the flattener gave each element ([`ClassNamer`]'s), or [`NO_CLASS`].
@@ -301,7 +323,8 @@ impl<'a> View<'a> {
 /// cascaded again over `html.css` with the classes as the book's rules, charged on from the
 /// first cascade's use of the limits: [`Error::Cascade`] or [`Error::Selectors`] when the two
 /// together pass them, [`Error::TooLarge`] when the file has more classes than
-/// [`MAX_STYLE_RULES`].
+/// [`MAX_STYLE_RULES`], [`Error::BookCascade`] when the units of the book's files so far pass
+/// [`MAX_BOOK_CASCADE_DECLS`] together.
 pub fn flatten(
     dom: &mut Dom,
     href: &str,
@@ -561,9 +584,19 @@ pub fn flatten(
         work: spent.work,
     };
     let (second, ua) = run(dom, href, rules, Vec::new(), profile, spent, true)?;
+    // The book holds every file's styles until it is done: what this file's cascades stored
+    // counts against the book's limit too.
+    namer.units = namer.units.saturating_add(second.spent.units);
+    if namer.units > MAX_BOOK_CASCADE_DECLS {
+        return Err(Error::BookCascade(MAX_BOOK_CASCADE_DECLS));
+    }
+    // Elements of one class attribute share its text.
+    let mut texts: HashMap<&str, Arc<str>> = HashMap::new();
     let mut class = vec![None; n];
     for e in dom.descendants() {
-        class[e.index()] = dom.attr(e, "class").map(str::to_owned);
+        class[e.index()] = dom
+            .attr(e, "class")
+            .map(|c| Arc::clone(texts.entry(c).or_insert_with(|| Arc::from(c))));
     }
     Ok(Flat {
         specified: second.specified,
@@ -844,7 +877,7 @@ fn element_class(
     if let Some(&id) = namer.styles.get(&text) {
         return id;
     }
-    let decls = read_back(&pairs, profile);
+    let decls = read_back(&text, profile);
     let name = namer.next_name(&base_name(dom.attr(e, "class")));
     let id = namer.add(name, None, decls);
     namer.styles.insert(text, id);
@@ -852,24 +885,15 @@ fn element_class(
 }
 
 /// A class's declarations as css_parser reads `stylesheet.css` back and the `Stylizer`
-/// flattens them: each value written as css_parser writes values (`1.0rem` as `1rem`, `22.0pt`
-/// as `22pt`), dropped where it cannot read it, the whole normalized. A copy of declarations
-/// the first cascade charged for, which it no longer holds once the file is flattened.
-fn read_back(pairs: &[(&str, &str)], profile: &Profile) -> Decls {
-    let decls: Decls = pairs
-        .iter()
-        .filter_map(|&(k, v)| {
-            let value = write_value(v, None).filter(|v| !v.is_empty())?;
-            Some((
-                k.to_owned(),
-                Decl {
-                    value,
-                    important: false,
-                },
-            ))
-        })
-        .collect();
-    normalize(decls, profile)
+/// flattens them: `text`, the block Calibre writes for the class, read as a declaration block
+/// (each value as css_parser writes values, `1.0rem` as `1rem` and `22.0pt` as `22pt`; one
+/// it cannot read dropped; a value an attribute gave ending in `!important` read as important),
+/// then normalized. A copy of declarations the first cascade charged for, which it no longer
+/// holds once the file is flattened.
+fn read_back(text: &str, profile: &Profile) -> Decls {
+    let mut input = ParserInput::new(text);
+    let mut p = Parser::new(&mut input);
+    normalize(declarations(&mut p, None, None), profile)
 }
 
 /// The class of a pseudo-class's declarations: found by the text Calibre writes for them,
@@ -890,7 +914,7 @@ fn pseudo_class(
     if let Some(&id) = namer.pseudo_styles.get(&key) {
         return id;
     }
-    let kept = read_back(&pairs, profile);
+    let kept = read_back(&key.1, profile);
     if !namer.psels.contains(&psel) {
         namer.psels.push(psel);
     }

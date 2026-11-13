@@ -155,19 +155,32 @@ pub fn remove_fake_margins(namer: &mut ClassNamer, docs: &mut [(&Dom, &mut Flat)
         return;
     }
 
-    // Every element of the book with a class that lost a margin: its class's declarations over
-    // `html.css`'s again, as kfxgen's Stylizer reads them.
+    // Every element of the book whose class's name is that of a class that lost a margin: the
+    // declarations of every element class of that name (each a rule of `stylesheet.css` its
+    // `class` attribute selects, in the sheet's order) over `html.css`'s again, as kfxgen's
+    // Stylizer reads them.
+    let mut touched: HashSet<u32> = HashSet::new();
+    for &id in &edited {
+        touched.extend(namer.own_classes(&namer.classes[id as usize].name));
+    }
     for (_, flat) in docs.iter_mut() {
-        let mut memo: HashMap<(usize, u32), Arc<Decls>> = HashMap::new();
+        let mut memo: HashMap<(usize, &str), Arc<Decls>> = HashMap::new();
         for i in 0..flat.main.len() {
             let id = flat.main[i];
-            if id == NO_CLASS || !edited.contains(&id) {
+            if id == NO_CLASS || !touched.contains(&id) {
                 continue;
             }
             let ua = &flat.ua[i];
+            let name = namer.classes[id as usize].name.as_str();
             let got = memo
-                .entry((Arc::as_ptr(ua) as usize, id))
-                .or_insert_with(|| Arc::new(merged(ua, &namer.classes[id as usize].decls)));
+                .entry((Arc::as_ptr(ua) as usize, name))
+                .or_insert_with(|| {
+                    let mut decls = Decls::clone(ua);
+                    for same in namer.own_classes(name) {
+                        decls = merged(&decls, &namer.classes[same as usize].decls);
+                    }
+                    Arc::new(decls)
+                });
             flat.specified[i] = Arc::clone(got);
         }
     }

@@ -156,4 +156,8 @@ pub enum Error {
     /// units: the limit passed.
     #[error("the CSS of this book file gives its elements more than {0} declarations")]
     Cascade(usize),
+    /// The styles the two cascades give the elements of the book's files so far pass
+    /// [`deckle_limits::MAX_BOOK_CASCADE_DECLS`] units together: the limit passed.
+    #[error("the CSS of this book gives the elements of its files more than {0} declarations")]
+    BookCascade(usize),
 }

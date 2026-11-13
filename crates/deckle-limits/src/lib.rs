@@ -106,9 +106,21 @@ pub const MAX_SELECTOR_WORK: u64 = 100_000_000;
 /// first cascade alone takes about 85 MB (81 to 83 MB measured at 480,000 units: 40,000
 /// elements of 11 declarations each of their own), both together up to about 120 MB (118 MB
 /// measured for 45,000 elements of a declaration each of their own, refused in the second),
-/// release build. The files of nine Gutenberg books use at most 1,495 in the first; the 49
-/// cascade fixture files at most 1,049 in both.
+/// release build. Both cascades sharing the limit, a file fits about 12,000 to 25,000 elements
+/// each styled its own way (25,000 of one declaration each; fewer with more), and an element's
+/// pseudo-class declarations are counted for it in both cascades. The files of nine Gutenberg
+/// books use at most 1,495 in the first; the 49 cascade fixture files at most 1,049 in both.
 pub const MAX_CASCADE_DECLS: usize = 500_000;
+
+/// EPUB to KFX: the units of [`MAX_CASCADE_DECLS`] all a book's files use together, each
+/// file's two cascades counted: a book's styles stay held until its last file is styled.
+/// About 135 bytes a unit stay held (121 to 134 measured over 2.7 to 3.8 million units, in
+/// books of 6 files of 24,000 elements styled their own way, 100 files of 6,000 elements of
+/// 2,000 styles each, and 1,500 files of 300 elements of 100 styles; release build), so at
+/// the limit a book's styles take about 400 MB besides its trees. The 13 cascade fixture
+/// books use at most 4,196 units; 200 chapters of an ordinary novel (`css_flatten`'s
+/// `NOVEL_CSS`) use 135,800.
+pub const MAX_BOOK_CASCADE_DECLS: usize = 3_000_000;
 
 /// Largest reservation made from a size a file declares (rule 1 of the size-limits design):
 /// `Vec::with_capacity(declared.min(MAX_RESERVE))`.

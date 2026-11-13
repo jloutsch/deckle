@@ -14,7 +14,7 @@ use deckle_kfxgen::css::{
 };
 use deckle_kfxgen::dom::{self, Dom, NodeId, mark_chapters};
 use deckle_limits::roxmltree::{Node, ParsingOptions};
-use deckle_limits::{MAX_CASCADE_DECLS, MAX_STYLE_RULES};
+use deckle_limits::{MAX_BOOK_CASCADE_DECLS, MAX_CASCADE_DECLS, MAX_STYLE_RULES};
 use serde_json::Value;
 
 use crate::support::{BOOKS, Book};
@@ -47,8 +47,8 @@ struct File {
 }
 
 /// A fixture book's spine, flattened in spine order as `CSSFlattener.flatten_spine` does, then
-/// its fake margins removed.
-fn flatten_book(name: &str) -> Vec<File> {
+/// its fake margins removed; and the units its files used together.
+fn flatten_book(name: &str) -> (Vec<File>, usize) {
     let mut book = Book::open(name);
     // `files.json` numbers the spine in order (checked against `oeb.json` below).
     let mut order: Vec<(String, String)> = book
@@ -88,7 +88,7 @@ fn flatten_book(name: &str) -> Vec<File> {
     let mut docs: Vec<(&Dom, &mut Flat)> =
         files.iter_mut().map(|f| (&f.dom, &mut f.flat)).collect();
     remove_fake_margins(&mut namer, &mut docs);
-    files
+    (files, namer.units())
 }
 
 fn sorted(decls: &Decls) -> BTreeMap<String, String> {
@@ -160,8 +160,11 @@ fn every_cascade_fixture_specified_matches_kfxgens_stylizer() {
     let mut allowed_used = BTreeSet::new();
     let mut compared = 0;
     let mut files = 0;
+    let mut most_units = 0;
     for name in BOOKS {
-        for f in flatten_book(name) {
+        let (book, units) = flatten_book(name);
+        most_units = most_units.max(units);
+        for f in book {
             files += 1;
             let dir = fixtures_dir(name);
             let styles = read(&dir.join(format!("styles/{}.json", f.nnn)));
@@ -239,6 +242,9 @@ fn every_cascade_fixture_specified_matches_kfxgens_stylizer() {
     }
     assert_eq!(files, 49);
     assert!(compared > 1_000, "{compared} elements");
+    // The book-wide limit stays far above what the fixture books use.
+    eprintln!("the most units a fixture book used: {most_units}");
+    assert!(most_units * 10 <= MAX_BOOK_CASCADE_DECLS, "{most_units}");
 }
 
 fn fixtures_dir(name: &str) -> std::path::PathBuf {
@@ -548,6 +554,95 @@ fn fake_margin_shared_by_95_percent_is_removed() {
     assert_eq!(value(&flats[0], p, "margin-left"), Some("3em"));
 }
 
+#[test]
+fn fake_margins_keep_every_class_of_the_same_name() {
+    // `a¹` is numbered from `a1` (`ascii_text`), and the second class numbered from `a` is
+    // `a1` too: Calibre writes two `.a1` rules, and every `class="a1"` element gets both.
+    let css = "div.a { color: blue } p.a { margin-left: 3em; text-indent: 1em }";
+    let page = format!(
+        "<div class=\"a\">x</div>{}<p class=\"a¹\" style=\"margin-left: 3em; color: red\">y</p>",
+        "<p class=\"a\">x</p>".repeat(30)
+    );
+    let src = format!(
+        "<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>T</title></head><body>{page}</body></html>"
+    );
+    let mut dom = dom::parse(src.as_bytes()).unwrap();
+    prepare_body(&mut dom);
+    let sheet = parse_sheet(css, Origin::Book, "OEBPS/a.xhtml", 0, &mut |_| None).unwrap();
+    let first = cascade(&mut dom, "OEBPS/a.xhtml", vec![sheet], &DEFAULT_PROFILE).unwrap();
+    let mut namer = ClassNamer::default();
+    let mut flat = flatten(
+        &mut dom,
+        "OEBPS/a.xhtml",
+        first,
+        &mut namer,
+        &DEFAULT_PROFILE,
+    )
+    .unwrap();
+    let kids = dom.children(body(&dom)).to_vec();
+    let last = *kids.last().unwrap();
+    assert_eq!(dom.attr(kids[1], "class"), Some("a1"));
+    assert_eq!(dom.attr(last, "class"), Some("a1"));
+    remove_fake_margins(&mut namer, &mut [(&dom, &mut flat)]);
+    // All 31 paragraphs are counted by the last `.a1` (`selector_map`), whose 3em goes; the
+    // first `.a1` keeps its own.
+    for p in [kids[1], last] {
+        assert_eq!(value(&flat, p, "margin-left"), Some("3em"));
+        assert_eq!(value(&flat, p, "text-indent"), Some("1em"));
+        assert_eq!(value(&flat, p, "color"), Some("red"));
+    }
+}
+
+#[test]
+fn important_in_an_attribute_value_is_read_as_important() {
+    // Calibre writes `text-align: center !important` into stylesheet.css, and css_parser reads
+    // it back as an important `center`.
+    let (dom, flat) = flat_page(
+        "",
+        "<p align=\"center !important\">a</p><p><font face=\"A !important\">b</font></p>",
+        "",
+    );
+    let kids = dom.children(body(&dom)).to_vec();
+    let decl = |n: NodeId, name: &str| {
+        flat.specified(n)
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, d)| (d.value.clone(), d.important))
+    };
+    assert_eq!(decl(kids[0], "text-align"), Some(("center".into(), true)));
+    let font = dom.children(kids[1])[0];
+    assert_eq!(decl(font, "font-family"), Some(("A".into(), true)));
+}
+
+#[test]
+fn negative_line_heights_are_raised_to_zero() {
+    let (dom, flat) = flat_page(
+        "",
+        "<p class=\"n\">a</p>\
+         <p class=\"n\"><span>b</span></p>\
+         <p class=\"pc\">c</p>\
+         <p class=\"tiny\">d</p>\
+         <p><span class=\"cap\">A</span>rest</p>\
+         <div class=\"dc\"><p class=\"dcp\">B</p></div>",
+        "p.n { line-height: -1px } p.pc { line-height: -5% } p.tiny { line-height: -1e-999 }\
+         span.cap { float: left; font-size: 3em; line-height: -1px }\
+         div.dc { float: left } p.dcp { font-size: 2em; line-height: -1px }",
+    );
+    let kids = dom.children(body(&dom)).to_vec();
+    assert_eq!(value(&flat, kids[0], "line-height"), Some("0"));
+    // Inherited: the <span> sets none, and gets 0 of its own.
+    let span = dom.children(kids[1])[0];
+    assert_eq!(value(&flat, span, "line-height"), Some("0"));
+    assert_eq!(value(&flat, kids[2], "line-height"), Some("0"));
+    // `float('-1e-999')` is -0.0, not below 0.
+    assert_ne!(value(&flat, kids[3], "line-height"), Some("0"));
+    // A drop cap, and the drop cap DOCX input makes, keep theirs.
+    let cap = dom.children(kids[4])[0];
+    assert_eq!(value(&flat, cap, "line-height"), Some("-1px"));
+    let dcp = dom.children(kids[5])[0];
+    assert_eq!(value(&flat, dcp, "line-height"), Some("-1px"));
+}
+
 /// `n` elements named `tag`, each with a class and a `style` attribute of its own: one
 /// declaration, its value `pad` bytes longer than its number.
 fn distinct_page(n: usize, tag: &str, pad: usize) -> Dom {
@@ -666,4 +761,185 @@ fn fifty_thousand_distinct_elements_cost() {
         if got.is_ok() { "kept" } else { "refused" }
     );
     std::hint::black_box(&got);
+}
+
+/// A novel's stylesheet of the kind Gutenberg and Standard Ebooks books carry.
+const NOVEL_CSS: &str = "
+body { font-family: serif; margin: 0 5% }
+h1, h2, h3 { text-align: center; font-weight: bold; margin: 2em 0 1em; page-break-before: always }
+p { text-indent: 1.5em; margin: 0; line-height: 1.4 }
+p.first, h2 + p { text-indent: 0 }
+p.center { text-align: center; text-indent: 0 }
+.smallcaps, .sc { font-variant: small-caps }
+.dropcap:first-letter { float: left; font-size: 3em; line-height: 1 }
+blockquote { margin: 1em 2em; font-size: 0.9em }
+blockquote p { text-indent: 0 }
+div.poem { margin: 1em 3em }
+div.poem p.line { text-indent: -1em; margin-left: 1em }
+div.poem p.indent2 { margin-left: 2em }
+hr.tb { width: 30%; margin: 1em auto; border: none; border-top: 1px solid }
+a.noteref { vertical-align: super; font-size: 0.75em; text-decoration: none }
+div.footnote { font-size: 0.85em; margin-top: 2em; border-top: 1px solid #888 }
+div.footnote p { text-indent: 0 }
+span.lang { font-style: italic }
+img { max-width: 100% }
+div.figure { text-align: center; margin: 1em 0 }
+p.caption { font-size: 0.9em; font-style: italic; text-indent: 0 }
+p.letter { margin-left: 2em; margin-right: 2em }
+p.signature { text-align: right; font-style: italic }
+p.date { text-align: right }
+a:link, a:visited { color: #036 }
+";
+
+/// Chapter `n` of a novel: a heading, about 120 paragraphs with italics, note references, a
+/// quotation, a poem, a letter, a picture and footnotes.
+fn novel_chapter(n: usize) -> String {
+    let mut b = format!(
+        "<h2>Chapter {n}</h2><p class=\"first\"><span class=\"dropcap\">I</span>t was <span class=\"sc\">late</span>.</p>"
+    );
+    for i in 0..100 {
+        b.push_str("<p>Some text with <i>italics</i>, <em>stress</em> and <span class=\"lang\">aliena</span>");
+        if i % 10 == 0 {
+            b.push_str(&format!("<a class=\"noteref\" href=\"#n{i}\">{i}</a>"));
+        }
+        b.push_str(".</p>");
+        if i == 30 {
+            b.push_str("<blockquote><p>One.</p><p>Two.</p><p>Three.</p></blockquote>");
+        }
+        if i == 50 {
+            b.push_str("<div class=\"poem\">");
+            for l in 0..8 {
+                let c = if l % 2 == 0 { "line" } else { "indent2" };
+                b.push_str(&format!("<p class=\"{c}\">A line of verse</p>"));
+            }
+            b.push_str("</div><hr class=\"tb\"/>");
+        }
+        if i == 70 {
+            b.push_str(
+                "<p class=\"date\">May 1</p><p class=\"letter\">Dear sir,</p>\
+                 <p class=\"signature\">Yours</p><p style=\"text-align: center\">* * *</p>\
+                 <div class=\"figure\"><img src=\"a.png\" alt=\"\"/><p class=\"caption\">A picture</p></div>",
+            );
+        }
+    }
+    b.push_str(
+        "<div class=\"footnote\"><p id=\"n0\">A note.</p><p>Another.</p><p>A third.</p></div>",
+    );
+    b
+}
+
+#[test]
+fn an_ordinary_long_book_is_far_below_the_book_limit() {
+    // 200 chapters of a novel: the book's units, ten times over, stay within the limit.
+    let mut namer = ClassNamer::default();
+    let mut flats = Vec::new();
+    for n in 0..200 {
+        let href = format!("OEBPS/c{n}.xhtml");
+        let src = format!(
+            "<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>T</title></head><body>{}</body></html>",
+            novel_chapter(n)
+        );
+        let mut dom = dom::parse(src.as_bytes()).unwrap();
+        prepare_body(&mut dom);
+        let sheet = parse_sheet(NOVEL_CSS, Origin::Book, &href, 0, &mut |_| None).unwrap();
+        let first = cascade(&mut dom, &href, vec![sheet], &DEFAULT_PROFILE).unwrap();
+        flats.push(flatten(&mut dom, &href, first, &mut namer, &DEFAULT_PROFILE).unwrap());
+    }
+    eprintln!("200 chapters of a novel: {} units", namer.units());
+    assert!(
+        namer.units() * 10 <= MAX_BOOK_CASCADE_DECLS,
+        "{}",
+        namer.units()
+    );
+}
+
+/// One file of the book-wide limit's hostile book: 6,000 paragraphs, 2,000 `style` attributes
+/// of their own each used three times, none used by another file.
+fn styled_file(file: usize, elements: usize, distinct: usize) -> Dom {
+    let body: String = (0..elements)
+        .map(|i| format!("<p style=\"z: {}\">x</p>", file * distinct + i % distinct))
+        .collect();
+    let src = format!(
+        "<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>T</title></head><body>{body}</body></html>"
+    );
+    dom::parse(src.as_bytes()).unwrap()
+}
+
+/// A book of `files` files of [`styled_file`], flattened in order and its fake margins
+/// removed; `Err` where a file is refused, with how many were flattened.
+fn styled_book(
+    files: usize,
+    elements: usize,
+    distinct: usize,
+) -> (Result<(), Error>, usize, usize) {
+    let mut namer = ClassNamer::default();
+    let mut doms = Vec::new();
+    let mut flats = Vec::new();
+    for f in 0..files {
+        let mut dom = styled_file(f, elements, distinct);
+        prepare_body(&mut dom);
+        let first = cascade(&mut dom, "OEBPS/a.xhtml", Vec::new(), &DEFAULT_PROFILE).unwrap();
+        match flatten(
+            &mut dom,
+            "OEBPS/a.xhtml",
+            first,
+            &mut namer,
+            &DEFAULT_PROFILE,
+        ) {
+            Ok(flat) => flats.push(flat),
+            Err(e) => return (Err(e), f, namer.units()),
+        }
+        doms.push(dom);
+    }
+    let mut docs: Vec<(&Dom, &mut Flat)> = doms.iter().zip(flats.iter_mut()).collect();
+    remove_fake_margins(&mut namer, &mut docs);
+    std::hint::black_box(&docs);
+    (Ok(()), files, namer.units())
+}
+
+/// The book-wide limit, for its doc comment: run alone in a release build under
+/// `/usr/bin/time -l`, with `DECKLE_BOOK_FILES` files (400 by default) and
+/// `DECKLE_BOOK_STOP=doms` for the peak of the trees alone.
+/// `cargo test --release -p deckle-kfxgen --test it -- --ignored --exact
+/// css_flatten::a_book_of_many_styled_files_cost`.
+#[test]
+#[ignore = "a measurement, for a release build"]
+fn a_book_of_many_styled_files_cost() {
+    let var =
+        |name: &str, default: usize| std::env::var(name).map_or(default, |v| v.parse().unwrap());
+    let files = var("DECKLE_BOOK_FILES", 400);
+    let elements = var("DECKLE_BOOK_ELEMENTS", 6_000);
+    let distinct = var("DECKLE_BOOK_DISTINCT", 2_000);
+    if std::env::var("DECKLE_BOOK_STOP").is_ok_and(|v| v == "doms") {
+        let doms: Vec<Dom> = (0..files)
+            .map(|f| styled_file(f, elements, distinct))
+            .collect();
+        std::hint::black_box(&doms);
+        return;
+    }
+    let start = Instant::now();
+    let (got, done, units) = styled_book(files, elements, distinct);
+    eprintln!(
+        "{files} files: {done} flattened, {units} units, {:?}, {:?}",
+        start.elapsed(),
+        got
+    );
+}
+
+/// Release build: `cargo test --release -p deckle-kfxgen --test it -- --ignored
+/// css_flatten::a_book_of_many_styled_files_is_refused`.
+#[test]
+#[ignore = "200 files of 6,000 elements: seconds in a debug build"]
+fn a_book_of_many_styled_files_is_refused() {
+    // About 38,000 units a file: refused at the 79th of 200.
+    let start = Instant::now();
+    let (got, done, units) = styled_book(200, 6_000, 2_000);
+    let took = start.elapsed();
+    eprintln!("refused after {done} files, {units} units, {took:?}");
+    assert!(
+        matches!(got, Err(Error::BookCascade(MAX_BOOK_CASCADE_DECLS))),
+        "{got:?}"
+    );
+    assert!(done < 200);
+    assert!(took < Duration::from_secs(4), "{took:?}");
 }
