@@ -4,6 +4,7 @@
 pub mod consts;
 pub mod container;
 pub mod convert;
+pub mod epub_zip;
 pub mod fixtures;
 pub mod fixup;
 pub mod fragment;

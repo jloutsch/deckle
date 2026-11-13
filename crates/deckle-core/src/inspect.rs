@@ -7,29 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::epub::EpubReader;
 
-#[derive(Debug, thiserror::Error)]
-pub enum InspectError {
-    #[error("not a zip/EPUB file")]
-    NotZip,
-    #[error("EPUB has no META-INF/container.xml")]
-    NoContainerXml,
-    #[error("EPUB has no package document (OPF)")]
-    NoOpf,
-    #[error(
-        "EPUB is DRM-protected (META-INF/encryption.xml); only DRM-free books can be converted"
-    )]
-    Drm,
-    #[error("XML error: {0}")]
-    Xml(String),
-    #[error("missing file in EPUB: {0}")]
-    MissingFile(String),
-    #[error("I/O error: {0}")]
-    Io(std::io::Error),
-    #[error("this book unpacks to {0}")]
-    TooLarge(deckle_limits::TooLarge),
-    #[error("a file in this book unpacks to {0}")]
-    EntryTooLarge(deckle_limits::TooLarge),
-}
+pub use deckle_kfx::epub_zip::InspectError;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

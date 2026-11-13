@@ -1565,12 +1565,18 @@ dependencies = [
 name = "deckle-kfxgen"
 version = "0.13.0"
 dependencies = [
+ "cssparser",
  "deckle-kfx",
+ "deckle-limits",
+ "html5ever",
  "regex",
+ "roxmltree",
+ "selectors",
  "serde_json",
  "sha2 0.11.1",
  "tempfile",
  "thiserror 2.0.21",
+ "zip 9.0.5",
 ]
 
 [[package]]

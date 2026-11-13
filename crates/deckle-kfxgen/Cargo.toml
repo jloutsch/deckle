@@ -9,6 +9,12 @@ repository.workspace = true
 
 [dependencies]
 deckle-kfx.workspace = true
+deckle-limits = { workspace = true, features = ["xml"] }
+roxmltree.workspace = true
+html5ever.workspace = true
+cssparser.workspace = true
+selectors.workspace = true
+zip.workspace = true
 regex.workspace = true
 # float_roundtrip: without it serde_json reads some floats one ULP off kfxgen's.
 serde_json = { workspace = true, features = ["float_roundtrip"] }
