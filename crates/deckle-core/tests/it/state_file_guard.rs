@@ -5,11 +5,15 @@
 
 use std::path::{Path, PathBuf};
 
-/// Silent loads that may stay, as `crates/…` paths: none of them is ever saved over.
-const ALLOWED: &[&str] = &[
+/// Silent loads that may stay: the file, and text only that load contains. None of them is ever
+/// saved over; any other match in the same file still fails.
+const ALLOWED: &[(&str, &str)] = &[
     // Recap records in the cache, read many at once to find earlier books; each is written by
     // its own book, never saved back from this read.
-    "crates/deckle-core/src/recaps.rs",
+    (
+        "crates/deckle-core/src/recaps.rs",
+        "serde_json::from_slice::<Record>(&b).ok()",
+    ),
 ];
 
 /// The shapes the pattern cannot match, listed by hand: the file and a regex for the old load.
@@ -73,7 +77,10 @@ fn silent_loads(root: &Path) -> Vec<String> {
                 continue;
             }
             let line = text[..m.start()].matches('\n').count() + 1;
-            if !ALLOWED.contains(&rel.as_str()) {
+            let allowed = ALLOWED
+                .iter()
+                .any(|(file, what)| *file == rel && m.as_str().contains(what));
+            if !allowed {
                 found.push(format!("{rel}:{line}"));
             }
         }
