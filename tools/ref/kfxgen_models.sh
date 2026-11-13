@@ -125,10 +125,11 @@ if [ "${1:-}" = "--corpus" ]; then
 fi
 
 # calibre_book NAME EPUB DIR: the cascade dump of NAME into DIR/NAME. Nothing else is kept.
+# In UTC: calibre turns a date with no time into midnight local time, written in UTC.
 calibre_book() {
   local name="$1" epub="$2" dir="$3/$1"
   rm -rf "$dir"
-  if ! KFXGEN_DUMP_BOOK="$dir" "$EBOOK_CONVERT" "$epub" "$WORK/$name.kfx" >"$WORK/$name.log" 2>&1; then
+  if ! TZ=UTC KFXGEN_DUMP_BOOK="$dir" "$EBOOK_CONVERT" "$epub" "$WORK/$name.kfx" >"$WORK/$name.log" 2>&1; then
     tail -20 "$WORK/$name.log" >&2
     echo "$name: ebook-convert failed" >&2
     exit 1
@@ -140,19 +141,36 @@ calibre_book() {
   echo "cascade $name: $(find "$dir" -type f | wc -l | tr -d ' ') files"
 }
 
-# The cascade fixtures (fixtures/kfxgen/README.md, cascade/): css_quirks, built here, and
+# The cascade fixtures (fixtures/kfxgen/README.md, cascade/): the sources built here, and
 # committed sources that between them hold lists, tables, pictures, notes, vertical and
 # right-to-left text and an embedded font. Kept under 1.5 MB.
-CASCADE_SOURCES="css_quirks lists notes vertical rtl fonts directions frames navigation"
+CASCADE_BUILT="css_quirks package_quirks no_toc fake_margins"
+CASCADE_SOURCES="$CASCADE_BUILT lists notes vertical rtl fonts directions frames navigation"
 
 if [ "${1:-}" = "--cascade" ]; then
   rm -rf "$CASCADE_BUILD"
   mkdir -p "$CASCADE_BUILD"
   "$PY" -I "$ROOT/tools/ref/make_css_quirks_epub.py" "$SOURCES/css_quirks.epub"
+  "$PY" -I "$ROOT/tools/ref/make_cascade_epubs.py" "$SOURCES"
   for name in $CASCADE_SOURCES; do
     calibre_book "$name" "$SOURCES/$name.epub" "$CASCADE_BUILD"
   done
+  # Calibre's user-agent rules, once: every book's must be the same.
+  first="${CASCADE_SOURCES%% *}"
+  for name in $CASCADE_SOURCES; do
+    cmp -s "$CASCADE_BUILD/$first/ua_rules.json" "$CASCADE_BUILD/$name/ua_rules.json" || {
+      echo "$name: other user-agent rules than $first" >&2
+      exit 1
+    }
+  done
+  mv "$CASCADE_BUILD/$first/ua_rules.json" "$CASCADE_BUILD/ua_rules.json"
+  for name in $CASCADE_SOURCES; do rm -f "$CASCADE_BUILD/$name/ua_rules.json"; done
   record_tools "$CASCADE_BUILD"
+  {
+    echo "TZ: UTC"
+    # A year-only dc:date takes day 15 of this month (calibre.utils.date.parse_only_date).
+    echo "month of the run: $(TZ=UTC date +%Y-%m)"
+  } >>"$CASCADE_BUILD/TOOLS"
   rm -rf "$CASCADE"
   mv "$CASCADE_BUILD" "$CASCADE"
   du -sh "$CASCADE"
@@ -205,8 +223,8 @@ floats_697|floats_697/F697 kfxgen source.epub
 font_sizes|font_sizes/font-sizes-source.epub
 LIST
 for epub in "$SOURCES"/*.epub; do
-  # css_quirks is a cascade source only (--cascade); models/ has no fixture made from it.
-  [ "$(basename "$epub" .epub)" = css_quirks ] && continue
+  # The sources --cascade builds are cascade sources only; models/ has no fixture of them.
+  case " $CASCADE_BUILT " in *" $(basename "$epub" .epub) "*) continue ;; esac
   calibre_model "$(basename "$epub" .epub)" "$epub" "$BUILD"
 done
 record_tools "$BUILD"

@@ -131,8 +131,10 @@ the nav under a random name) and, through its manifest, the book's own nav and N
 **Scope of phase 2.** It stops at Calibre's `Style` object. kfxgen's own resolver
 (`converter.py:1030-1240`), its `data-kfxgen-*` marks and its spine reorder are kfxgen code and
 belong to phase 3. Phase 2 supplies what they consume: `get`, the computed values, the pseudo
-dicts, the rule list with origin, selector matching, `@font-face` rules, and the OPF, nav and
-NCX text.
+dicts, the rule list with origin, selector matching, `@font-face` rules, and the text of the
+book's own OPF, nav and NCX. kfxgen reads some things (dates, the spine order, landmarks, page
+lists) from Calibre's rewritten OPF instead; phase 3 has to account for the differences
+(hrefs from the root, the added NCX item, the cover page and duplicates left out of the spine).
 
 It must also reproduce what kfxgen gets from Calibre's CSS flattening: Calibre's user-agent
 sheet (e.g. `hr { height: 2px }`), font-size keywords → rem via the input profile, `width`/

@@ -1,3 +1,5 @@
 calibre: ebook-convert (calibre 9.18.0)
 kfxgen venv python: 3.13.18
 kfxgen venv lxml: 6.0.2
+TZ: UTC
+month of the run: 2026-11

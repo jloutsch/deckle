@@ -1,0 +1,68 @@
+{
+ "spine": [
+  {
+   "href": "OEBPS/all.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/half.xhtml",
+   "linear": true
+  }
+ ],
+ "page_progression_direction": null,
+ "manifest": [
+  {
+   "id": "all",
+   "href": "OEBPS/all.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "half",
+   "href": "OEBPS/half.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "page_css",
+   "href": "page_styles.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "css",
+   "href": "stylesheet.css",
+   "media_type": "text/css"
+  }
+ ],
+ "toc": [
+  {
+   "title": "all",
+   "href": "OEBPS/all.xhtml",
+   "children": []
+  },
+  {
+   "title": "half",
+   "href": "OEBPS/half.xhtml",
+   "children": []
+  }
+ ],
+ "auto_generated_toc": false,
+ "guide": [],
+ "metadata": {
+  "title": [
+   "Fake Margins"
+  ],
+  "creator": [
+   "Fixture Author"
+  ],
+  "description": [],
+  "language": [
+   "eng"
+  ],
+  "publisher": [],
+  "date": [],
+  "cover": []
+ },
+ "raw": {
+  "opfname": "OEBPS/content.opf",
+  "sha256": "a0bfda82d39fceed25f363f72c0457418d01310309c12f2c8520e85bc7cb6101"
+ }
+}

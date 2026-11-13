@@ -1,0 +1,9 @@
+{
+ "font_face": [],
+ "rules": [
+  [1, "p.fm", {"margin-left": "3em"}, [], [1, 0, 0, 1, 1, 83]],
+  [1, "p.fh", {"margin-left": "3em", "text-indent": "2em"}, [], [1, 0, 0, 1, 1, 84]],
+  [1, "p.plain", {"margin-left": "0"}, [], [1, 0, 0, 1, 1, 85]]
+ ],
+ "ua_rules": 180
+}

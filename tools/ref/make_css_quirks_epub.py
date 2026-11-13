@@ -15,13 +15,18 @@ what Calibre does, only what to ask it.
 - selectors.xhtml (task 7): one selector per region; selector n sets `orphans: n` and, but
   for :root, starts with `#sN`, so each element is matched by one selector at most and the
   dump's `specified` shows which.
-- cascade.xhtml (task 8): !important against later rules and the style attribute, equal
+- cascade.xhtml (task 8): !important against later rules and the style attribute, a book
+  !important against html.css's (`frameset { float: none ! important }`), equal
   specificity, sheet order across <link> and <style>, img width and height attributes,
   @font-face, a chapter heading DetectStructure marks.
 - flatten.xhtml (task 9): what CSSFlattener changes: html@style, align, <font>, color and
-  bgcolor, ol@type, keyword fixes, class names, invalid values, an element outside XHTML.
+  bgcolor, ol@type, keyword fixes, invalid values, an element outside XHTML, and class names
+  numbered in order of first use: `Note2 big` (declarations of its own, so `note`), `note3`
+  (`note1`), `NOTE` with a style attribute (`note2`), `note3` again (`note1`), `Note2 big`
+  with a style attribute (`note3`).
 - values.xhtml (task 10): what Style computes: units, font-size keywords and relative sizes,
-  line-height, widths, percentages, colours, initial and unset. It opens with a heading
+  line-height, widths, percentages, colours, initial and unset, and `nan` and `1e999`, which
+  unit_convert reads as numbers. It opens with a heading
   DetectStructure leaves alone (the first element of its file).
 
 The zip is written with fixed dates, so the same script makes the same bytes.
@@ -270,7 +275,7 @@ p.e1 { color: navy }
 #id1 { color: teal }
 p.cls { color: maroon }
 p.order { color: red }
-p.uai { float: left }
+frameset { float: right !important }
 img.styled { width: 50% }
 @font-face { font-family: "Quirk"; font-weight: bold; font-style: italic }
 @font-face { font-family: "Solo" }
@@ -299,8 +304,9 @@ CASCADE = page(
 <p class="chapter">A paragraph classed chapter.</p>
 <h2>Interlude</h2>
 <h1>Part  Three</h1>
-<frameset/>""",
-    head='<style>p.order { color: green } p.uai { float: right !important }</style>'
+<frameset/>
+<frameset class="plain"/>""",
+    head="<style>p.order { color: green }</style>"
     '<link rel="stylesheet" type="text/css" href="cascade2.css"/>',
     name="cascade",
 )
@@ -312,6 +318,8 @@ span.il { display: in-line }
 span.sup { vertical-align: sup }
 p.bad { margin-left: foo; height: 10 px }
 p.ps:hover { color: red }
+p.big { text-indent: 3em }
+p.note3 { text-indent: 4em }
 """
 
 FLATTEN = page(
@@ -329,7 +337,7 @@ FLATTEN = page(
 <p><span class="il">in-line</span> <span class="sup">sup</span></p>
 <p class="Note2 big">Note2 big</p>
 <p class="note3">note3</p>
-<p class="NOTE">NOTE</p>
+<p class="NOTE" style="text-indent: 5em">NOTE</p>
 <p class="note3">note3 again</p>
 <p class="Note2 big" style="color: red">Note2 big, styled</p>
 <p>no class</p>
@@ -356,6 +364,8 @@ VALUES = [
     ("u-pct", "margin-left: 10%"),
     ("u-none", "margin-left: 12"),
     ("u-text", "margin-left: foo"),
+    ("u-nan", "margin-left: nan"),
+    ("u-inf", "margin-right: 1e999"),
     ("fs-large", "font-size: large"),
     ("fs-smaller", "font-size: smaller"),
     ("fs-larger", "font-size: larger"),

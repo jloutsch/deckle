@@ -81,6 +81,10 @@ class Style:
             return 12.0
         if name == "width":
             return 0.1 + 0.2
+        if name == "height":
+            return float("inf")
+        if name == "margin-left":
+            return float("nan")
         return self._specified.get(name, "auto")
 
 
@@ -109,10 +113,30 @@ class Stylizer:
         return Style({})
 
 
+class StyleMap(dict):
+    """Calibre's style_map: a dict that names its !important properties."""
+
+    def __init__(self, decls, important=()):
+        super().__init__(decls)
+        self.important_properties = set(important)
+
+
+UA_RULES = [
+    ((0, 0, 0, 1, 0), [], StyleMap({"display": "block"}), "p", None),
+    ((0, 0, 0, 1, 1), [], StyleMap({"float": "none"}, {"float"}), "frameset", None),
+]
+
+
 class FirstPassStylizer:
-    rules = [
-        ((0, 0, 0, 1, 0), [], {"display": "block"}, "p", None),
-        ((1, 0, 1, 0, 3), [], {"text-indent": "1em", "margin-top": "0"}, ".a", "x.css"),
+    rules = UA_RULES + [
+        (
+            (1, 0, 1, 0, 3),
+            [],
+            StyleMap({"text-indent": "1em", "margin-top": "0", "color": "red"},
+                     {"margin-top", "color"}),
+            ".a",
+            "x.css",
+        ),
     ]
     font_face_rules = [FontFaceRule([("font-family", "Q"), ("font-weight", "bold")])]
 
@@ -202,7 +226,8 @@ class BookDumpTest(unittest.TestCase):
         out = run_dump(self.book_dump, self.tmp.name, "a")
         self.assertEqual(
             sorted(tree_bytes(out)),
-            ["dom/000.xhtml", "files.json", "oeb.json", "rules/000.json", "styles/000.json"],
+            ["dom/000.xhtml", "files.json", "oeb.json", "rules/000.json", "styles/000.json",
+             "ua_rules.json"],
         )
         self.assertEqual(json.loads((out / "files.json").read_text()), {"text/one.xhtml": "000"})
 
@@ -222,11 +247,42 @@ class BookDumpTest(unittest.TestCase):
         )
 
         rules = json.loads((out / "rules/000.json").read_text())
+        # The book's rules only, with their !important names (sorted) and sort key.
         self.assertEqual(
             rules["rules"],
-            [[0, "p", {"display": "block"}], [1, ".a", {"text-indent": "1em", "margin-top": "0"}]],
+            [[1, ".a", {"text-indent": "1em", "margin-top": "0", "color": "red"},
+              ["color", "margin-top"], [1, 0, 1, 0, 3]]],
         )
+        self.assertEqual(rules["ua_rules"], 2)
         self.assertEqual(rules["font_face"], [{"font-family": "Q", "font-weight": "bold"}])
+        # Declarations keep Calibre's order.
+        self.assertIn('{"text-indent": "1em", "margin-top": "0", "color": "red"}',
+                      (out / "rules/000.json").read_text())
+
+        ua = json.loads((out / "ua_rules.json").read_text())
+        self.assertEqual(
+            ua["rules"],
+            [[0, "p", {"display": "block"}, [], [0, 0, 0, 1, 0]],
+             [0, "frameset", {"float": "none"}, ["float"], [0, 0, 0, 1, 1]]],
+        )
+
+    def test_files_with_other_user_agent_rules_stop_the_dump(self):
+        out = Path(self.tmp.name) / "f"
+        oeb, item = make_oeb(Path(self.tmp.name) / "f-book")
+        second = Obj(id="c2", href="text/two.xhtml", media_type="application/xhtml+xml",
+                     linear=True, data=parse(PAGE))
+        oeb.spine.append(second)
+        first_pass = {}
+
+        class OtherUA(FirstPassStylizer):
+            rules = UA_RULES[:1] + FirstPassStylizer.rules[2:]
+
+        with mock.patch.dict(os.environ, {"KFXGEN_DUMP_BOOK": str(out)}):
+            self.book_dump.note_first_pass(item, FirstPassStylizer(), first_pass)
+            self.book_dump.note_first_pass(second, OtherUA(), first_pass)
+        with self.assertRaisesRegex(RuntimeError, "text/two.xhtml.*user-agent"):
+            self.book_dump.dump(out, oeb, lambda it: Stylizer(it.data), first_pass)
+        self.assertFalse((out / "ua_rules.json").exists())
 
     def test_an_own_opf_calibre_wrote_over_has_no_hash(self):
         out = Path(self.tmp.name) / "d"
@@ -262,6 +318,9 @@ class BookDumpTest(unittest.TestCase):
         self.assertEqual(p["computed"]["list-style-type"], {"error": "KeyError"})
         self.assertEqual(p["computed"]["width"], 0.1 + 0.2)
         self.assertEqual(p["computed"]["font-size"], 12.0)
+        # NaN and infinity, which unit_convert can give, are not JSON numbers.
+        self.assertEqual(p["computed"]["height"], {"number": "inf"})
+        self.assertEqual(p["computed"]["margin-left"], {"number": "nan"})
         self.assertEqual(set(p["computed"]), set(self.book_dump.COMPUTED_PROPS))
         span = styles["table"][nodes[(1, 2, 1)]]
         self.assertEqual(span["pseudo"], {"hover": {"color": "blue"}})

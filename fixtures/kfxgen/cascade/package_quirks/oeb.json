@@ -1,0 +1,119 @@
+{
+ "spine": [
+  {
+   "href": "OEBPS/c1.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/c2.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/notes.xhtml",
+   "linear": false
+  },
+  {
+   "href": "OEBPS/extra.xhtml",
+   "linear": false
+  }
+ ],
+ "page_progression_direction": null,
+ "manifest": [
+  {
+   "id": "c1",
+   "href": "OEBPS/c1.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "c2",
+   "href": "OEBPS/c2.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "cover-img",
+   "href": "OEBPS/cover.png",
+   "media_type": "image/png"
+  },
+  {
+   "id": "cover",
+   "href": "OEBPS/cover.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "extra",
+   "href": "OEBPS/extra.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "notes",
+   "href": "OEBPS/notes.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "page_css",
+   "href": "page_styles.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "css",
+   "href": "stylesheet.css",
+   "media_type": "text/css"
+  }
+ ],
+ "toc": [
+  {
+   "title": "Chapter One",
+   "href": "OEBPS/c1.xhtml",
+   "children": [
+    {
+     "title": "A section",
+     "href": "OEBPS/c1.xhtml#sec",
+     "children": []
+    }
+   ]
+  },
+  {
+   "title": "Notes",
+   "href": "OEBPS/notes.xhtml",
+   "children": []
+  }
+ ],
+ "auto_generated_toc": false,
+ "guide": [
+  {
+   "type": "cover",
+   "href": "OEBPS/cover.png"
+  },
+  {
+   "type": "other.titlepage",
+   "href": "OEBPS/cover.xhtml"
+  },
+  {
+   "type": "text",
+   "href": "OEBPS/c1.xhtml"
+  }
+ ],
+ "metadata": {
+  "title": [
+   "Package Quirks"
+  ],
+  "creator": [
+   "Fixture Author"
+  ],
+  "description": [],
+  "language": [
+   "eng"
+  ],
+  "publisher": [],
+  "date": [
+   "2019-11-15T00:00:00+00:00"
+  ],
+  "cover": [
+   "cover-img"
+  ]
+ },
+ "raw": {
+  "opfname": "OEBPS/content.opf",
+  "sha256": "a6e1bd827190a61ae0ba299c327008469dec63b2d99f762e70265f2510d5fb38"
+ }
+}

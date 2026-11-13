@@ -17,13 +17,19 @@ With ``KFXGEN_DUMP_BOOK=<dir>`` set:
     ``img`` ``width`` and ``height``), several classes of one element sorted (``_tostring``).
   - ``styles/NNN.json``: ``table``, the distinct styles, each ``{"specified": cssdict(),
     "pseudo": _pseudo_classes, "computed": {prop: s[prop]}}`` for ``COMPUTED_PROPS`` (a lookup
-    that raises is ``{"error": "<exception class>"}``); ``nodes``, ``[path, table_index]`` for
+    that raises is ``{"error": "<exception class>"}``, a NaN or infinite number
+    ``{"number": "nan" | "inf" | "-inf"}``); ``nodes``, ``[path, table_index]`` for
     every element in document order, ``path`` being element-child indexes from the root
     (comments and processing instructions not counted); ``font_face``, the Stylizer's
     ``@font-face`` rules as ``{prop: value}``.
-  - ``rules/NNN.json``: the first-pass ``rules``, ``[origin, selector_text, cssdict]`` in
-    cascade order (origin 0 for Calibre's user-agent sheet, 1 for the book), and its
-    ``font_face``.
+  - ``rules/NNN.json``: the first-pass Stylizer's book rules (origin 1), each
+    ``[origin, selector_text, cssdict, important, key]`` in cascade order, ``important``
+    the sorted names of its ``!important`` properties and ``key`` Calibre's sort key
+    ``(origin, a, b, c, index)``; ``ua_rules``, how many user-agent rules come before them;
+    and the file's ``font_face``.
+  - ``ua_rules.json``: the user-agent rules (origin 0, Calibre's ``html.css``) in the same
+    form, once: the dump stops if a file's differ. The whole first-pass list of a file is
+    these, then its own.
   - ``oeb.json``, last, so its presence means the dump is whole: ``spine``,
     ``page_progression_direction``, ``manifest`` (sorted by href), ``toc``,
     ``auto_generated_toc``, ``guide`` (sorted by type), ``metadata`` and ``raw`` (the
@@ -36,6 +42,7 @@ makes: it only builds one more Stylizer per file, as kfxgen itself does several 
 import copy
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 
@@ -80,10 +87,20 @@ def note_first_pass(item, stylizer, first_pass=None):
     """The plugin's ``specialize_css_for_output`` hook: keep this file's first-pass rules."""
     if not os.environ.get(ENV):
         return
-    # A rule is (sort key, selector parts, cssdict, selector text, sheet href); the key's
-    # first item is 0 for the user-agent sheet, 1 for the book's.
+    # A rule is (sort key, selector parts, cssdict, selector text, sheet href). The key is
+    # (origin, a, b, c, index): origin 0 for the user-agent sheet, 1 for the book's; the
+    # rules are sorted by it. The cssdict (a style_map) names its !important properties.
     (_FIRST_PASS if first_pass is None else first_pass)[item.href] = {
-        "rules": [[rule[0][0], rule[3], dict(rule[2])] for rule in stylizer.rules],
+        "rules": [
+            [
+                rule[0][0],
+                rule[3],
+                dict(rule[2]),
+                sorted(getattr(rule[2], "important_properties", ())),
+                list(rule[0]),
+            ]
+            for rule in stylizer.rules
+        ],
         "font_face": _font_faces(stylizer),
     }
 
@@ -150,9 +167,13 @@ def _elements(root):
 
 def _computed(style, prop):
     try:
-        return style[prop]
+        value = style[prop]
     except Exception as e:  # what Calibre raises is the answer: KeyError, ValueError...
         return {"error": type(e).__name__}
+    # unit_convert takes float("nan") and float("1e999") as numbers; JSON has no such value.
+    if isinstance(value, float) and not math.isfinite(value):
+        return {"number": repr(value)}
+    return value
 
 
 def _styles(root, stylizer):
@@ -253,6 +274,7 @@ def dump(directory, oeb, stylizer_for, first_pass):
     Stylizer, ``first_pass`` is what ``note_first_pass`` kept."""
     directory = Path(directory)
     files = {}
+    ua_rules = None
     for n, item in enumerate(oeb.spine):
         if item.href not in first_pass:
             raise RuntimeError(
@@ -264,14 +286,34 @@ def dump(directory, oeb, stylizer_for, first_pass):
         _write(directory / "dom" / f"{name}.xhtml", _tostring(item.data))
         _write(directory / "styles" / f"{name}.json", _styles(item.data, stylizer))
         first = first_pass[item.href]
+        # Sorted by key, so the user-agent rules (origin 0) come first: the whole list is
+        # ua_rules.json then this file's rules.
+        ua = [r for r in first["rules"] if r[0] == 0]
+        book = first["rules"][len(ua) :]
+        if any(r[0] != 1 for r in book):
+            raise RuntimeError(f"book_dump: {item.href!r}: a user-agent rule after a book rule")
+        if ua_rules is None:
+            ua_rules = ua
+        elif ua != ua_rules:
+            raise RuntimeError(
+                f"book_dump: {item.href!r} has other user-agent rules than the first file"
+            )
         _write(
             directory / "rules" / f"{name}.json",
             # Declarations in Calibre's order, which the port keeps too.
             _list_file(
-                [("font_face", first["font_face"]), ("rules", first["rules"])],
+                [
+                    ("font_face", first["font_face"]),
+                    ("rules", book),
+                    ("ua_rules", len(ua)),
+                ],
                 sort_keys=False,
             ),
         )
+    _write(
+        directory / "ua_rules.json",
+        _list_file([("rules", ua_rules or [])], sort_keys=False),
+    )
     _write(directory / "files.json", _json(files, indent=1) + "\n")
     _write(directory / "oeb.json", _json(_oeb_view(oeb), indent=1) + "\n")
 
