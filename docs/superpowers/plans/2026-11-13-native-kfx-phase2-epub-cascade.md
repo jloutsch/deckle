@@ -285,11 +285,18 @@
 **Interfaces:**
 - Produces:
   ```rust
-  pub struct Flat { pub specified: Vec<Decls>, pub pseudo: Vec<Vec<(&'static str, Decls)>>, pub class: Vec<Option<String>> }
-  pub struct ClassNamer { /* book-wide, spine order */ }
-  pub fn flatten(dom: &mut Dom, first: Cascaded, namer: &mut ClassNamer, profile: &Profile) -> Flat;
-  pub fn remove_fake_margins(docs: &mut [(&Dom, &mut Flat)]);
+  // As built (Task 9): declarations shared through `Arc`, the second cascade bounded by the
+  // first's limits (so `flatten` can refuse a file), and <body>'s style set before the first
+  // cascade, where Calibre sets it.
+  pub struct Flat { pub specified: Vec<Arc<Decls>>, pub pseudo: Vec<Vec<(&'static str, Decls)>>, pub class: Vec<Option<String>>, /* crate-private: ua, main */ }
+  impl Flat { pub fn specified(&self, n: NodeId) -> &Decls; pub fn specified_arc(&self, n: NodeId) -> &Arc<Decls>;
+              pub fn pseudo(&self, n: NodeId) -> &[(&'static str, Decls)]; pub fn class(&self, n: NodeId) -> Option<&str>; }
+  #[derive(Default)] pub struct ClassNamer { /* book-wide, spine order */ }
+  pub fn prepare_body(dom: &mut Dom);                                // stylize_spine: before `cascade`, after `mark_chapters`
+  pub fn flatten(dom: &mut Dom, href: &str, first: Cascaded, namer: &mut ClassNamer, profile: &Profile) -> Result<Flat, Error>;
+  pub fn remove_fake_margins(namer: &mut ClassNamer, docs: &mut [(&Dom, &mut Flat)]);   // spine files, spine order
   ```
+- Per file, in spine order: `dom::parse`, `mark_chapters` (and `generated_toc` over the book), `prepare_body`, the file's sheets, `cascade`, `flatten`; then `remove_fake_margins` once over the spine. `flatten` also removes every `<style>` and stylesheet `<link>` (`flatten_head`), so the tree's paths are the dump's but for the two `<link>`s Calibre appends to `<head>`. `flatten` gives `Error::Cascade`/`Error::Selectors` when both cascades together pass `MAX_CASCADE_DECLS`/`MAX_SELECTOR_WORK`, and `Error::TooLarge` past `MAX_STYLE_RULES` classes in the file.
 - `flatten` ports `oeb/transforms/flatcss.py` for kfxgen's settings (`disable_font_rescaling = true`, `minimum_line_height = 0`, `line_height = 0`): `html@style` moves to `body`; `body` gets `margin-top: 0; margin-bottom: 0; margin-left: 5pt; margin-right: 5pt; padding-left: 0; padding-right: 0`; `align` becomes `text-align` (on `img`: `vertical-align` or `float`); `<font>` becomes `div` or `span` with `size` as pt from `fnums`; `color` and `bgcolor` attributes become CSS; `ol@type` is deleted; `font-weight: medium` → `normal`; `in-line` → `inline`; `vertical-align: sup` → `super`; `style` and `class` attributes are removed and the new class set. Elements outside XHTML and SVG keep their attributes and get no class.
 - Class names: the element's first class with digits removed, lowercased (`Note2 big` → `note`), numbered `note`, `note1`, `note2` … in order of first use across the book; no class gives `calibre`, `calibre1` …; a pseudo dict gives `pcalibre`, `pcalibre1` …; two elements with the same sorted declarations share a class.
 - `Flat.specified` is what kfxgen's Stylizer reports: the element's flattened declarations cascaded again over `html.css` (book origin wins).
@@ -351,6 +358,8 @@
   ```rust
   pub struct Book { pub package: Package, pub oeb: Oeb, pub files: Vec<File>, pub font_face: Vec<Decls> }
   pub struct File { pub href: String, pub dom: Dom, pub flat: Flat, pub first_pass_rules: Vec<Rule> }   // rules as in rules/NNN.json
+  // Task 9 as built: keep `Cascaded::rules` before passing the `Cascaded` to `flatten` (which
+  // takes it by value); run the steps in Task 9's order, one `ClassNamer` per book.
   impl File { pub fn styles<'a>(&'a self, profile: &'a Profile) -> Styles<'a>; }
   pub fn read_book(path: &Path) -> Result<Book, Error>;
   pub fn manifest_bytes(path: &Path, href: &str) -> Result<Vec<u8>, Error>;

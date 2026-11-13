@@ -1569,6 +1569,7 @@ dependencies = [
  "cssparser",
  "deckle-kfx",
  "deckle-limits",
+ "deunicode",
  "encoding_rs",
  "html5ever",
  "regex",

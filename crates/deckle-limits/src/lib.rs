@@ -76,7 +76,8 @@ pub const MAX_PLUGIN_BYTES: u64 = 20 * MB;
 pub const MAX_ENTITY_TEXT: u64 = 16 * MB;
 
 /// EPUB to KFX: CSS rules for one book file, counting a rule for each selector of a list, each
-/// `@font-face` and `@page` read, and each `@import` read or followed.
+/// `@font-face` and `@page` read, and each `@import` read or followed; and, apart, the classes
+/// Calibre's CSS flattening gives one book file.
 pub const MAX_STYLE_RULES: usize = 50_000;
 
 /// EPUB to KFX: what the CSS of one book file may hold besides its rules ([`MAX_STYLE_RULES`]),
@@ -87,7 +88,8 @@ pub const MAX_STYLE_RULES: usize = 50_000;
 /// the limit, before the rest of it is held in memory.
 pub const MAX_STYLE_DECLS: usize = 150_000;
 
-/// EPUB to KFX: steps matching the CSS selectors of one book file against it may take: one for
+/// EPUB to KFX: steps matching the CSS selectors of one book file against it may take, in both
+/// cascades (the book's rules, then the flattened classes) together: one for
 /// each element a selector's compound is tested on, times the tests in that compound, one for
 /// each element a combinator moves through, and one more for each 64 bytes of an attribute
 /// value compared. The slowest kinds of step (a class test, `:has()`, `:nth-child(of)`: about
@@ -95,14 +97,17 @@ pub const MAX_STYLE_DECLS: usize = 150_000;
 /// 2,000 rules of the kinds books use on a file of 20,000 elements take about 12 million.
 pub const MAX_SELECTOR_WORK: u64 = 100_000_000;
 
-/// EPUB to KFX: declarations the first cascade of one book file stores for its elements, in
-/// units: one for each declaration copied into an element's styles, one more for each 64
-/// bytes of it, and one for each set of rules found to match an element. Elements the same
-/// rules match share one copy, so a book's units grow with its distinct styles, not its
-/// elements. A `style` attribute counts its text, a unit for each 64 bytes, before it is read.
-/// At the limit the cascade takes about 85 MB: 81 to 83 MB measured at 480,000 units (40,000
-/// elements of 11 declarations each of their own, release build). The files of nine
-/// Gutenberg books use at most 1,495.
+/// EPUB to KFX: declarations the two cascades of one book file (Calibre's first pass, and
+/// kfxgen's over the flattened classes) store for its elements, together, in units: one for
+/// each declaration copied into an element's styles, one more for each 64 bytes of it, and one
+/// for each set of rules found to match an element. Elements the same rules match share one
+/// copy, so a book's units grow with its distinct styles, not its elements. A `style`
+/// attribute counts its text, a unit for each 64 bytes, before it is read. At the limit the
+/// first cascade alone takes about 85 MB (81 to 83 MB measured at 480,000 units: 40,000
+/// elements of 11 declarations each of their own), both together up to about 120 MB (118 MB
+/// measured for 45,000 elements of a declaration each of their own, refused in the second),
+/// release build. The files of nine Gutenberg books use at most 1,495 in the first; the 49
+/// cascade fixture files at most 1,049 in both.
 pub const MAX_CASCADE_DECLS: usize = 500_000;
 
 /// Largest reservation made from a size a file declares (rule 1 of the size-limits design):

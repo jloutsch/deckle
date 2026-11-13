@@ -449,6 +449,16 @@ impl Dom {
         }
     }
 
+    /// Takes each of `nodes` out of the tree with its tail, as lxml's `remove` does (Calibre's
+    /// own removals, not `remove_elem`): [`Dom::remove_many`] once their tails are dropped.
+    pub(crate) fn remove_many_with_tails(&mut self, nodes: &[NodeId]) {
+        for &n in nodes {
+            self.el_mut(n).tail.clear();
+            self.el_mut(n).notes &= !IN_TAIL;
+        }
+        self.remove_many(nodes);
+    }
+
     /// Renames `n` to `tag`, in the same namespace.
     pub fn rename(&mut self, n: NodeId, tag: &str) {
         let id = self.intern(tag);

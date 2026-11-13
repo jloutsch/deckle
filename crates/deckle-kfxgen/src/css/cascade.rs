@@ -41,6 +41,17 @@ pub struct Cascaded {
     pub rules: Vec<Rule>,
     /// The `@font-face` rules of the file's sheets, in order (`StylizerRules.font_face_rules`).
     pub font_face: Vec<Decls>,
+    /// What this cascade used of the file's limits, which the flattener's second cascade
+    /// goes on charging ([`super::flatten`]).
+    pub(crate) spent: Spent,
+}
+
+/// What a book file's cascades have used so far of the limits they share: units against
+/// [`MAX_CASCADE_DECLS`] and selector steps against [`deckle_limits::MAX_SELECTOR_WORK`].
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Spent {
+    pub(crate) units: usize,
+    pub(crate) work: u64,
 }
 
 impl Cascaded {
@@ -64,8 +75,8 @@ impl Cascaded {
 /// by Calibre's `html.css` and then `sheets`, the stylesheets of the file at `href` (from the
 /// book's root) in Calibre's order (each `<style>` and `<link rel=stylesheet>` in document
 /// order, a `<style>`'s imports before it), as [`parse_sheet`] read them with one rule index
-/// running across them. Run [`crate::dom::mark_chapters`] first: Calibre marks chapters before
-/// the Stylizer.
+/// running across them. Run [`crate::dom::mark_chapters`] and then [`super::prepare_body`]
+/// first: Calibre marks chapters and sets `<body>`'s style before the Stylizer.
 ///
 /// - The rules are sorted by (origin, specificity, index) and applied in that order
 ///   (`StylizerRules.__init__`): a later rule's value replaces an earlier one's unless the
@@ -92,20 +103,54 @@ pub fn cascade(
     if book_rules > MAX_STYLE_RULES {
         return Err(Error::TooLarge(MAX_STYLE_RULES));
     }
-    // `stylesheets = [html_css_stylesheet()]`, then the book's.
-    let ua = parse_sheet(HTML_CSS, Origin::UserAgent, "", 0, &mut |_| None)?;
     let mut font_face = Vec::new();
-    let mut all: Vec<Applied> = Vec::with_capacity(ua.rules.len() + book_rules);
-    for mut sheet in std::iter::once(ua).chain(sheets) {
+    let mut rules = Vec::with_capacity(book_rules);
+    for mut sheet in sheets {
         sheet.normalize(profile);
         font_face.append(&mut sheet.font_face);
-        all.extend(sheet.rules.into_iter().map(Applied::new));
+        rules.append(&mut sheet.rules);
     }
+    let (c, _) = run(
+        dom,
+        href,
+        rules,
+        font_face,
+        profile,
+        Spent::default(),
+        false,
+    )?;
+    Ok(c)
+}
+
+/// [`cascade`] of `book`, rules already normalized, after Calibre's `html.css`, charged on
+/// from `spent`. With `ua_decls`, also each element's declarations from `html.css` alone, before
+/// the book's rules and its `style` attribute (the flattener's second cascade, which
+/// `RemoveFakeMargins` changes afterwards).
+pub(crate) fn run(
+    dom: &mut Dom,
+    href: &str,
+    book: Vec<Rule>,
+    book_font_face: Vec<Decls>,
+    profile: &Profile,
+    spent: Spent,
+    ua_decls: bool,
+) -> Result<(Cascaded, Vec<Arc<Decls>>), Error> {
+    // `stylesheets = [html_css_stylesheet()]`, then the book's.
+    let mut ua = parse_sheet(HTML_CSS, Origin::UserAgent, "", 0, &mut |_| None)?;
+    ua.normalize(profile);
+    let ua_rules = ua.rules.len();
+    let mut font_face = ua.font_face;
+    font_face.extend(book_font_face);
+    let mut all: Vec<Applied> = Vec::with_capacity(ua_rules + book.len());
+    all.extend(ua.rules.into_iter().map(Applied::new));
+    all.extend(book.into_iter().map(Applied::new));
     // `self.rules.sort(key=itemgetter(0))`: (origin, 0, ids, classes, types, index); stable.
+    // The user agent's rules stay first, at `0..ua_rules`.
     all.sort_by_key(|a| (a.rule.origin, a.specificity, a.rule.index));
 
-    let mut units = Units(0);
+    let mut units = Units(spent.units);
     let index = DocIndex::new(dom);
+    index.spend(spent.work);
     let n = dom.node_count();
     // Which rules reach each element: a state is the set reached so far, made of its parent
     // state and one more rule. State 0 is no rule.
@@ -205,6 +250,26 @@ pub fn cascade(
         built.build(s, &mut units)?;
     }
     let mut specified: Vec<Arc<Decls>> = state.iter().map(|s| Arc::clone(&built.memo[s])).collect();
+    // The set of `html.css` rules each set starts with: its rules up to the first of the book.
+    let mut ua_of = Vec::new();
+    if ua_decls {
+        let mut prefix: HashMap<u32, u32> = HashMap::new();
+        for &s in &state {
+            let p = match prefix.get(&s) {
+                Some(&p) => p,
+                None => {
+                    let mut at = s;
+                    while at != 0 && states.rule[at as usize] as usize >= ua_rules {
+                        at = states.parent[at as usize];
+                    }
+                    built.build(at, &mut units)?;
+                    prefix.insert(s, at);
+                    at
+                }
+            };
+            ua_of.push(Arc::clone(&built.memo[&p]));
+        }
+    }
     drop(built);
 
     // `xpath(tree, '//h:*[@style]')`: `_apply_style_attr`. Elements whose rules and style
@@ -285,12 +350,18 @@ pub fn cascade(
         }
     }
 
-    Ok(Cascaded {
+    let spent = Spent {
+        units: units.0,
+        work: index.work(),
+    };
+    let c = Cascaded {
         specified,
         pseudo,
         rules: all.into_iter().map(|a| a.rule).collect(),
         font_face,
-    })
+        spent,
+    };
+    Ok((c, ua_of))
 }
 
 /// A rule with what applying it needs.
@@ -330,15 +401,15 @@ impl Applied {
 }
 
 /// The units a declaration costs to store: one, and one more for each 64 bytes of it.
-fn decl_units(name: &str, d: &Decl) -> usize {
+pub(crate) fn decl_units(name: &str, d: &Decl) -> usize {
     1 + (name.len() + d.value.len()) / TEXT_UNIT
 }
 
 /// The units charged so far against [`MAX_CASCADE_DECLS`].
-struct Units(usize);
+pub(crate) struct Units(pub(crate) usize);
 
 impl Units {
-    fn charge(&mut self, units: usize) -> Result<(), Error> {
+    pub(crate) fn charge(&mut self, units: usize) -> Result<(), Error> {
         self.0 = self.0.saturating_add(units);
         if self.0 > MAX_CASCADE_DECLS {
             return Err(Error::Cascade(MAX_CASCADE_DECLS));
@@ -422,6 +493,16 @@ fn updated(base: &Decls, add: &Decls, units: &mut Units) -> Result<Decls, Error>
     update(&mut decls, &mut pos, add);
     decls.shrink_to_fit();
     Ok(decls)
+}
+
+/// `base` updated by `add` ([`update`]), not charged: for sets of declarations a cascade has
+/// already charged.
+pub(crate) fn merged(base: &Decls, add: &Decls) -> Decls {
+    let mut decls = base.clone();
+    let mut pos = positions(base);
+    update(&mut decls, &mut pos, add);
+    decls.shrink_to_fit();
+    decls
 }
 
 /// `stylizer.py` `Style._update_style`: each of `add` replaces the value of its name unless

@@ -522,8 +522,61 @@ The port takes the specificity from its own reading of the selector where it get
 Calibre keeps a dictionary of declarations for every element, however many. The port shares one
 copy among the elements the same rules and `style` attribute reach, and counts what it stores
 (`deckle_limits::MAX_CASCADE_DECLS`): past it `css::cascade` gives `css::Error::Cascade` for that
-file. At the limit the cascade takes about 85 MB. The 49 files of the cascade fixtures use at
-most 385 units, the files of nine Gutenberg books at most 1,495; a file of 40,000 elements each
-styled its own way with 12 declarations exceeds it. The port also counts
-the CSS rules of all a file's stylesheets together against `deckle_limits::MAX_STYLE_RULES`,
-where `css::parse_sheet` counts each sheet's own.
+file. The flattener's second cascade, and the copies the flattener makes where an attribute
+changes an element's styles, count against the same limit, carried on from the first cascade, as
+its selector matching counts against `deckle_limits::MAX_SELECTOR_WORK`; past either
+`css::flatten` refuses the file. At the limit the first cascade alone takes about 85 MB, and
+both together up to about 120 MB (118 MB measured for 45,000 paragraphs each styled its own way,
+refused in the second cascade; 25,000 pass both, in 70 MB; release build). The 49 files of the cascade fixtures use at most 394 units in the first cascade and 1,049 in both,
+the files of nine Gutenberg books at most 1,495 in the first; a file of 40,000 elements each
+styled its own way with 12 declarations exceeds it, and one of 9,000 paragraphs each with a
+1,200-byte declaration of its own passes the first cascade but not the second. The port also counts the CSS rules of all a file's stylesheets
+together against `deckle_limits::MAX_STYLE_RULES`, where `css::parse_sheet` counts each sheet's
+own, and refuses a file the flattener gives more classes than that limit
+(`stylesheet.css`'s rules for the file).
+
+## Class names from letters outside ASCII
+
+The flattener names a class after the element's first class, made ASCII by Calibre's
+`ascii_text` (its `Unihandecoder`). The port uses the deunicode crate, whose tables differ for
+some letters, so a class first named by a non-ASCII class can get another name (`Ünter` is
+`unter` in both; a CJK class name may be spelled differently). Which elements share a class,
+and their styles, are the same.
+
+## The order of the flattener's classes
+
+Calibre writes `stylesheet.css` with the elements' classes sorted by `numeric_sort_key` (ICU
+collation, numbers as numbers) and the pseudo-classes' after them. The port sorts names by runs
+of digits as numbers and the rest by bytes, which differs from ICU for punctuation (`_`, `-`,
+`.`) next to letters. The order changes styles only for an element two of the flattener's
+element classes reach: one the flattener does not walk (in `<head>`, or under an element of
+another namespace) whose own `class` attribute names two of them. Within a `class` attribute the
+port writes the names in byte order; Calibre writes them in a Python set's order, which changes
+from one run to the next (the dumps sort them).
+
+## A negative line height
+
+With `minimum_line_height` 0, the flattener sets `line-height: 0.0` only where an element's
+line height (`Style.lineHeight`, inherited from the parent where the element sets none) is a
+negative number of points and the element is not a drop cap. The port decides that from the
+sign of the value as written (a number, or a length `unit_convert` reads), taking the font size
+as positive and finite: where an element's font size is 0, infinite or NaN (`font-size: 0`,
+`1e999pt`), Calibre leaves the line height and the port sets it. The port reads numbers as
+Python's `float()` does but for `_` between digits and digits outside ASCII, which it does not
+read; and it counts an element's children without the comments lxml counts when it tests a drop
+cap.
+
+## Values the flattener writes back
+
+Calibre writes each class as text (`key: value;`) and css_parser reads `stylesheet.css` back. The
+port writes each value as css_parser writes values (`22.0pt` is `22pt`, `#eeeeee` is `#eee`) and
+drops one it cannot read, value by value: a value whose text would end its declaration or rule
+early (an attribute value holding `;` or `}`, such as `<font face="a;b">`) is read by Calibre with
+the rest of the sheet changed around it, and by the port as one value or none.
+
+## Fake margins on elements the flattener leaves
+
+`RemoveFakeMargins` removes a margin from a class, which every element of the book with that class
+then lacks. The port works out again the styles of the elements the flattener gave that class.
+An element the flattener does not walk, whose own `class` attribute happens to name a class the
+flattener made and edited, keeps the margin in the port.

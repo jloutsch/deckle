@@ -64,6 +64,13 @@ font shorthand; no tinycss code is copied. calibre's COPYRIGHT file lists src/ti
     Copyright: Simon Sapin
     License: BSD
 
+src/css/flatten.rs and src/css/fake_margins.rs port calibre 9.18.0's CSS flattener and its
+removal of fake margins, under the same notice: src/calibre/ebooks/oeb/transforms/flatcss.py,
+src/calibre/ebooks/oeb/transforms/page_margin.py, src/calibre/ebooks/oeb/stylizer.py
+(`Style.lineHeight`, `Style.fontSize`), src/calibre/ebooks/__init__.py (`unit_convert`) and
+src/calibre/customize/profiles.py (`fnums`). Class names are made ASCII with the deunicode crate
+(BSD-3-Clause) where calibre uses its own transliteration.
+
 The tables in src/css/defaults.rs are calibre's (`DEFAULTS`, `INHERITED`). src/css also
 follows the behaviour of css_parser 1.1.1, the CSS library calibre runs (a fork of cssutils,
 licensed under the GNU Lesser General Public License v3 or later); no css_parser code is

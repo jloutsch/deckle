@@ -14,8 +14,10 @@
 //! css_parser's own behaviour, which is not in Calibre's source, was read from Calibre 9.18 and
 //! is described where it is ported. [`parse_selector`] and [`select`] match a rule's selector as
 //! Calibre's own engine, `css_selectors`, does (Task 7). [`cascade`] applies a file's rules
-//! and `style` attributes to its elements as the first-pass `Stylizer` does (Task 8). Where the
-//! port differs on purpose, `DIVERGENCES.md` says so.
+//! and `style` attributes to its elements as the first-pass `Stylizer` does (Task 8).
+//! [`flatten`] turns each element's styles into a class as Calibre's `CSSFlattener` does and
+//! cascades the classes again as kfxgen's `Stylizer` reads them; [`remove_fake_margins`] then
+//! runs over the book (Task 9). Where the port differs on purpose, `DIVERGENCES.md` says so.
 //!
 //! Hostile input: every count the input controls is bounded by
 //! [`deckle_limits::MAX_STYLE_RULES`], [`deckle_limits::MAX_STYLE_DECLS`] or a nesting limit,
@@ -23,7 +25,8 @@
 //! and no work is repeated per declaration or per import. Matching selectors to a document is
 //! bounded by [`deckle_limits::MAX_SELECTOR_WORK`], charged to its [`DocIndex`]; the
 //! declarations the cascade stores for a document's elements by
-//! [`deckle_limits::MAX_CASCADE_DECLS`].
+//! [`deckle_limits::MAX_CASCADE_DECLS`]. The flattener's second cascade goes on charging both
+//! from where the first left them.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -31,6 +34,8 @@ use std::sync::Arc;
 mod budget;
 mod cascade;
 mod defaults;
+mod fake_margins;
+mod flatten;
 mod font_shorthand;
 mod media;
 mod normalize;
@@ -41,6 +46,8 @@ mod value;
 
 pub use cascade::{Cascaded, cascade};
 pub use defaults::{DEFAULTS, INHERITED};
+pub use fake_margins::remove_fake_margins;
+pub use flatten::{ClassNamer, Flat, flatten, prepare_body};
 pub use media::media_ok;
 pub use normalize::{DEFAULT_PROFILE, Profile, normalize};
 pub use select::{

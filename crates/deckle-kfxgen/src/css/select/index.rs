@@ -239,6 +239,12 @@ impl DocIndex {
     pub fn work(&self) -> u64 {
         self.work.get()
     }
+
+    /// Counts `work` steps done before this index was built, on another index of the same
+    /// file (the flattener's second cascade goes on from the first's).
+    pub(crate) fn spend(&self, work: u64) {
+        self.work.set(self.work.get().saturating_add(work));
+    }
 }
 
 /// Files element `p` under `name` in ASCII lower case, once.
