@@ -105,6 +105,13 @@
 - `oeb_view` ports, each with its Calibre source named in a comment: hrefs relative to the OPF folder; an HTML cover or title page removed from the spine (`epub_input.py` `rationalize_cover2/3`); duplicate spine entries dropped; linked HTML missing from the spine appended as non-linear (`oeb/reader.py:339`); contents from nav else NCX, empty labels dropped, the generated-contents flag; language as Calibre writes it; dates filled to a full day.
 - Not here: kfxgen's own spine reorder (`converter.py:8172-8221`); phase 3.
 
+**Amended after Task 1 (the dumps are the reference; where a line above disagrees, these win):**
+- `oeb.json` is Calibre's view **after** its transforms, so: hrefs are from the EPUB root (`OEBPS/one.xhtml`), not relative to the OPF; the manifest no longer holds the book's CSS, nav or NCX and does hold Calibre's `stylesheet.css` and `page_styles.css`. `oeb_view` produces that manifest; the test compares it whole.
+- `raw.sha256` is `null` where Calibre wrote over the OPF; the test skips those books. `raw` names the EPUB's own OPF path.
+- A year-only `dc:date` gets day 15 of the month of the run in Calibre (`calibre.utils.date.parse_only_date`). The port fills month 01, day 15; the test ignores the month for a year-only source date; `DIVERGENCES.md` records it.
+- When the book has neither nav nor NCX, `oeb_view` sets `auto_generated_toc` and leaves `toc` empty; Task 8 fills it. The test compares `toc` only when the flag is false.
+- References for the port rules: `package_quirks` (cover page out of the spine, guide entries, duplicate dropped, `linear="no"`, linked file appended, `en-US` → `eng`, empty NCX label dropped) and `no_toc`.
+
 - [ ] **Step 1: Write the failing tests** in `tests/it/epub.rs`:
   - `every_cascade_fixture_oeb_matches_calibre`: for each `fixtures/kfxgen/cascade/<name>`, `oeb_view` serialized to the same JSON shape equals `oeb.json`, and `sha256(pkg.opf_text)` equals `raw.sha256`.
   - `no_contents_file_gives_generated_flag`, `spine_item_missing_from_manifest_is_skipped`, `missing_cover_is_not_an_error` (inputs built with `deckle_kfx::fixtures::stored_epub`).
@@ -143,6 +150,10 @@
 - `clean.rs` ports `oeb/parse_utils.py:166 parse_html`: names lowercased, XHTML namespace forced, `head`/`body`/`title` ensured, MS-Office tags to `span`, empty `a[href]`/`i`/`b`/`u` without `id` or `name` removed, a `<br>` with content to `div`.
 - The tree keeps namespaced attributes by their qualified name (`epub:type`), and SVG and MathML subtrees unchanged.
 
+**Amended after Task 1 (the dumps are the reference; where a line above disagrees, these win):**
+- `dom/NNN.xhtml` is the tree **after** flattening. Compare `<body>` subtrees only (`<head>` gains a `meta`, two `link`s and a title). Ignore the attributes `class`, `style` and `data-kfxgen-*`. Chapter-mark divs are the elements whose `styles/` entry is exactly `{display: block, page-break-after: always}`; remove those from the expected side.
+- Calibre's XML parse path keeps tag and attribute names as written (`<P>`, `<DIV CLASS=…>` in `css_quirks/dom/000.xhtml`); only its HTML fallback lowercases. `Dom::tag` returns the name as Calibre keeps it; follow the dump. Matching in Task 7 is ASCII case-insensitive either way.
+
 - [ ] **Step 1: Write the failing tests** in `tests/it/dom.rs`:
   - `parse_cleanups_match_calibre`: for `css_quirks.epub`'s `cleanups.xhtml`, the element paths and tags of `parse(bytes)` equal those of `dom/NNN.xhtml` once elements whose `style` is `display: block; page-break-after: always` (Task 8 adds them) are removed from the expected side.
   - `malformed_xhtml_loads_with_all_its_text` (Review Focus 1), `utf16_and_latin1_decode`, `undeclared_non_utf8_is_a_typed_error` (Review Focus 2).
@@ -174,6 +185,11 @@
 - Rules ported (source in comments): `CSSPreProcessor` drops `mso-` and `panose-` declarations; `@import` is inlined before the importing sheet's rules, a cycle or a depth over 8 ends the chain; `@page` in a linked sheet is dropped; one level of `@media` is flattened and kept when `media_ok` (`screen`, `all`, `aural`, `amzn-kf8`; any width, height, aspect, colour or resolution feature fails); `@font-face` is kept only with more than one declaration; a selector list becomes one `Rule` per selector.
 - `serialize_value`: property names and units lowercased; `.5em` → `0.5em`; `0pt` → `0`; keyword and colour case preserved (`RED`, `Center`); quotes normalised to double; an empty value drops the declaration; an invalid value is kept as written.
 
+**Amended after Task 1 (the dumps are the reference; where a line above disagrees, these win):**
+- Dump format as built: `rules/NNN.json` holds `{"ua_rules": <count>, "rules": [[origin, selector, declarations, important, key]…], "font_face": […]}` with book rules only, in cascade order; `key` is `[origin, a, b, c, d, index]`; `important` lists the `!important` property names. The user-agent rules are once in `fixtures/kfxgen/cascade/ua_rules.json` (180 rules) and must equal `parse_sheet(html.css)`.
+- `book_rules_match_calibre_in_text_and_order` sorts the dump's rules by `key`'s last item (source index) before comparing with `parse_sheet`'s source order, and checks `Decl.important` against `important`.
+- Follow the dump where it differs from the bullet list above: `panose-1` is kept in stylesheets, and an `@import` cycle can drop whole import chains (`css_quirks` shows which).
+
 - [ ] **Step 1: Write the failing tests** in `tests/it/css_sheet.rs`, each with its expected strings taken from `css_quirks`'s `rules/NNN.json`:
   - `book_rules_match_calibre_in_text_and_order`: for every cascade fixture file, the port's `(origin, selector, decls)` list equals `rules/NNN.json`. The dump's declarations are already normalized (shorthands expanded), so the test is written here with `#[ignore = "needs Task 6"]` and passes after Task 6.
   - `serialize_value_cases`: the pairs listed above.
@@ -193,6 +209,9 @@
 - Produces: `pub fn normalize(decls: Decls, profile: &Profile) -> Decls;`, `pub struct Profile { pub fbase: f64, pub dpi: f64, pub width_pts: f64, pub height_pts: f64, pub fnames: [(&'static str, f64); 7], pub fnums: [f64; 7] }`, `pub const DEFAULT_PROFILE: Profile` (fbase 12, dpi 100, 1152 × 864, `xx-small 5, x-small 7, small 9, medium 12, large 13.5, x-large 17, xx-large 20`, fnums `5, 9, 12, 13.5, 17, 20, 22`), `pub static DEFAULTS: &[(&str, &str)]`, `pub static INHERITED: &[&str]` (both copied from `oeb/normalize_css.py` and `oeb/stylizer.py:63`).
 - Expands `margin`, `padding`, `border`, `border-{top,right,bottom,left}`, `border-style`, `border-width`, `border-color`, `list-style`, `font` (port of `tinycss/fonts3.py parse_font`; unset parts take `DEFAULTS`). Does **not** expand `background`, `text-decoration`, `outline`.
 - A keyword `font-size` becomes `format!("{:.1}rem", fnames[k] / fbase)`; the keyword test is case-sensitive. `-epub-x` is also written as `-webkit-x` and `x`.
+
+**Amended after Task 1 (the dumps are the reference; where a line above disagrees, these win):**
+- The `-epub-` copy applies only to `writing-mode` and `text-emphasis*`; other `-epub-` properties (`-epub-hyphens`) are kept as written.
 
 - [ ] **Step 1: Write the failing tests**: `shorthands_expand_as_calibre` (table of input → expected `Decls`, from `css_quirks`'s `shorthand.xhtml` dump), `font_size_large_is_1_1rem`, `font_size_upper_case_keyword_is_left_alone`, `background_is_not_expanded`, `epub_prefix_is_copied`; un-ignore `book_rules_match_calibre_in_text_and_order`.
 - [ ] **Step 2: Run** `cargo test -p deckle-kfxgen --test it css_`. Expected: FAIL to compile.
@@ -240,6 +259,10 @@
 - `cascade` ports `Stylizer.__init__` (`oeb/stylizer.py:277-394`): sheet order `html.css`, then each `<style>` and `<link rel=stylesheet>` in document order; rules sorted by `(origin, a, b, c, index)` ascending and applied in order; a later rule overrides an `!important` property only when it is important too (so a user-agent `!important` loses to a book `!important`); `style` attributes applied last; a rule whose selector reports a pseudo goes to `pseudo` and not to `specified`; `img` `width`/`height` attributes become declarations and are removed from the tree unless CSS sets a non-auto width or height.
 - `mark_chapters` ports the default chapter test of `oeb/transforms/structure.py:53`: before each `h1` or `h2` whose text matches `chapter|book|section|part` followed by a space (case-insensitive), or any element with `class="chapter"`, insert `<div style="display: block; page-break-after: always">`, skipping matches that are among the first two elements at the start of a file. It runs before `cascade`.
 
+**Amended after Task 1 (the dumps are the reference; where a line above disagrees, these win):**
+- The user-agent `!important` case is `frameset { float: right !important }` in `css_quirks`'s `cascade.css`: the book's value wins this first pass (see `rules/004.json`).
+- Also here: `pub fn generated_toc(files: &mut [(&str, &mut Dom)]) -> Vec<TocNode>;` ports the contents Calibre builds when the book has none (`oeb/transforms/structure.py`), adding the `calibre_toc_N` ids it adds. Test `generated_contents_match_calibre` against `no_toc/oeb.json` (`Chapter One` → `OEBPS/one.xhtml#calibre_toc_2`, `Part Two` → `OEBPS/two.xhtml#calibre_toc_3`).
+
 - [ ] **Step 1: Write the failing tests**: `important_and_order_cases` (from `css_quirks`'s `cascade.xhtml`: important beats a later rule and the `style` attribute; equal specificity takes the later; user-agent `hr` height present), `img_size_attributes_fold_into_css`, `chapter_divs_are_inserted_where_calibre_inserts_them` (after `mark_chapters`, element paths equal the dump's for every cascade fixture file), `font_face_rules_match_calibre` (against `rules/NNN.json`).
 - [ ] **Step 2: Run** `cargo test -p deckle-kfxgen --test it css_cascade`. Expected: FAIL to compile.
 - [ ] **Step 3: Implement.** Index rules by their rightmost tag, class or id so matching is not rules × elements.
@@ -263,6 +286,11 @@
 - Class names: the element's first class with digits removed, lowercased (`Note2 big` → `note`), numbered `note`, `note1`, `note2` … in order of first use across the book; no class gives `calibre`, `calibre1` …; a pseudo dict gives `pcalibre`, `pcalibre1` …; two elements with the same sorted declarations share a class.
 - `Flat.specified` is what kfxgen's Stylizer reports: the element's flattened declarations cascaded again over `html.css` (book origin wins).
 - `remove_fake_margins` ports `oeb/transforms/page_margin.py:49` and runs over the whole book after every file is flattened.
+
+**Amended after Task 1 (the dumps are the reference; where a line above disagrees, these win):**
+- The second cascade over `html.css` respects importance: the flattened declarations never carry `!important`, so a user-agent `!important` value wins there (`frameset`, `frame`, `spacer`: the dump's `specified` has `float: none` for the framesets). Otherwise the book's value wins.
+- Class lists are compared as sorted sets (Calibre writes them in random order; the dump sorts them).
+- References: class naming in `css_quirks`'s `flatten.xhtml` (`Note2 big` → `note`, `note3` → `note1`, `NOTE` with a style attribute → `note2`); fake margins in `fake_margins` (`all.xhtml`: removed from all 30; `half.xhtml`: kept on 15). `RemoveFakeMargins` counts per tag and depth below `<body>` over the whole book and edits the shared class.
 
 - [ ] **Step 1: Write the failing tests**:
   - `every_cascade_fixture_specified_matches_kfxgens_stylizer`: for each fixture file, for each node, `Flat.specified` as a sorted map equals the dump's `specified`, `Flat.pseudo` equals `pseudo`, and the element's `class` attribute equals the dump's.
@@ -292,6 +320,10 @@
 - Ports `oeb/stylizer.py:518-944` and `unit_convert` (`ebooks/__init__.py:258`): unitless and `px` × 72/dpi; `in` × 72; `pt` as is; `em` × font size; `ex`/`en` × font size × 0.5; `pc` × 12; `mm` × 2.8346457; `cm` × 28.346457; `rem` × 12; `%` of the base; unparseable returned as `Text`. `font-size`: keywords from `fnames`; `smaller`/`larger` by the table, else ÷ or × 1.2; `%` and `em` of the parent; negative becomes `smaller`; unparseable inherits. `line-height`: `normal` is 1.2 × font size, a number × font size, and with no declaration the **parent's computed pt**. `width`/`height`: the attribute beats CSS, `%` of the parent, the root is `width_pts`/`height_pts`. Margins and padding `%` of the parent's width. `color` falls back to `black`. `initial` and `unset` come back as text.
 - Caches are per node; parent lookups are loops, not recursion.
 
+**Amended after Task 1 (the dumps are the reference; where a line above disagrees, these win):**
+- No dump holds `{"error": …}`: all `COMPUTED_PROPS` have a Calibre default. Keep `Err(NoDefault)` for other properties, with a unit test that needs no dump.
+- `nan` and `1e999` are read as numbers by Calibre; the dump writes them `{"number": "nan"}` and `{"number": "inf"}` (`css_quirks/styles/006.json`). `Value::Pt` carries NaN and infinity; the comparison treats NaN as equal to NaN.
+
 - [ ] **Step 1: Write the failing tests**:
   - `every_cascade_fixture_computed_matches_kfxgens_stylizer`: for each node and each of `COMPUTED_PROPS`, `computed` equals the dump: numbers within 1e-9, text equal, `{"error": …}` ↔ `Err`.
   - Named quirks from `css_quirks`'s `values.xhtml`: `twelve_px_is_8_64pt`, `font_size_large_is_13_2pt`, `line_height_inherits_as_points`, `text_indent_percent_is_of_own_width`, `font_weight_700_computes_to_504`, `width_attribute_beats_css`.
@@ -316,6 +348,9 @@
   pub fn manifest_bytes(path: &Path, href: &str) -> Result<Vec<u8>, Error>;
   ```
 - `Error` (thiserror): `Io`, `Zip`, `Xml`, `Encoding { file }`, `TooLarge { what }`, `Drm`, `NoDefault { prop }`.
+
+**Amended after Task 1 (the dumps are the reference; where a line above disagrees, these win):**
+- `kfxgen_models.sh --corpus` runs its conversions with `TZ=UTC` for the `cascade/` dump, as `--cascade` does (script change in this task). A corpus book has its own `cascade/ua_rules.json`.
 
 - [ ] **Step 1: Write the failing tests**: `read_book_matches_every_dump` (runs the Task 3, 8, 9 and 10 comparisons through `read_book` for every cascade fixture), `read_book_twice_is_identical`, `dump_from_another_calibre_version_is_refused` (the harness reads `cascade/TOOLS`), and in `corpus_cascade.rs` an `#[ignore]` test that does the same for `$DECKLE_KFXGEN_CORPUS/<book>/cascade` and prints the time per book.
 - [ ] **Step 2: Run** `cargo test -p deckle-kfxgen --test it book`. Expected: FAIL to compile.
