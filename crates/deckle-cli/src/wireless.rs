@@ -26,7 +26,10 @@ pub(crate) fn settings(cfg: &Config, main_path: &Path) -> Option<Settings> {
     let secrets = match wireless::load_secrets(&wireless::secrets_path(main_path)) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("wireless: not started: {e}");
+            // Asked on every watcher tick: said once.
+            if deckle_core::state_file::say_once(&e) {
+                eprintln!("wireless: not started: {e}");
+            }
             return None;
         }
     };

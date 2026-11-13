@@ -148,9 +148,12 @@ pub fn rebuildable<T: DeserializeOwned + Default>(path: &Path) -> Rebuilt<T> {
             )),
         ),
     };
-    if let Some(note) = &note {
+    if let Some(note) = &note
+        && say_once(note)
+    {
         eprintln!("{note}");
     }
+
     Rebuilt {
         value,
         may_save,
@@ -158,10 +161,34 @@ pub fn rebuildable<T: DeserializeOwned + Default>(path: &Path) -> Rebuilt<T> {
     }
 }
 
+/// True the first time this process sees `note`, false after: a watcher or a server that loads
+/// a damaged file on every tick or request says it once.
+pub fn say_once(note: &str) -> bool {
+    static SAID: std::sync::Mutex<Option<std::collections::HashSet<String>>> =
+        std::sync::Mutex::new(None);
+    let mut said = SAID.lock().unwrap_or_else(|p| p.into_inner());
+    said.get_or_insert_with(Default::default)
+        .insert(note.to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    /// A damaged rebuildable file loaded on every tick is said on the first load only.
+    #[test]
+    fn a_rebuildable_note_is_said_once_per_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("readers.json");
+        std::fs::write(&path, "{\"kobo/N4181\": \"2026-").unwrap();
+        let first = rebuildable::<BTreeMap<String, String>>(&path);
+        let second = rebuildable::<BTreeMap<String, String>>(&path);
+        let note = first.note.expect("said");
+        assert_eq!(second.note.as_deref(), Some(note.as_str()), "same note");
+        assert!(!say_once(&note), "already said by the first load");
+        assert!(say_once("a note never said before in this process"));
+    }
 
     #[test]
     fn owner_data_that_does_not_parse_is_an_error_naming_the_file_and_its_copy() {

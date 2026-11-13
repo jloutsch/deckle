@@ -144,7 +144,9 @@ pub async fn update(
         .await;
         if !matches!(saved, Ok(Ok(()))) {
             if let Ok(Err(e)) = saved {
-                eprintln!("koreader sync: {e}");
+                if deckle_core::state_file::say_once(&e) {
+                    eprintln!("koreader sync: {e}");
+                }
             }
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -172,7 +174,11 @@ pub async fn get_progress(
     let doc = document.to_ascii_lowercase();
     let found = tokio::task::spawn_blocking(move || {
         load(&store)
-            .inspect_err(|e| eprintln!("koreader sync: {e}"))
+            .inspect_err(|e| {
+                if deckle_core::state_file::say_once(e) {
+                    eprintln!("koreader sync: {e}");
+                }
+            })
             .ok()?
             .remove(&doc)
     })
