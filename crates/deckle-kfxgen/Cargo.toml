@@ -15,9 +15,6 @@ html5ever.workspace = true
 # Encodings a document declares (src/dom/parse.rs).
 encoding_rs.workspace = true
 cssparser.workspace = true
-selectors.workspace = true
-# The hash `selectors` asks its names for (src/css/select.rs).
-precomputed-hash.workspace = true
 zip.workspace = true
 regex.workspace = true
 # float_roundtrip: without it serde_json reads some floats one ULP off kfxgen's.

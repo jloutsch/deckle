@@ -19,7 +19,8 @@
 //! Hostile input: every count the input controls is bounded by
 //! [`deckle_limits::MAX_STYLE_RULES`], [`deckle_limits::MAX_STYLE_DECLS`] or a nesting limit,
 //! charged as the text is read; the selectors of a list share one copy of their declarations,
-//! and no work is repeated per declaration or per import.
+//! and no work is repeated per declaration or per import. Matching selectors to a document is
+//! bounded by [`deckle_limits::MAX_SELECTOR_WORK`], charged to its [`DocIndex`].
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -37,7 +38,9 @@ mod value;
 pub use defaults::{DEFAULTS, INHERITED};
 pub use media::media_ok;
 pub use normalize::{DEFAULT_PROFILE, Profile, normalize};
-pub use select::{Parsed, Selector, matches, parse_selector, select};
+pub use select::{
+    DocIndex, MAX_SELECTOR_BYTES, Parsed, Selector, TooLarge, parse_selector, select,
+};
 pub use sheet::parse_sheet;
 pub use value::{parse_style_attr, serialize_value};
 

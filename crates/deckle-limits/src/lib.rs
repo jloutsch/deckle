@@ -87,6 +87,14 @@ pub const MAX_STYLE_RULES: usize = 50_000;
 /// the limit, before the rest of it is held in memory.
 pub const MAX_STYLE_DECLS: usize = 150_000;
 
+/// EPUB to KFX: steps matching the CSS selectors of one book file against it may take: one for
+/// each element a selector's compound is tested on, times the tests in that compound, one for
+/// each element a combinator moves through, and one more for each 64 bytes of an attribute
+/// value compared. The slowest kinds of step reach it in 2 to 3 seconds in a release build
+/// (10 to 15 ns a step, measured on an M-series Mac); 2,000 rules of the kinds books use on a
+/// file of 20,000 elements take about 12 million.
+pub const MAX_SELECTOR_WORK: u64 = 200_000_000;
+
 /// Largest reservation made from a size a file declares (rule 1 of the size-limits design):
 /// `Vec::with_capacity(declared.min(MAX_RESERVE))`.
 pub const MAX_RESERVE: usize = 64 * 1024;

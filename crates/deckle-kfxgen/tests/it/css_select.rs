@@ -10,8 +10,9 @@ use std::time::{Duration, Instant};
 
 use deckle_kfx::epub_zip::EpubReader;
 use deckle_kfx::fixtures;
-use deckle_kfxgen::css::{Parsed, Selector, matches, parse_selector, select};
-use deckle_kfxgen::dom::{self, Dom};
+use deckle_kfxgen::css::{DocIndex, Parsed, Selector, TooLarge, parse_selector, select};
+use deckle_kfxgen::dom::{self, Dom, NodeId};
+use deckle_limits::MAX_SELECTOR_WORK;
 use serde_json::Value;
 
 /// Every book under `fixtures/kfxgen/cascade/`.
@@ -50,8 +51,13 @@ fn ok(text: &str) -> (Selector, Option<&'static str>, (u32, u32, u32)) {
     }
 }
 
+/// The elements `sel` matches, over an index of their own.
+fn run(sel: &Selector, dom: &Dom) -> Vec<NodeId> {
+    select(sel, dom, &DocIndex::new(dom)).unwrap()
+}
+
 fn paths(dom: &Dom, sel: &Selector) -> Vec<Vec<u32>> {
-    select(sel, dom).into_iter().map(|n| dom.path(n)).collect()
+    run(sel, dom).into_iter().map(|n| dom.path(n)).collect()
 }
 
 /// Runs `f`, failing past 5 s: a debug build, tests run in parallel. (Release-build times are
@@ -60,6 +66,7 @@ fn timed<T>(what: &str, f: impl FnOnce() -> T) -> T {
     let start = Instant::now();
     let out = f();
     let took = start.elapsed();
+    eprintln!("{what}: {took:?}");
     assert!(took < Duration::from_secs(5), "{what} took {took:?}");
     out
 }
@@ -299,6 +306,10 @@ fn specificity_cases() {
         (":is(p:hover, li)", (0, 1, 1)),
         (":first-child:root", (0, 2, 0)),
         ("p:descendant(x)", (0, 1, 1)),
+        // The `of` list adds nothing: the pseudo-class counts as one class.
+        ("li:nth-child(2n+1 of li)", (0, 1, 1)),
+        (":nth-last-child(1 of span)", (0, 1, 0)),
+        (":nth-child(2 of li span)", (0, 1, 0)),
         // css_parser reads :matches() as a function of no selectors.
         (":matches(p)", (0, 1, 0)),
         ("a > b + c ~ d", (0, 0, 4)),
@@ -314,10 +325,7 @@ fn hover_rule_reports_pseudo_and_matches_all_p() {
     assert_eq!(pseudo, Some("hover"));
     assert_eq!(spec, (0, 1, 1));
     let all_p: Vec<_> = dom.descendants().filter(|&n| dom.tag(n) == "p").collect();
-    assert_eq!(select(&sel, &dom), all_p);
-    for n in dom.descendants() {
-        assert_eq!(matches(&sel, &dom, n), dom.tag(n) == "p");
-    }
+    assert_eq!(run(&sel, &dom), all_p);
     // The name is found anywhere in the text, as stylizer.py's pseudo_pat finds it.
     assert_eq!(ok("a:not(:hover)").1, Some("hover"));
     assert_eq!(ok("[title=\":visited\"]").1, Some("visited"));
@@ -368,7 +376,7 @@ fn has_over_a_deep_tree_finishes() {
         (":has(span:not(:has(i)))", 0),
     ] {
         let got = match parse_selector(text) {
-            Parsed::Ok { selector, .. } => timed(text, || select(&selector, &dom)).len(),
+            Parsed::Ok { selector, .. } => timed(text, || run(&selector, &dom)).len(),
             Parsed::Dropped => 0,
         };
         assert_eq!(got, want, "{text}");
@@ -382,7 +390,7 @@ fn has_over_a_deep_tree_finishes() {
         ":is(div div p, span) span",
     ] {
         let (sel, ..) = ok(text);
-        timed(text, || select(&sel, &dom));
+        timed(text, || run(&sel, &dom));
     }
 }
 
@@ -409,7 +417,7 @@ fn nth_over_a_hundred_thousand_siblings_finishes() {
         ("li:not(:nth-child(n of li.x))", 100_000),
     ] {
         let (sel, ..) = ok(text);
-        assert_eq!(timed(text, || select(&sel, &dom)).len(), want, "{text}");
+        assert_eq!(timed(text, || run(&sel, &dom)).len(), want, "{text}");
     }
 }
 
@@ -435,7 +443,7 @@ fn deep_nesting_is_dropped_without_overflow() {
             let text = format!("{}p{}", ":not(:not(".repeat(16), "))".repeat(16));
             let (sel, ..) = ok(&text);
             let dom = page("<p>a</p><i>b</i>");
-            assert_eq!(select(&sel, &dom).len(), 1);
+            assert_eq!(run(&sel, &dom).len(), 1);
         })
         .unwrap()
         .join()
@@ -453,9 +461,9 @@ fn thousand_part_selector_is_dropped() {
     let (sel, _, spec) = ok(&parts(256));
     assert_eq!(spec, (0, 0, 256));
     let dom = page(&format!("{}x{}", "<p>".repeat(200), "</p>".repeat(200)));
-    assert!(timed("256 parts", || select(&sel, &dom)).is_empty());
+    assert!(timed("256 parts", || run(&sel, &dom)).is_empty());
     let (sel, ..) = ok(&parts(200));
-    assert_eq!(select(&sel, &dom).len(), 1);
+    assert_eq!(run(&sel, &dom).len(), 1);
     // Parts of one compound count as well: Calibre stops with a RecursionError past about
     // 400 of them (probed with calibre-debug).
     assert!(matches!(
@@ -464,7 +472,7 @@ fn thousand_part_selector_is_dropped() {
     ));
     let (sel, ..) = ok(&format!("p{}", ".a".repeat(255)));
     let dom = page(&"<p class=\"a\">x</p>".repeat(50_000));
-    assert_eq!(timed("255 classes", || select(&sel, &dom)).len(), 50_000);
+    assert_eq!(timed("255 classes", || run(&sel, &dom)).len(), 50_000);
 }
 
 #[test]
@@ -480,7 +488,7 @@ fn selectors_matching_everything_finish() {
         ":lang(en)",
     ] {
         let (sel, ..) = ok(text);
-        let got = timed(text, || select(&sel, &dom)).len();
+        let got = timed(text, || run(&sel, &dom)).len();
         if text == ":lang(en)" {
             assert_eq!(got, 0, "no lang attribute");
         } else {
@@ -489,24 +497,325 @@ fn selectors_matching_everything_finish() {
     }
 }
 
-#[test]
-fn fifty_thousand_selectors_of_twenty_parts() {
-    let dom = page("<div class=\"a\"><p id=\"x\">a</p><p>b</p></div>");
-    let texts: Vec<String> = (0..50_000)
-        .map(|i| {
-            // 20 compounds.
-            let parts: Vec<String> = (0..10)
-                .map(|j| format!("div.c{}#i{j} > p[title^=t{i}]", i % 7))
-                .collect();
-            parts.join(" ")
-        })
-        .collect();
-    timed("50,000 selectors", || {
-        for text in &texts {
-            let (sel, ..) = ok(text);
-            assert!(select(&sel, &dom).is_empty());
+/// 1,000 chapters of 100 elements: a `div` (classes `chapter` and `c<i>`, id `ch<i>`, and
+/// `data-v<i % 100>`), an `h2`, and 49 paragraphs (class `p<j>`) holding a `span` each.
+fn chapters() -> Dom {
+    let mut body = String::new();
+    for i in 0..1_000 {
+        body.push_str(&format!(
+            "<div class=\"chapter c{i}\" id=\"ch{i}\" data-v{}=\"x\"><h2>T</h2>",
+            i % 100
+        ));
+        for j in 0..49 {
+            body.push_str(&format!("<p class=\"p{j}\"><span>x</span></p>"));
         }
+        body.push_str("</div>");
+    }
+    page(&body)
+}
+
+/// Selector `i` of the kinds books use: a class, a name and class, `a b`, `a > b`, `[attr]`.
+fn realistic(i: usize) -> String {
+    match i % 5 {
+        0 => format!(".c{i}"),
+        1 => format!("p.p{}", i % 50),
+        2 => format!("div.c{i} span"),
+        3 => format!("#ch{i} > h2"),
+        _ => format!("[data-v{}]", i % 200),
+    }
+}
+
+/// Matches `n` realistic selectors against [`chapters`] over one index: the matches, and the
+/// work charged.
+fn match_realistic(n: usize) -> (usize, u64) {
+    let dom = chapters();
+    assert!(dom.descendants().count() > 100_000);
+    let sels: Vec<Selector> = (0..n).map(|i| ok(&realistic(i)).0).collect();
+    let index = DocIndex::new(&dom);
+    let found = timed("realistic selectors", || {
+        sels.iter()
+            .map(|sel| select(sel, &dom, &index).unwrap().len())
+            .sum()
     });
+    (found, index.work())
+}
+
+/// The work of matching every rule of a file: Calibre's user-agent rules and `rules`.
+fn rules_work(dom: &Dom, rules: &[String]) -> u64 {
+    let ua = read(&fixtures::kfxgen("cascade/ua_rules.json"));
+    let ua = ua["rules"].as_array().unwrap().iter();
+    let index = DocIndex::new(dom);
+    for text in ua
+        .map(|r| r[1].as_str().unwrap().to_owned())
+        .chain(rules.iter().cloned())
+    {
+        if let Parsed::Ok { selector, .. } = parse_selector(&text) {
+            select(&selector, dom, &index).unwrap();
+        }
+    }
+    index.work()
+}
+
+/// A book of 20,000 elements as converters write them: chapters of headings, paragraphs of
+/// generated classes holding emphasis, links and notes, lists, tables and quotations.
+fn big_book() -> Dom {
+    let mut body = String::new();
+    for ch in 0..115 {
+        body.push_str(&format!(
+            "<div xmlns:epub=\"http://www.idpf.org/2007/ops\" class=\"chapter\" id=\"c{ch}\">\
+             <h1 class=\"calibre{}\">Title</h1>",
+            ch % 3
+        ));
+        for i in 0..40 {
+            body.push_str(&format!(
+                "<p class=\"calibre{}\">Text <em>a</em> <span class=\"s{}\">b</span> \
+                 <a href=\"#n{i}\" epub:type=\"noteref\">1</a></p>",
+                i % 30,
+                i % 7
+            ));
+        }
+        body.push_str("<blockquote><p class=\"q\">x</p></blockquote>");
+        body.push_str("<ul><li>a</li><li>b</li><li><p>c</p></li></ul>");
+        body.push_str("<table><tr><td>a</td><td>b</td></tr></table>");
+        body.push_str("<aside epub:type=\"footnote\" id=\"n1\"><p>note</p></aside></div>");
+    }
+    let dom = page(&body);
+    assert!((19_000..21_000).contains(&dom.descendants().count()));
+    dom
+}
+
+/// 2,000 rules of the kinds books hold.
+fn big_book_rules() -> Vec<String> {
+    (0..2_000)
+        .map(|i| match i % 20 {
+            0 => format!(".calibre{}", i % 40),
+            1 => format!("p.calibre{}", i % 40),
+            2 => "p".to_owned(),
+            3 => format!("span.s{}", i % 9),
+            4 => ".chapter p".to_owned(),
+            5 => "div > p".to_owned(),
+            6 => "h1 + p".to_owned(),
+            7 => "p + p".to_owned(),
+            8 => "blockquote p".to_owned(),
+            9 => "a:hover".to_owned(),
+            10 => "li > p".to_owned(),
+            11 => "[type~=footnote]".to_owned(),
+            12 => "p:first-child".to_owned(),
+            13 => "table td".to_owned(),
+            14 => "p:first-letter".to_owned(),
+            15 => format!("#c{} h1", i % 120),
+            16 => ".chapter > h1 ~ p".to_owned(),
+            17 => "em, i".to_owned(),
+            18 => "a[href]".to_owned(),
+            _ => "*".to_owned(),
+        })
+        .collect()
+}
+
+#[test]
+fn real_books_stay_far_below_the_work_limit() {
+    let mut largest = (0, String::new());
+    for book in BOOKS {
+        let dir = fixtures::kfxgen(&format!("cascade/{book}"));
+        for entry in std::fs::read_dir(dir.join("rules")).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_stem().unwrap().to_str().unwrap().to_owned();
+            let rules: Vec<String> = read(&path)["rules"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r[1].as_str().unwrap().to_owned())
+                .collect();
+            let dom =
+                dom::parse(&std::fs::read(dir.join(format!("dom/{name}.xhtml"))).unwrap()).unwrap();
+            let work = rules_work(&dom, &rules);
+            if work > largest.0 {
+                largest = (work, format!("{book}/{name}"));
+            }
+        }
+    }
+    let dom = big_book();
+    let big = timed("2,000 rules", || rules_work(&dom, &big_book_rules()));
+    eprintln!(
+        "largest fixture file {}: {} steps; 2,000 rules × 20,000 elements: {big} steps",
+        largest.1, largest.0
+    );
+    assert!(largest.0 < MAX_SELECTOR_WORK / 1_000, "{largest:?}");
+    assert!(big < MAX_SELECTOR_WORK / 10, "{big}");
+}
+
+#[test]
+fn five_thousand_realistic_selectors_use_the_index() {
+    // A pass over every element for each selector would be 500 million tests, past the limit.
+    let (found, work) = match_realistic(5_000);
+    // .c<i> and div.c<i> span: 200 and 200 × 49 for i < 1,000; #ch<i> > h2: 200; p.p<k>:
+    // 1,000 × 1,000; [data-v<k>]: 25 per k < 100 that is 4 mod 5, on 10 divs each.
+    assert_eq!(found, 200 + 1_000_000 + 9_800 + 200 + 20 * 25 * 10);
+    // p.p<k> is 1,000 selectors over 1,000 elements, two tests each.
+    assert!(work < 3_000_000, "{work}");
+}
+
+/// Release build: `cargo test --release -p deckle-kfxgen --test it -- --ignored fifty_thousand`.
+#[test]
+#[ignore = "about a second in a release build, much longer in a debug one"]
+fn fifty_thousand_realistic_selectors_finish() {
+    let (found, work) = match_realistic(50_000);
+    assert_eq!(found, 200 + 10_000_000 + 9_800 + 200 + 20 * 250 * 10);
+    assert!(work < MAX_SELECTOR_WORK / 4, "{work}");
+}
+
+/// Matches `sels` over one index of `dom` until one gives [`TooLarge`]: how many matched
+/// before it.
+fn until_too_large(dom: &Dom, sels: impl Iterator<Item = String>) -> usize {
+    let index = DocIndex::new(dom);
+    let mut done = 0;
+    for text in sels {
+        let (sel, ..) = ok(&text);
+        match select(&sel, dom, &index) {
+            Ok(_) => done += 1,
+            Err(TooLarge) => {
+                // And every call after it.
+                assert_eq!(select(&ok("p").0, dom, &index), Err(TooLarge));
+                return done;
+            }
+        }
+    }
+    panic!("never too large: {} steps", index.work());
+}
+
+#[test]
+fn worst_case_selectors_are_charged() {
+    // 256 steps an element for 255 classes; every element a step for each of 256 compounds.
+    let dom = page(&"<p class=\"a\">x</p>".repeat(10_000));
+    let index = DocIndex::new(&dom);
+    let (sel, ..) = ok(&format!("p{}", ".a".repeat(255)));
+    assert_eq!(select(&sel, &dom, &index).unwrap().len(), 10_000);
+    assert!(index.work() >= 256 * 10_000, "{}", index.work());
+    let dom = deep_and_wide(2_000);
+    let index = DocIndex::new(&dom);
+    let (sel, ..) = ok(&vec!["*"; 256].join(" "));
+    // The paragraphs and spans, 256 and 257 levels down.
+    assert_eq!(select(&sel, &dom, &index).unwrap().len(), 4_000);
+    assert!(index.work() > 250 * 4_000, "{}", index.work());
+    // So at most this many such selectors run on a document of 100,000 elements.
+    const { assert!(MAX_SELECTOR_WORK / (256 * 100_000) < 10) };
+}
+
+/// Release build: `cargo test --release -p deckle-kfxgen --test it -- --ignored worst_case`.
+#[test]
+#[ignore = "about two seconds in a release build, much longer in a debug one"]
+fn worst_case_selectors_are_refused() {
+    // 255 classes on 100,000 elements, and 256 compounds each over the deep tree's 100,000:
+    // about 25 million steps a selector.
+    let dom = page(&"<p class=\"a\">x</p>".repeat(100_000));
+    let classes = format!("p{}", ".a".repeat(255));
+    let done = timed("255 classes", || {
+        until_too_large(&dom, std::iter::repeat_n(classes, 50_000))
+    });
+    assert!(done < 50, "{done}");
+    let dom = deep_and_wide(50_000);
+    let stars = vec!["*"; 256].join(" ");
+    let done = timed("256 compounds", || {
+        until_too_large(&dom, std::iter::repeat_n(stars, 50_000))
+    });
+    assert!(done < 50, "{done}");
+}
+
+/// How long each kind of work takes per step, to size [`MAX_SELECTOR_WORK`]: run in a release
+/// build with `cargo test --release -p deckle-kfxgen --test it -- --ignored --nocapture
+/// selector_work_rates`.
+#[test]
+#[ignore = "a measurement, for a release build"]
+fn selector_work_rates() {
+    let classes = page(&"<p class=\"a\" title=\"Ab\">x</p>".repeat(100_000));
+    let deep = deep_and_wide(50_000);
+    let long = page(&format!("<p title=\"{}\">x</p>", "Ab".repeat(1_000)).repeat(10_000));
+    let cases: [(&str, &Dom, String); 8] = [
+        ("255 classes", &classes, format!("p{}", ".a".repeat(255))),
+        (
+            "255 attribute tests",
+            &classes,
+            format!("p{}", "[title=Ab]".repeat(255)),
+        ),
+        (
+            "127 :not()",
+            &classes,
+            format!("p{}", ":not(.b)".repeat(127)),
+        ),
+        ("256 compounds", &deep, vec!["*"; 256].join(" ")),
+        ("256 child compounds", &deep, vec!["*"; 256].join(" > ")),
+        (
+            "127 :has()",
+            &deep,
+            format!("*{}", ":has(span)".repeat(127)),
+        ),
+        ("*= i on long values", &long, "[title*=b i]".repeat(100)),
+        (
+            "127 :nth-child(of)",
+            &classes,
+            format!("p{}", ":nth-child(2n+1 of .a)".repeat(127)),
+        ),
+    ];
+    for (what, dom, text) in cases {
+        let (sel, ..) = ok(&text);
+        let index = DocIndex::new(dom);
+        let start = Instant::now();
+        let mut runs = 0;
+        while select(&sel, dom, &index).is_ok() {
+            runs += 1;
+        }
+        let took = start.elapsed();
+        eprintln!(
+            "{what}: {runs} selectors, {} steps a selector, {took:?} to the limit, {:.2} ns a step",
+            index.work() / (runs + 1),
+            took.as_nanos() as f64 / index.work() as f64
+        );
+    }
+}
+
+#[test]
+fn long_selector_is_dropped_unread() {
+    let text = format!(".{}", "a".repeat(1 << 20));
+    assert!(matches!(
+        timed("1 MB", || parse_selector(&text)),
+        Parsed::Dropped
+    ));
+    let text = format!(".{}", "a".repeat(64 * 1024 - 1));
+    assert!(matches!(parse_selector(&text), Parsed::Ok { .. }));
+    let text = format!(".{}", "a".repeat(64 * 1024));
+    assert!(matches!(parse_selector(&text), Parsed::Dropped));
+}
+
+#[test]
+fn long_attribute_values_are_read_once() {
+    // A value of 30,000 bytes, in the selector, is looked at when the selector is read, not
+    // again for each element.
+    let dom = page(&"<p title=\"a b\" lang=\"x\">x</p>".repeat(100_000));
+    let big = "x".repeat(30_000);
+    let spaced = format!("{big} {big}");
+    for (text, want) in [
+        (format!("[title~=\"{spaced}\"]"), 0),
+        (format!("[title~=\"{big}\"]"), 0),
+        (format!("[title~=\"{big}\" i]"), 0),
+        (format!("[title=\"{big}\" i]"), 0),
+        (format!("[title*=\"{big}\" i]"), 0),
+        (format!("[title^=\"{big}\" i]"), 0),
+        ("[title~=\"A\" i]".to_owned(), 100_000),
+        ("[title~=\"a b\"]".to_owned(), 0),
+        ("[title~=\"\"]".to_owned(), 0),
+        ("[title=\"A B\" i]".to_owned(), 100_000),
+        ("[title|=\"A\" i]".to_owned(), 0),
+        ("[title$=\" B\" i]".to_owned(), 100_000),
+        ("[title*=\"A \" i]".to_owned(), 100_000),
+    ] {
+        let (sel, ..) = ok(&text);
+        assert_eq!(
+            timed("long value", || run(&sel, &dom)).len(),
+            want,
+            "{}",
+            &text[..text.len().min(40)]
+        );
+    }
 }
 
 #[test]
@@ -527,6 +836,6 @@ fn lang_with_many_subtags_finishes() {
         (":lang(s5)", 0),
     ] {
         let (sel, ..) = ok(text);
-        assert_eq!(timed(text, || select(&sel, &dom)).len(), want, "{text}");
+        assert_eq!(timed(text, || run(&sel, &dom)).len(), want, "{text}");
     }
 }

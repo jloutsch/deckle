@@ -4,10 +4,10 @@
 //! css_parser is not in Calibre's source; this follows what it does inside calibre 9.18, listed
 //! in `tests/it/css_sheet.rs`: combinators written ` > `, ` + `, ` ~ ` and one space;
 //! pseudo-class and pseudo-element names in lower case; attribute selectors without spaces,
-//! string values in double quotes; `:not()`, `:is()`, `:where()`, `:has()` (and `:matches()`,
-//! `:any()`) holding selector lists, other functions an expression of identifiers, numbers,
-//! strings, `+` and `-`. A list css_parser cannot read in full is dropped whole: an attribute
-//! flag (`[a="b" i]`), a number as an attribute value, `of` in `:nth-child()`, an undeclared
+//! string values in double quotes; `:not()`, `:is()`, `:where()`, `:has()` holding selector
+//! lists, other functions (`:matches()` and `:any()` among them) an expression of identifiers,
+//! numbers, strings, `+` and `-`. A list css_parser cannot read in full is dropped whole: an
+//! attribute flag (`[a="b" i]`), a number as an attribute value, `of` in `:nth-child()`, an undeclared
 //! namespace prefix, anything after a pseudo-element.
 
 use std::collections::BTreeSet;
@@ -17,16 +17,7 @@ use cssparser::{ParseError, Parser, Token};
 use super::value::{MAX_NESTING, decode_escapes, serialize_string, string_content};
 
 /// Functional pseudo-classes whose argument css_parser reads as a selector list.
-const SELECTOR_FUNCTIONS: [&str; 8] = [
-    "not",
-    "is",
-    "where",
-    "has",
-    "matches",
-    "any",
-    "-moz-any",
-    "-webkit-any",
-];
+const SELECTOR_FUNCTIONS: [&str; 4] = ["not", "is", "where", "has"];
 
 /// The selectors of a rule's prelude, each as css_parser writes it; `Err` when css_parser
 /// drops the rule. `namespaces` are the prefixes the sheet declared.

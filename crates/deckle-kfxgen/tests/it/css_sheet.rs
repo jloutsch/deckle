@@ -665,6 +665,14 @@ fn selectors_as_css_parser_writes_them() {
         (",a", &[]),
         (":foo()", &[]),
         (":not()", &[]),
+        // css_parser reads no selector list in these: an expression of identifiers only.
+        ("p:matches(.a)", &[]),
+        ("p:any(.a)", &[]),
+        ("p:-moz-any(.a)", &[]),
+        ("p:-webkit-any(.a)", &[]),
+        ("p:any(a, b)", &[]),
+        ("p:MATCHES( a  b )", &["p:matches( a b)"]),
+        ("p:-webkit-any(a)", &["p:-webkit-any(a)"]),
     ];
     let mut wrong = Vec::new();
     for (selector, want) in cases {

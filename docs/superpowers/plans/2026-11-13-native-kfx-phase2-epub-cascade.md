@@ -228,7 +228,7 @@
 ### Task 7: `css::select`: selector matching with Calibre's exceptions
 
 **Files:**
-- Create: `crates/deckle-kfxgen/src/css/select.rs`, `tests/it/css_select.rs`
+- Create: `crates/deckle-kfxgen/src/css/select/` (`mod.rs`, `tokens.rs`, `parse.rs`, `compile.rs`, `index.rs`, `eval.rs`), `tests/it/css_select.rs`
 
 **Interfaces:**
 - Produces:
@@ -236,10 +236,12 @@
   pub struct Selector { /* parsed */ }
   pub enum Parsed { Ok { selector: Selector, pseudo: Option<&'static str>, specificity: (u32, u32, u32) }, Dropped }
   pub fn parse_selector(text: &str) -> Parsed;
-  pub fn matches(sel: &Selector, dom: &Dom, node: NodeId) -> bool;
-  pub fn select(sel: &Selector, dom: &Dom) -> Vec<NodeId>;        // document order
+  pub struct DocIndex { /* names, classes, ids, attributes, positions; work charged */ }
+  impl DocIndex { pub fn new(dom: &Dom) -> DocIndex; pub fn work(&self) -> u64; }
+  pub struct TooLarge;                                             // past MAX_SELECTOR_WORK
+  pub fn select(sel: &Selector, dom: &Dom, index: &DocIndex) -> Result<Vec<NodeId>, TooLarge>;  // document order
   ```
-- Built on the `selectors` crate with an `Element` impl over `Dom`, in quirks mode so class and id names match ASCII case-insensitively; attribute values stay case-sensitive; namespaces are ignored.
+- *Amended in the Task 7 review:* no `selectors` crate (each compound's tests are matched by the port itself, class and id names ASCII case-insensitively, attribute values case-sensitively, namespaces ignored) and no per-element `matches()` (it cost a pass over the document per call). Build one `DocIndex` per document and call `select` once per rule; `select` starts each compound from the smallest set of the index that holds it and charges its work to the index, giving `TooLarge` for every call once the document's total passes `deckle_limits::MAX_SELECTOR_WORK`. A selector over 64 KiB is `Dropped`.
 - Calibre's exceptions (`css_selectors/select.py`, `INAPPROPRIATE_PSEUDO_CLASSES`): `hover, link, visited, active, focus, before, after, first-letter, first-line` (and the rest of that list) match every element and are reported in `pseudo`; any other unknown pseudo makes the selector `Dropped`.
 - A selector with more than 256 compound parts is `Dropped`.
 

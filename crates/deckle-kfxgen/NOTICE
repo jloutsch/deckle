@@ -65,13 +65,45 @@ follows the behaviour of css_parser 1.1.1, the CSS library calibre runs (a fork 
 licensed under the GNU Lesser General Public License v3 or later); no css_parser code is
 copied, its behaviour was read from calibre.
 
-src/css/select.rs ports calibre's selector engine under the same notice:
+src/css/select/ ports calibre's selector engine under the same notice:
 src/css_selectors/select.py (Kovid Goyal) and src/css_selectors/parser.py, which calibre
-derived from cssselect and which carries cssselect's notice:
+derived from cssselect (its header: ":copyright: (c) 2007-2012 Ian Bicking and contributors.
+See AUTHORS for more details. :license: BSD, see LICENSE for more details."). The tokenizer
+and grammar in src/css/select/tokens.rs and src/css/select/parse.rs are ported from that file,
+under cssselect's licence:
 
-    cssselect
-    Copyright (c) 2007-2012 Ian Bicking and contributors
-    License: BSD
+    Copyright (c) 2007-2012 Ian Bicking and contributors. See AUTHORS
+    for more details.
+
+    All rights reserved.
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions are
+    met:
+
+    1. Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+
+    2. Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in
+    the documentation and/or other materials provided with the
+    distribution.
+
+    3. Neither the name of Ian Bicking nor the names of its contributors may
+    be used to endorse or promote products derived from this software
+    without specific prior written permission.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+    A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL IAN BICKING OR
+    CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+    EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+    PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+    PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+    LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+    NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 src/css/html.css is calibre's resources/templates/html.css, copied verbatim. It is Mozilla
 code under the tri-licence its header states (MPL 1.1, GPL 2.0 or later, LGPL 2.1 or later),

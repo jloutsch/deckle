@@ -436,8 +436,26 @@ selector with `!=` (`[a!=b]`) or no name (`[*|=b]`), more than about 400 parts i
 or 300 compounds (Python's recursion limit), a `:nth-*()` number past 10^308. The port drops
 the rule (`Parsed::Dropped`) and goes on. It also drops a selector of more than 256 parts in all
 (type, id, class, attribute and pseudo-class selectors and pseudo-elements, those inside
-`:is()`, `:not()`, `:has()` and `of` included; `css/select.rs` `MAX_PARTS`), which bounds the
-tests matching makes per element; Calibre applies one of 257 to about 300 parts.
+`:is()`, `:not()`, `:has()` and `of` included; `css/select/mod.rs` `MAX_PARTS`), which bounds
+the tests matching makes per element; Calibre applies one of 257 to about 300 parts.
+
+## Selectors longer than 64 KiB
+
+The port drops a selector whose text is longer than 64 KiB (`css/select/mod.rs`
+`MAX_SELECTOR_BYTES`) without reading it, so a long one never holds its tokens in memory; Calibre
+reads and applies it. css_parser's own limits (`MAX_STYLE_DECLS` counts a unit for each 64 bytes
+of a selector) already bound how many such selectors a book file holds.
+
+## Work on one book file's selectors
+
+The port counts the steps of matching every selector of a book file against it (an element a
+compound is tested on, times its tests; an element a combinator moves through; 64 bytes of an
+attribute value compared); past `deckle_limits::MAX_SELECTOR_WORK` `css::select` gives
+`css::TooLarge` for that file. Calibre has no such limit and takes as long as the selectors need
+(310 s for 50,000 simple selectors on a file of 100,000 elements, measured in the Task 7
+review). The limit is 2 to 3 seconds of the port's slowest matching in a release build; 2,000
+rules of the kinds books use on a file of 20,000 elements take 6% of it
+(`real_books_stay_far_below_the_work_limit`).
 
 ## Unknown pseudo-classes Calibre never reaches
 
