@@ -77,7 +77,8 @@ pub const MAX_ENTITY_TEXT: u64 = 16 * MB;
 
 /// EPUB to KFX: CSS rules for one book file, counting a rule for each selector of a list, each
 /// `@font-face` and `@page`, and each `@import` followed. A selector list repeats its
-/// declarations for each selector, so the copies are capped too, at 20 times this.
+/// declarations for each selector, so the copies are capped too, at 20 times this, a long
+/// declaration or selector counting once for each 64 bytes.
 pub const MAX_STYLE_RULES: usize = 50_000;
 
 /// Largest reservation made from a size a file declares (rule 1 of the size-limits design):

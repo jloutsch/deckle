@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 use deckle_kfx::epub_zip::{EpubReader, join, percent_decode};
 use deckle_kfx::fixtures;
 use deckle_kfxgen::css::{
-    Decl, Decls, Error, HTML_CSS, Origin, Sheet, media_ok, parse_sheet, parse_style_attr,
-    serialize_value,
+    DEFAULT_PROFILE, Decl, Decls, Error, HTML_CSS, Origin, Sheet, media_ok, normalize, parse_sheet,
+    parse_style_attr, serialize_value,
 };
 use deckle_kfxgen::dom::{self, Dom, NodeId};
 use deckle_kfxgen::epub::read_package;
@@ -149,10 +149,9 @@ fn port_in_source_order(sheets: &[Sheet], norm: &dyn Fn(&Decls) -> Decls) -> Vec
     out
 }
 
-/// What the test compares the port's declarations through: Task 6's `normalize` once it
-/// exists, the declarations as parsed until then.
+/// The declarations as the dump holds them: through `flatten_style` (Task 6).
 fn normalized(decls: &Decls) -> Decls {
-    decls.clone()
+    normalize(decls.clone(), &DEFAULT_PROFILE)
 }
 
 fn first_difference(got: &[Flat], want: &[Flat]) -> String {
@@ -258,7 +257,6 @@ fn spine_file_sheets(
 }
 
 #[test]
-#[ignore = "needs Task 6"]
 fn book_rules_match_calibre_in_text_and_order() {
     let ua_dump: RulesDump =
         serde_json::from_slice(&std::fs::read(fixtures::kfxgen("cascade/ua_rules.json")).unwrap())
@@ -275,6 +273,8 @@ fn book_rules_match_calibre_in_text_and_order() {
 
     let mut matched = 0;
     let mut total = 0;
+    let mut rules_compared = 0;
+    let mut faces_compared = 0;
     let mut failed = Vec::new();
     for book in BOOKS {
         let dir = fixtures::kfxgen(&format!("cascade/{book}"));
@@ -309,6 +309,8 @@ fn book_rules_match_calibre_in_text_and_order() {
                 .collect();
             let want_ff: Vec<Vec<(String, String)>> =
                 dump.font_face.into_iter().map(|o| o.0).collect();
+            rules_compared += want.len();
+            faces_compared += want_ff.len();
             if got == want && got_ff == want_ff {
                 matched += 1;
             } else if got != want {
@@ -325,6 +327,9 @@ fn book_rules_match_calibre_in_text_and_order() {
         "{matched} of {total} files match; differences:\n{}",
         failed.join("\n")
     );
+    // Every spine file of the 13 books, with their 306 rules and 3 font faces.
+    assert_eq!((matched, total), (49, 49));
+    assert_eq!((rules_compared, faces_compared), (306, 3));
 }
 
 /// `rules/001.json` of `css_quirks` (`sheet.xhtml`) without the shorthands Task 6 expands:
@@ -824,6 +829,39 @@ fn hostile_sheets_finish_or_are_refused() {
     timed("30,000 selectors × 40 declarations", || {
         assert!(matches!(
             parse_sheet(&format!("{list}{{{decls}}}"), Origin::Book, &mut |_| None),
+            Err(Error::TooLarge(_))
+        ));
+    });
+    // 40,000 selectors sharing one 1 MB value: the copies would be 40 GB; refused.
+    let list = vec!["p"; 40_000].join(",");
+    let value = "a".repeat(1 << 20);
+    timed("40,000 selectors × a 1 MB value", || {
+        assert!(matches!(
+            parse_sheet(
+                &format!("{list}{{font-family:{value}}}"),
+                Origin::Book,
+                &mut |_| None
+            ),
+            Err(Error::TooLarge(_))
+        ));
+    });
+    // A 500 KB selector in a sheet imported 255 times over (a diamond, as below): 127 MB of
+    // copies, refused (the limit allows about 64 MB of copied text).
+    let long = format!("p.{}", "x".repeat(500_000));
+    let mut import = |h: &str| {
+        let n: u32 = h
+            .trim_start_matches('d')
+            .trim_end_matches(".css")
+            .parse()
+            .ok()?;
+        Some(format!(
+            "@import \"d{0}.css\";\n@import \"d{0}.css\";\n{long} {{ a: 1 }}",
+            n + 1
+        ))
+    };
+    timed("a long selector imported 255 times", || {
+        assert!(matches!(
+            parse_sheet("@import \"d1.css\";", Origin::Book, &mut import),
             Err(Error::TooLarge(_))
         ));
     });

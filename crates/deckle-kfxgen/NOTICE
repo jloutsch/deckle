@@ -49,11 +49,13 @@ src/calibre/__init__.py, src/calibre/ebooks/html_entities.c and src/calibre/util
 
 src/css ports calibre 9.18.0's reading of a book's stylesheets into rules, under the same
 notice: src/calibre/ebooks/oeb/stylizer.py, src/calibre/ebooks/oeb/base.py,
-src/calibre/ebooks/conversion/preprocess.py, src/calibre/ebooks/oeb/transforms/flatcss.py and
-src/tinycss/media3.py (tinycss as bundled with calibre, under calibre's licence). It also
-follows the behaviour of css_parser 1.1.1, the CSS library calibre runs (a fork of cssutils,
-licensed under the GNU Lesser General Public License v3 or later); no css_parser code is
-copied, its behaviour was read from calibre.
+src/calibre/ebooks/oeb/normalize_css.py, src/calibre/ebooks/conversion/preprocess.py,
+src/calibre/ebooks/oeb/transforms/flatcss.py, src/calibre/customize/profiles.py,
+src/tinycss/media3.py and src/tinycss/fonts3.py (tinycss as bundled with calibre, under
+calibre's licence). The tables in src/css/defaults.rs are calibre's (`DEFAULTS`,
+`INHERITED`). It also follows the behaviour of css_parser 1.1.1, the CSS library calibre runs
+(a fork of cssutils, licensed under the GNU Lesser General Public License v3 or later); no
+css_parser code is copied, its behaviour was read from calibre.
 
 src/css/html.css is calibre's resources/templates/html.css, copied verbatim. It is Mozilla
 code under the tri-licence its header states (MPL 1.1, GPL 2.0 or later, LGPL 2.1 or later),

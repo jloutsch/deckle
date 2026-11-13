@@ -24,8 +24,21 @@ use super::{Decls, Error, Origin, Rule, Sheet};
 /// (DIVERGENCES.md, "Imports more than 8 deep").
 const MAX_IMPORT_DEPTH: usize = 8;
 
-/// Declarations the rules may hold in all, counting each selector's copy of its list's.
+/// Declarations the rules may hold in all, counting each selector's copy of its list's, and a
+/// declaration or selector once for each [`TEXT_UNIT`] bytes of it: copies of one long value
+/// or selector are what make the output outgrow the input.
 const MAX_STYLE_DECLS: usize = MAX_STYLE_RULES * 20;
+
+/// Bytes of a declaration or selector that count as one more declaration.
+const TEXT_UNIT: usize = 64;
+
+/// What a copy of these declarations counts toward [`MAX_STYLE_DECLS`].
+fn decl_cost(decls: &Decls) -> usize {
+    decls
+        .iter()
+        .map(|(k, d)| 1 + (k.len() + d.value.len()) / TEXT_UNIT)
+        .fold(0, usize::saturating_add)
+}
 
 /// `preprocess.py` `CSSPreProcessor.MS_PAT`: a declaration of Microsoft Office's (`mso-`,
 /// `panose-`, `text-underline`, `tab-interval`) after the start of a line, a `;` or a `{`.
@@ -63,7 +76,8 @@ fn preprocess(text: &str) -> Cow<'_, str> {
 /// one; [`Sheet::rebase_urls`] makes them book-absolute.
 ///
 /// [`Error::TooLarge`] past [`MAX_STYLE_RULES`] rules (selectors of a list, `@font-face`,
-/// `@page` and imports followed, counted one each) or 20 times as many declarations.
+/// `@page` and imports followed, counted one each) or 20 times as many declarations (each
+/// selector's copy counted, and a long declaration or selector once for each 64 bytes).
 pub fn parse_sheet(
     text: &str,
     origin: Origin,
@@ -144,8 +158,8 @@ impl Resolver<'_> {
     }
 
     fn charge(&mut self, rules: usize, decls: usize) -> Result<(), Error> {
-        self.rules += rules;
-        self.decls += decls;
+        self.rules = self.rules.saturating_add(rules);
+        self.decls = self.decls.saturating_add(decls);
         if self.rules > MAX_STYLE_RULES || self.decls > MAX_STYLE_DECLS {
             return Err(self.too_large());
         }
@@ -196,8 +210,9 @@ impl Resolver<'_> {
         for item in &parsed.items {
             match item {
                 Item::Style(selectors, decls) => {
+                    let cost = decl_cost(decls);
                     for selector in selectors {
-                        self.charge(1, decls.len())?;
+                        self.charge(1, cost.saturating_add(selector.len() / TEXT_UNIT))?;
                         self.out.rules.push(Rule {
                             origin: self.origin,
                             selector: selector.clone(),
@@ -207,12 +222,12 @@ impl Resolver<'_> {
                     }
                 }
                 Item::FontFace(decls) => {
-                    self.charge(1, decls.len())?;
+                    self.charge(1, decl_cost(decls))?;
                     self.out.font_face.push(decls.clone());
                 }
                 Item::Page(decls) => {
                     if own {
-                        self.charge(1, decls.len())?;
+                        self.charge(1, decl_cost(decls))?;
                         self.out.page.push(decls.clone());
                     }
                 }

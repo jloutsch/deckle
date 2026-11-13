@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! A book's stylesheets as the rules Calibre 9.18's Stylizer holds (phase 2 plan, Task 5).
+//! A book's stylesheets as the rules Calibre 9.18's Stylizer holds (phase 2 plan, Tasks 5 and
+//! 6).
 //!
 //! Calibre parses CSS with css_parser 1.1.1 and keeps what it reads in that library's form:
 //! property names in lower case, values written back by its serializer (`.5em` as `0.5em`,
 //! strings in double quotes), one rule for each selector of a list. [`parse_sheet`] reads a
 //! stylesheet into that form with `cssparser`'s tokenizer and rule parser; [`serialize_value`]
-//! writes a value as css_parser writes it. The rules are ported from Calibre's
+//! writes a value as css_parser writes it; [`normalize`] expands shorthands and font-size
+//! keywords as `StylizerRules.flatten_style` does. The rules are ported from Calibre's
 //! `ebooks/oeb/stylizer.py` (`StylizerRules`, `media_ok`), `ebooks/oeb/base.py` (`_parse_css`,
-//! `abshref`), `ebooks/conversion/preprocess.py` (`CSSPreProcessor`) and `tinycss/media3.py`;
+//! `abshref`), `ebooks/conversion/preprocess.py` (`CSSPreProcessor`),
+//! `ebooks/oeb/normalize_css.py`, `tinycss/media3.py` and `tinycss/fonts3.py`;
 //! css_parser's own behaviour, which is not in Calibre's source, was read from Calibre 9.18 and
 //! is described where it is ported. Where the port differs on purpose, `DIVERGENCES.md` says so.
 //!
@@ -15,12 +18,17 @@
 //! [`deckle_limits::MAX_STYLE_RULES`] or a nesting limit, and no work is repeated per
 //! declaration or per import.
 
+mod defaults;
+mod font_shorthand;
 mod media;
+mod normalize;
 mod selector;
 mod sheet;
 mod value;
 
+pub use defaults::{DEFAULTS, INHERITED};
 pub use media::media_ok;
+pub use normalize::{DEFAULT_PROFILE, Profile, normalize};
 pub use sheet::parse_sheet;
 pub use value::{parse_style_attr, serialize_value};
 
@@ -101,7 +109,8 @@ pub const HTML_CSS: &str = include_str!("html.css");
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// Its rules, with its imports and selector lists counted out, pass
-    /// [`deckle_limits::MAX_STYLE_RULES`], or the declarations they repeat pass 20 times it.
+    /// [`deckle_limits::MAX_STYLE_RULES`], or the declarations they repeat pass 20 times it
+    /// (a long declaration or selector counting once for each 64 bytes).
     #[error("this book file's stylesheets hold more than {0} CSS rules or declarations")]
     TooLarge(usize),
 }
