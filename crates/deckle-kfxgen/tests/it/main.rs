@@ -2,6 +2,7 @@
 //! All integration tests in one binary: one link instead of one per file.
 
 mod corpus;
+mod css_sheet;
 mod dom;
 mod epub;
 mod generate_boxes;

@@ -357,3 +357,59 @@ name 100 MB. The port refuses a file whose entities would make more than 16 MB
 - Forcing the XHTML namespace is done on the tree; Calibre writes the tree out and parses it
   again, with fallbacks for text that does not parse (`:=`, comments, `<meta>` tags), which the
   tree never needs.
+
+## Import cycles
+
+When a book's stylesheets import each other in a loop, Calibre's parse of the first one it
+reads recurses until Python's recursion limit, and that sheet is removed from the book
+(`reader.py` `_manifest_prune_invalid`). The others then read without it. Which sheet goes first
+follows the order of a Python set of manifest items, which depends on memory addresses.
+
+The port drops each `@import` whose chain comes back to a sheet already on it, with everything
+that import would have brought; the importing sheet keeps its own rules (`css/sheet.rs`). On
+`css_quirks`, where `cycle_a.css` imports `cycle_b.css` and back, both give `cycle_a.css`'s
+rules and lose `cycle_b.css`'s. Calibre can instead lose a sheet that links to the loop, or keep
+a different half of it.
+
+## Imports more than 8 deep
+
+Calibre follows `@import` chains as deep as Python's recursion allows. The port follows eight
+levels below the sheet it is reading and drops an import further down (`MAX_IMPORT_DEPTH`), so a
+crafted chain cannot make it read the same sheets without end. Each imported address is read
+once however often it is imported, and every import followed counts toward
+`MAX_STYLE_RULES`.
+
+## CSS nested past 32 levels
+
+A function inside a value (`f(g(h(…)))`) or a selector inside `:not()`, `:is()`, `:has()` and the
+like nests as deep as Python's recursion allows in css_parser. The port reads 32 levels and
+drops a declaration or selector list that goes deeper (`css/value.rs` `MAX_NESTING`). Only the
+first level of `@media` is read, as Calibre's `StylizerRules` reads it; a deeper `@media` is
+skipped without being parsed.
+
+## Malformed media queries
+
+Where css_parser cannot read an `@media` rule's query, it keeps the rule with no rules inside.
+A few malformed queries it cuts short instead and keeps the rules: `screen and color` is read
+as `screen and`, `screen and (orientation:)` as `screen and (orientation:`, and `media_ok`
+accepts those. The port drops the rules of any query that is not `[only|not] type [and
+(feature)]…` or `(feature) [and (feature)]…` (`css/media.rs` `media_list_valid`). A `media`
+attribute is not read by css_parser, and `media_ok` treats it the same in both.
+
+## CSS spellings css_parser reads its own way
+
+The port follows css_parser's reading of a book's CSS (`tests/it/css_sheet.rs` lists the cases
+checked against calibre). It differs on spellings books rarely use:
+
+- A comment between selectors with spaces around it (`a /**/ b`) is kept in the selector text by
+  css_parser; the port reads it as a space.
+- `url( a b )`, an address with a space and no quotes, is kept by css_parser; `cssparser`
+  reads it as a bad URL and the declaration is dropped.
+- A number with a signed exponent (`1e+3`) is two items to css_parser (`1e +3`) and one to the
+  port (`1e+3`). `1e3%` is dropped by css_parser and kept by the port.
+- An escape of a surrogate code point (`\D800`) is kept by Python; the port writes U+FFFD.
+- `!important` followed by more text (`a!important b`) is kept by css_parser as `a`, not
+  important; the port drops the declaration.
+- An `@import` with a media query other than `all`, of a sheet holding `@font-face`, `@media`
+  or `@page` rules, is left unresolved by css_parser's `resolveImports` when the importing sheet
+  is linked, so Calibre loses the imported rules; the port imports them when the query applies.

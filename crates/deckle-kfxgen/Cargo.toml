@@ -27,4 +27,6 @@ thiserror.workspace = true
 
 [dev-dependencies]
 deckle-kfx = { workspace = true, features = ["testing"] }
+# The dumps' declarations in their written order (tests/it/css_sheet.rs).
+serde.workspace = true
 tempfile.workspace = true
