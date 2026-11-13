@@ -55,8 +55,9 @@ thread_local! {
 /// set later by anyone else replaces this one, and caught panics then print again.
 ///
 /// So that a parser bug can still be found, the message travels in the feed's "unreadable"
-/// error: the payload text alone, on one line. The file and line, which name the dependency's
-/// path on this machine, stay out. A payload that is not text says only that the parser failed.
+/// error: the payload text alone, on one line, cut to 200 characters. The file and line, which
+/// name the dependency's path on this machine, stay out. A payload that is not text says only
+/// that the parser failed.
 fn quietly<T>(f: impl FnOnce() -> T + std::panic::UnwindSafe) -> Result<T, String> {
     static HOOK: std::sync::Once = std::sync::Once::new();
     HOOK.call_once(|| {
@@ -75,14 +76,22 @@ fn quietly<T>(f: impl FnOnce() -> T + std::panic::UnwindSafe) -> Result<T, Strin
             .downcast_ref::<&str>()
             .copied()
             .or_else(|| payload.downcast_ref::<String>().map(String::as_str));
-        match message {
-            Some(m) => format!(
-                "the feed parser failed: {}",
-                m.split_whitespace().collect::<Vec<_>>().join(" ")
-            ),
-            None => "the feed parser failed".to_owned(),
+        let Some(message) = message else {
+            return "the feed's parser failed".to_owned();
+        };
+        // One line, and at most 200 characters: a message that quotes the feed must not fill
+        // the Daily's log.
+        let mut text = message.split_whitespace().collect::<Vec<_>>().join(" ");
+        if text.chars().count() > 200 {
+            text = text.chars().take(199).chain(['…']).collect();
         }
+        format!("the feed's parser failed: {text}")
     })
+}
+
+/// The error for a feed whose parser panicked, `parser` from [`quietly`].
+fn unreadable(parser: &str) -> String {
+    format!("this feed could not be read ({parser})")
 }
 
 /// Why `feed-rs` must not read this feed, or `None` (nesting-depth design, feeds).
@@ -139,7 +148,17 @@ fn refusal(bytes: &[u8]) -> Option<String> {
                         return Some("its XML declaration gives the encoding twice".to_owned());
                     }
                     if let Some(encoding) = decl.encoder() {
-                        reader.get_mut().set_encoding(encoding);
+                        // quick-xml asserts here when the declaration ends past the bytes it
+                        // decoded first, or a second one names another encoding.
+                        let switch = std::panic::AssertUnwindSafe(|| {
+                            reader.get_mut().set_encoding(encoding)
+                        });
+                        if let Err(parser) = quietly(switch) {
+                            return Some(format!(
+                                "its XML declaration names an encoding it cannot switch to \
+                                 ({parser})"
+                            ));
+                        }
                     }
                 }
                 Ok((_, Event::Start(_))) => {
@@ -157,8 +176,11 @@ fn refusal(bytes: &[u8]) -> Option<String> {
             }
         }
     });
-    // The panic is quick-xml's, in a call `feed-rs` makes the same way.
-    read.unwrap_or_else(Some)
+    // Any other panic is quick-xml's, in a call `feed-rs` makes the same way.
+    match read {
+        Ok(why) => why.map(|why| format!("this feed could not be read: {why}")),
+        Err(parser) => Some(unreadable(&parser)),
+    }
 }
 
 /// Feed title and its items, newest first, without items older than `max_age_hours` (items
@@ -168,13 +190,13 @@ pub fn parse(
     now: DateTime<Utc>,
     max_age_hours: u32,
 ) -> Result<(Option<String>, Vec<Item>), String> {
-    if let Some(why) = refusal(bytes) {
-        return Err(format!("this feed could not be read: {why}"));
+    if let Some(message) = refusal(bytes) {
+        return Err(message);
     }
     // A panic in the parser (quick-xml asserts on some declarations) costs this feed, not the
     // edition.
     let feed = quietly(|| feed_rs::parser::parse(bytes))
-        .map_err(|why| format!("this feed could not be read: {why}"))?
+        .map_err(|parser| unreadable(&parser))?
         .map_err(|e| e.to_string())?;
     let cutoff = now - chrono::Duration::hours(i64::from(max_age_hours));
     let mut items: Vec<Item> = feed
@@ -1228,9 +1250,9 @@ mod tests {
         // The panic's own message, so a parser bug can still be found; no file or path.
         assert_eq!(
             e,
-            "this feed could not be read: the feed parser failed: set_encoding() called after \
-             prefix buffer was drained; encoding can only be changed while the prefix is still \
-             active"
+            "this feed could not be read: its XML declaration names an encoding it cannot switch \
+             to (the feed's parser failed: set_encoding() called after prefix buffer was drained; \
+             encoding can only be changed while the prefix is still active)"
         );
         for path in [".cargo", "registry", "quick-xml-0.42", "encoding.rs"] {
             assert!(!e.contains(path), "{e}");
@@ -1240,23 +1262,42 @@ mod tests {
         }
     }
 
-    /// A caught panic is described by its message, on one line; a payload that is not text
-    /// says only that the parser failed.
+    /// A caught panic is described by its message, on one line and at most 200 characters; a
+    /// payload that is not text says only that the parser failed.
     #[test]
     fn a_caught_panic_is_described_by_its_message() {
         assert_eq!(
             quietly(|| panic!("bad\n  byte {}", 7)).unwrap_err(),
-            "the feed parser failed: bad byte 7"
+            "the feed's parser failed: bad byte 7"
         );
         assert_eq!(
             quietly(|| panic!("plain")).unwrap_err(),
-            "the feed parser failed: plain"
+            "the feed's parser failed: plain"
         );
         assert_eq!(
             quietly(|| std::panic::panic_any(7u8)).unwrap_err(),
-            "the feed parser failed"
+            "the feed's parser failed"
         );
         assert_eq!(quietly(|| 1), Ok(1));
+        // A message that carries feed text is cut on a character boundary.
+        let long = "é€".repeat(2_500);
+        assert_eq!(long.chars().count(), 5_000);
+        let why = quietly(move || panic!("{long}")).unwrap_err();
+        let text = why.strip_prefix("the feed's parser failed: ").unwrap();
+        assert_eq!(text.chars().count(), 200, "{text}");
+        assert!(text.ends_with('…'), "{text}");
+        assert!(text.starts_with("é€é€"), "{text}");
+        let exact = "x".repeat(200);
+        let why = quietly(move || panic!("{exact}")).unwrap_err();
+        assert_eq!(
+            why,
+            format!("the feed's parser failed: {}", "x".repeat(200))
+        );
+        // Any other panic leads with the plain sentence.
+        assert_eq!(
+            unreadable(&quietly(|| panic!("plain")).unwrap_err()),
+            "this feed could not be read (the feed's parser failed: plain)"
+        );
     }
 
     /// The caught panic prints nothing (the app shows a Daily run's last stderr lines as its
