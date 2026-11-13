@@ -90,18 +90,20 @@ pub const MAX_STYLE_DECLS: usize = 150_000;
 /// EPUB to KFX: steps matching the CSS selectors of one book file against it may take: one for
 /// each element a selector's compound is tested on, times the tests in that compound, one for
 /// each element a combinator moves through, and one more for each 64 bytes of an attribute
-/// value compared. The slowest kinds of step reach it in 2 to 3 seconds in a release build
-/// (10 to 15 ns a step, measured on an M-series Mac); 2,000 rules of the kinds books use on a
-/// file of 20,000 elements take about 12 million.
-pub const MAX_SELECTOR_WORK: u64 = 200_000_000;
+/// value compared. The slowest kinds of step (a class test, `:has()`, `:nth-child(of)`: about
+/// 20 ns a step, measured on an M-series Mac) reach it in about 2 seconds in a release build;
+/// 2,000 rules of the kinds books use on a file of 20,000 elements take about 12 million.
+pub const MAX_SELECTOR_WORK: u64 = 100_000_000;
 
 /// EPUB to KFX: declarations the first cascade of one book file stores for its elements, in
 /// units: one for each declaration copied into an element's styles, one more for each 64
 /// bytes of it, and one for each set of rules found to match an element. Elements the same
 /// rules match share one copy, so a book's units grow with its distinct styles, not its
 /// elements. A `style` attribute counts its text, a unit for each 64 bytes, before it is read.
-/// At the limit the styles take about 500 MB.
-pub const MAX_CASCADE_DECLS: usize = 5_000_000;
+/// At the limit the cascade takes about 85 MB: 81 to 83 MB measured at 480,000 units (40,000
+/// elements of 11 declarations each of their own, release build). The files of nine
+/// Gutenberg books use at most 1,495.
+pub const MAX_CASCADE_DECLS: usize = 500_000;
 
 /// Largest reservation made from a size a file declares (rule 1 of the size-limits design):
 /// `Vec::with_capacity(declared.min(MAX_RESERVE))`.

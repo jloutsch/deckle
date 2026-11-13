@@ -641,7 +641,9 @@ fn real_books_stay_far_below_the_work_limit() {
         largest.1, largest.0
     );
     assert!(largest.0 < MAX_SELECTOR_WORK / 1_000, "{largest:?}");
-    assert!(big < MAX_SELECTOR_WORK / 10, "{big}");
+    // About 12 million steps, 12% of the limit (a fifth here since the Task 8 review halved
+    // the limit from 200 million).
+    assert!(big < MAX_SELECTOR_WORK / 5, "{big}");
 }
 
 #[test]

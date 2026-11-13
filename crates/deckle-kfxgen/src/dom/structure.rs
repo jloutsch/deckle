@@ -563,10 +563,9 @@ impl UrlParts {
         if let Some(rest) = url.strip_prefix("//") {
             let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
             let netloc = &rest[..end];
+            // "Invalid IPv6 URL". What is in the brackets goes unchecked (DIVERGENCES.md,
+            // "Links to a bracketed host in generated contents").
             if netloc.contains('[') != netloc.contains(']') {
-                return None;
-            }
-            if netloc.contains('[') && !bracketed_netloc_ok(netloc) {
                 return None;
             }
             url = &rest[end..];
@@ -589,28 +588,4 @@ impl UrlParts {
             fragment: fragment.to_owned(),
         })
     }
-}
-
-/// `urllib.parse._check_bracketed_netloc`: the host in brackets is an IPv6 address or
-/// `v<hex>.<anything>`, with nothing before the bracket and only a port after it.
-fn bracketed_netloc_ok(netloc: &str) -> bool {
-    let host_port = netloc.rsplit_once('@').map_or(netloc, |(_, h)| h);
-    let Some((before, bracketed)) = host_port.split_once('[') else {
-        return true;
-    };
-    if !before.is_empty() {
-        return false;
-    }
-    let (host, port) = bracketed.split_once(']').unwrap_or((bracketed, ""));
-    if !port.is_empty() && !port.starts_with(':') {
-        return false;
-    }
-    if let Some(rest) = host.strip_prefix('v') {
-        return rest.split_once('.').is_some_and(|(hex, tail)| {
-            !hex.is_empty() && hex.chars().all(|c| c.is_ascii_hexdigit()) && !tail.is_empty()
-        });
-    }
-    // `ipaddress.ip_address`, which takes a scope after `%`, and must not be IPv4.
-    let addr = host.split_once('%').map_or(host, |(a, _)| a);
-    addr.parse::<std::net::Ipv6Addr>().is_ok()
 }

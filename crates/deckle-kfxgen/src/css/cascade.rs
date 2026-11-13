@@ -115,6 +115,8 @@ pub fn cascade(
     };
     let mut state = vec![0u32; n];
     let mut pseudo: Vec<Vec<(&'static str, Decls)>> = vec![Vec::new(); n];
+    // The pseudo-class rules with declarations reaching each element, applied at the end.
+    let mut pseudo_rules: Vec<Vec<u32>> = vec![Vec::new(); n];
     for (i, a) in all.iter().enumerate() {
         let Some((selector, ps)) = &a.compiled else {
             // `except SelectorError: continue`.
@@ -127,20 +129,20 @@ pub fn cascade(
         }
         let matched = select(selector, dom, &index)?;
         match ps {
-            // `_update_pseudo_class`: `orig.update(cssdict)`.
+            // `_update_pseudo_class`: `orig.update(cssdict)`. Charged for what the update may
+            // add, and one more for a new pseudo-class.
             Some(name) => {
+                let rule = u32::try_from(i).unwrap_or(u32::MAX);
                 for e in matched {
                     let list = &mut pseudo[e.index()];
-                    let at = match list.iter().position(|(k, _)| k == name) {
-                        Some(at) => at,
-                        None => {
-                            list.push((name, Decls::new()));
-                            list.len() - 1
-                        }
-                    };
-                    let target = &mut list[at].1;
-                    units.charge(target.len() + a.units)?;
-                    plain_update(target, &a.rule.decls);
+                    if !list.iter().any(|(k, _)| k == name) {
+                        units.charge(1)?;
+                        list.push((name, Decls::new()));
+                    }
+                    if !a.rule.decls.is_empty() {
+                        units.charge(a.units)?;
+                        pseudo_rules[e.index()].push(rule);
+                    }
                 }
             }
             None => {
@@ -166,6 +168,26 @@ pub fn cascade(
             }
         }
     }
+
+    for (list, rules) in pseudo.iter_mut().zip(&pseudo_rules) {
+        if rules.is_empty() {
+            continue;
+        }
+        let mut pos: Vec<HashMap<&str, usize>> = vec![HashMap::new(); list.len()];
+        for &r in rules {
+            let a = &all[r as usize];
+            let Some((_, Some(name))) = &a.compiled else {
+                continue;
+            };
+            if let Some(at) = list.iter().position(|(k, _)| k == name) {
+                plain_update(&mut list[at].1, &mut pos[at], &a.rule.decls);
+            }
+        }
+        for (_, decls) in list.iter_mut() {
+            decls.shrink_to_fit();
+        }
+    }
+    drop(pseudo_rules);
 
     // Each set's declarations, built once.
     let mut built = Built {
@@ -371,6 +393,8 @@ impl Built<'_> {
             units.charge(a.units)?;
             update(&mut decls, &mut pos, &a.rule.decls);
         }
+        // Stored as long as the cascade: no spare room from growing.
+        decls.shrink_to_fit();
         self.memo.insert(s, Arc::new(decls));
         Ok(())
     }
@@ -396,6 +420,7 @@ fn updated(base: &Decls, add: &Decls, units: &mut Units) -> Result<Decls, Error>
     let mut decls = base.clone();
     let mut pos = positions(base);
     update(&mut decls, &mut pos, add);
+    decls.shrink_to_fit();
     Ok(decls)
 }
 
@@ -423,27 +448,21 @@ fn update<'n>(decls: &mut Decls, pos: &mut HashMap<&'n str, usize>, add: &'n Dec
 }
 
 /// `dict.update` for a pseudo-class's declarations: each name's value replaced, a new name
-/// last, nothing `!important`.
-fn plain_update(decls: &mut Decls, add: &Decls) {
-    let mut new: HashMap<&str, usize> = add
-        .iter()
-        .enumerate()
-        .map(|(i, (k, _))| (k.as_str(), i))
-        .collect();
-    for (k, d) in decls.iter_mut() {
-        if let Some(i) = new.remove(k.as_str()) {
-            d.value.clone_from(&add[i].1.value);
-        }
-    }
+/// last, nothing `!important`. `pos` is each name's position in `decls`.
+fn plain_update<'n>(decls: &mut Decls, pos: &mut HashMap<&'n str, usize>, add: &'n Decls) {
     for (k, d) in add {
-        if new.contains_key(k.as_str()) {
-            decls.push((
-                k.clone(),
-                Decl {
-                    value: d.value.clone(),
-                    important: false,
-                },
-            ));
+        match pos.get(k.as_str()) {
+            Some(&i) => decls[i].1.value.clone_from(&d.value),
+            None => {
+                pos.insert(k, decls.len());
+                decls.push((
+                    k.clone(),
+                    Decl {
+                        value: d.value.clone(),
+                        important: false,
+                    },
+                ));
+            }
         }
     }
 }

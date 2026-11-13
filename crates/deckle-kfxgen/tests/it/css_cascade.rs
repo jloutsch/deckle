@@ -687,13 +687,11 @@ fn elements_matched_alike_share_their_declarations() {
     assert!(a.len() > 300, "{}", a.len());
 }
 
-/// Release build: `cargo test --release -p deckle-kfxgen --test it -- --ignored css_cascade`.
-#[test]
-#[ignore = "200 million selector steps: 2 to 3 seconds in a release build"]
-fn a_rule_matching_everything_many_times_stops() {
-    // 50,000 rules matching all of 100,000 paragraphs: the selector work runs out.
+/// 50,000 copies of `rule` over 100,000 paragraphs of class `c`, all of which it matches: the
+/// selector work runs out, in under 5 seconds.
+fn matching_everything_stops(rule: &str) {
     let mut dom = paragraphs(100_000, 1);
-    let css = "p{color:red}".repeat(50_000);
+    let css = rule.repeat(50_000);
     let start = Instant::now();
     let got = cascade(
         &mut dom,
@@ -702,7 +700,7 @@ fn a_rule_matching_everything_many_times_stops() {
         &DEFAULT_PROFILE,
     );
     eprintln!(
-        "50,000 rules matching 100,000 elements: {:?}",
+        "50,000 {rule} rules matching 100,000 elements: {:?}",
         start.elapsed()
     );
     assert!(
@@ -715,21 +713,24 @@ fn a_rule_matching_everything_many_times_stops() {
 
 /// Release build: `cargo test --release -p deckle-kfxgen --test it -- --ignored css_cascade`.
 #[test]
-#[ignore = "5 million declarations stored before the limit: seconds in a debug build"]
+#[ignore = "100 million selector steps: about a second in a release build"]
+fn a_rule_matching_everything_many_times_stops() {
+    matching_everything_stops("p{color:red}");
+}
+
+/// Release build: `cargo test --release -p deckle-kfxgen --test it -- --ignored css_cascade`.
+#[test]
+#[ignore = "100 million selector steps: about 2 seconds in a release build"]
+fn a_class_rule_matching_everything_many_times_stops() {
+    // The Task 8 review's case: a class step is among the slowest.
+    matching_everything_stops(".c0{color:red}");
+}
+
+#[test]
 fn elements_each_styled_their_own_way_stop() {
-    // 40,000 paragraphs of their own id, each given a value of its own by a rule, and 1,000
-    // rules over all of them: 40,000 sets of over 1,000 declarations. The declarations
-    // stored are bounded.
-    let mut body = String::new();
-    for i in 0..40_000 {
-        body.push_str(&format!("<p id=\"p{i}\">x</p>"));
-    }
-    let mut dom = page(&body);
-    let mut css: String = (0..40_000).map(|i| format!("#p{i}{{a{i}:b}}")).collect();
-    for i in 0..1_000 {
-        css.push_str(&format!("p{{z{i}:y}}"));
-    }
-    let got = timed("40,000 distinct elements, 1,000 rules over all", || {
+    // 40,000 sets of 106 declarations: the declarations stored are bounded.
+    let (mut dom, css) = styled_their_own_way(100);
+    let got = timed("40,000 distinct elements, 100 rules over all", || {
         cascade(
             &mut dom,
             "OEBPS/a.xhtml",
@@ -744,24 +745,107 @@ fn elements_each_styled_their_own_way_stop() {
     );
 }
 
+/// 40,000 paragraphs of their own id, each given a value of its own by a rule, and `shared`
+/// rules over all of them: 40,000 sets of `shared + 1` declarations.
+fn styled_their_own_way(shared: usize) -> (Dom, String) {
+    let mut body = String::new();
+    for i in 0..40_000 {
+        body.push_str(&format!("<p id=\"p{i}\">x</p>"));
+    }
+    let mut css: String = (0..40_000).map(|i| format!("#p{i}{{a{i}:b}}")).collect();
+    for i in 0..shared {
+        css.push_str(&format!("p{{z{i}:y}}"));
+    }
+    (page(&body), css)
+}
+
+#[test]
+fn styles_just_under_the_limit_are_kept() {
+    // 40,000 sets of 11 declarations (5 from html.css's `p`, 5 shared, one of its own) and
+    // a unit for each set: about 480,000 units. One more shared rule: about 520,000.
+    for (shared, kept) in [(5, true), (6, false)] {
+        let (mut dom, css) = styled_their_own_way(shared);
+        let got = timed(
+            &format!("40,000 distinct elements, {shared} rules over all"),
+            || {
+                cascade(
+                    &mut dom,
+                    "OEBPS/a.xhtml",
+                    vec![book_sheet(&css)],
+                    &DEFAULT_PROFILE,
+                )
+            },
+        );
+        assert_eq!(got.is_ok(), kept, "{shared}");
+    }
+}
+
+/// The memory the styles take just under [`MAX_CASCADE_DECLS`], for its doc comment: run
+/// alone in a release build under `/usr/bin/time -l` (macOS) and compare the peak with
+/// `DECKLE_CASCADE_BASELINE=1`, which builds the same page and CSS without cascading them.
+/// `cargo test --release -p deckle-kfxgen --test it -- --ignored --exact
+/// css_cascade::styles_just_under_the_limit_peak_memory`.
+#[test]
+#[ignore = "a measurement, for a release build"]
+fn styles_just_under_the_limit_peak_memory() {
+    let (mut dom, css) = styled_their_own_way(5);
+    let sheet = book_sheet(&css);
+    if std::env::var_os("DECKLE_CASCADE_BASELINE").is_some() {
+        std::hint::black_box((&dom, &sheet));
+        return;
+    }
+    let c = cascade(&mut dom, "OEBPS/a.xhtml", vec![sheet], &DEFAULT_PROFILE).unwrap();
+    std::hint::black_box(&c);
+}
+
+#[test]
+fn many_pseudo_class_rules_are_charged_for_what_they_add() {
+    // 1,000 `*::before` and 1,000 `p:hover` rules on 100 paragraphs: 100,000 declarations
+    // under each name, each charged once.
+    let mut css = String::new();
+    for i in 0..1_000 {
+        css.push_str(&format!("*::before{{x{i}:y}}p:hover{{x{i}:y}}"));
+    }
+    let mut dom = paragraphs(100, 1);
+    let c = timed("2,000 pseudo-class rules on 100 paragraphs", || {
+        cascade(
+            &mut dom,
+            "OEBPS/a.xhtml",
+            vec![book_sheet(&css)],
+            &DEFAULT_PROFILE,
+        )
+        .unwrap()
+    });
+    let p = dom.children(body(&dom))[99];
+    let ps = c.pseudo(p);
+    assert_eq!(
+        ps.len(),
+        2,
+        "{:?}",
+        ps.iter().map(|(k, _)| k).collect::<Vec<_>>()
+    );
+    assert!(ps.iter().all(|(_, d)| d.len() == 1_000));
+}
+
 #[test]
 fn large_style_attributes_finish_or_stop() {
-    // 10,000 paragraphs, each a 1 KB style attribute of its own of 50 declarations.
+    // 5,000 paragraphs, each a 1 KB style attribute of its own of 50 declarations: about
+    // 70 units each.
     let style: String = (0..50)
         .map(|i| format!("x{i}: {};", "v".repeat(14)))
         .collect();
     let mut src = String::new();
-    for i in 0..10_000 {
+    for i in 0..5_000 {
         src.push_str(&format!("<p style=\"{style}y: {i}\">x</p>"));
     }
     let mut dom = page(&src);
-    let c = timed("10,000 1 KB style attributes", || {
+    let c = timed("5,000 1 KB style attributes", || {
         cascade(&mut dom, "OEBPS/a.xhtml", Vec::new(), &DEFAULT_PROFILE).unwrap()
     });
-    let p = dom.children(body(&dom))[9_999];
+    let p = dom.children(body(&dom))[4_999];
     assert_eq!(
         pairs(c.specified(p)).last().unwrap(),
-        &("y".into(), "9999".into())
+        &("y".into(), "4999".into())
     );
     // The same attribute on every paragraph is read once.
     let mut dom = page(&format!("<p style=\"{style}\">x</p>").repeat(20_000));

@@ -457,9 +457,9 @@ compound is tested on, times its tests; an element a combinator moves through; 6
 attribute value compared); past `deckle_limits::MAX_SELECTOR_WORK` `css::select` gives
 `css::TooLarge` for that file. Calibre has no such limit and takes as long as the selectors need
 (310 s for 50,000 simple selectors on a file of 100,000 elements, measured in the Task 7
-review). The limit is 2 to 3 seconds of the port's slowest matching in a release build; 2,000
-rules of the kinds books use on a file of 20,000 elements take 6% of it
-(`real_books_stay_far_below_the_work_limit`).
+review). The limit is about 2 seconds of the port's slowest matching in a release build (a
+class test, `:has()`, `:nth-child(of)`: about 20 ns a step); 2,000 rules of the kinds books use
+on a file of 20,000 elements take 12% of it (`real_books_stay_far_below_the_work_limit`).
 
 ## Unknown pseudo-classes Calibre never reaches
 
@@ -502,6 +502,14 @@ prefixes, so `dom::mark_chapters` and `dom::generated_toc` take an `h1` or `h2` 
 namespace as a heading. Calibre's own parse writes XHTML without prefixes, so only an element of
 another namespace given a prefix differs.
 
+## Links to a bracketed host in generated contents
+
+When a book has no contents and no chapter headings, Calibre lists its links, skipping one whose
+href `urlparse` refuses. `urlparse` refuses a host in brackets (`//[...]`) that is not an IPv6
+address or `v<hex>.<text>`, or that has text before the bracket or anything but a port after
+it. `dom::generated_toc` refuses only unmatched brackets, so it lists such a link where Calibre
+skips it. The link points outside the book either way.
+
 ## The order of rules Calibre's engine refuses
 
 Calibre sorts every rule by css_parser's specificity, then skips at matching the ones its
@@ -514,8 +522,8 @@ The port takes the specificity from its own reading of the selector where it get
 Calibre keeps a dictionary of declarations for every element, however many. The port shares one
 copy among the elements the same rules and `style` attribute reach, and counts what it stores
 (`deckle_limits::MAX_CASCADE_DECLS`): past it `css::cascade` gives `css::Error::Cascade` for that
-file. At the limit the styles take about 500 MB. The 49 files of the cascade fixtures use at most
-385 units, the files of nine Gutenberg books at most 1,009; a file of 40,000 elements each
-given 1,000 declarations of its own passes it. The port also counts
+file. At the limit the cascade takes about 85 MB. The 49 files of the cascade fixtures use at
+most 385 units, the files of nine Gutenberg books at most 1,495; a file of 40,000 elements each
+styled its own way with 12 declarations exceeds it. The port also counts
 the CSS rules of all a file's stylesheets together against `deckle_limits::MAX_STYLE_RULES`,
 where `css::parse_sheet` counts each sheet's own.
