@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
-use deckle_kfx::epub_zip::EpubReader;
+use deckle_kfx::epub_zip::{EpubReader, InspectError};
 use deckle_limits::MAX_DEPTH;
 use deckle_limits::roxmltree::{Document, Node};
 use regex::Regex;
@@ -20,6 +20,7 @@ use super::package::{
 };
 use super::toc::{self, NavPoint, is_html};
 use super::{Error, GuideRef, Item, Metadata, Oeb, Package, SpineRef, TocNode};
+use crate::dom::{self, Dom, NodeId, XHTML_NS};
 
 const XHTML_MIME: &str = "application/xhtml+xml";
 const CSS_MIME: &str = "text/css";
@@ -190,46 +191,75 @@ struct DocInfo {
     styles: Vec<String>,
 }
 
-fn doc_info(doc: &Document) -> DocInfo {
-    let root = doc.root_element();
+/// `n` is `name` in no namespace or XHTML's (`toc::is_html` for the element tree).
+fn dom_is_html(dom: &Dom, n: NodeId, name: &str) -> bool {
+    dom.tag(n) == name && matches!(dom.namespace(n), None | Some(XHTML_NS))
+}
+
+/// lxml's `string()` of `n`: its text and that of everything under it, in document order.
+fn dom_string_value(dom: &Dom, n: NodeId) -> String {
+    let mut out = String::new();
+    // (element, entering): its text and children on entering, its tail on leaving.
+    let mut stack = vec![(n, true)];
+    while let Some((m, entering)) = stack.pop() {
+        if entering {
+            out.push_str(dom.text(m));
+            if m != n {
+                stack.push((m, false));
+            }
+            stack.extend(dom.children(m).iter().rev().map(|&c| (c, true)));
+        } else {
+            out.push_str(dom.tail(m));
+        }
+    }
+    out
+}
+
+fn doc_info(dom: &Dom) -> DocInfo {
+    let root = dom.root();
     let mut info = DocInfo {
-        html_root: root.tag_name().name() == "html"
-            && root.tag_name().namespace().is_some_and(|n| !n.is_empty()),
+        html_root: dom.tag(root) == "html" && dom.namespace(root).is_some_and(|n| !n.is_empty()),
         ..DocInfo::default()
     };
-    for body in root.children().filter(|c| is_html(c, "body")) {
-        for a in body.descendants().filter(|d| is_html(d, "a")) {
-            if let Some(h) = a.attribute("href") {
-                info.body_links.push(h.to_owned());
-            }
+    // The `<a>`s under each of the root's `<body>` children, in document order.
+    let mut stack: Vec<NodeId> = dom
+        .children(root)
+        .iter()
+        .rev()
+        .copied()
+        .filter(|&c| dom_is_html(dom, c, "body"))
+        .collect();
+    while let Some(n) = stack.pop() {
+        stack.extend(dom.children(n).iter().rev());
+        if dom_is_html(dom, n, "a")
+            && let Some(h) = dom.attr(n, "href")
+        {
+            info.body_links.push(h.to_owned());
         }
     }
     let mut push = |v: &str| info.links.push(v.to_owned());
-    for el in root.descendants().filter(Node::is_element) {
-        let tag = el.tag_name().name().to_lowercase();
+    for el in dom.descendants() {
+        let tag = dom.tag(el).to_lowercase();
         if tag == "object" {
             for a in ["codebase", "classid", "data"] {
-                if let Some(v) = el.attribute(a) {
+                if let Some(v) = dom.attr(el, a) {
                     push(v);
                 }
             }
-            if let Some(v) = el.attribute("archive") {
+            if let Some(v) = dom.attr(el, "archive") {
                 v.split(' ').filter(|w| !w.is_empty()).for_each(&mut push);
             }
         } else {
-            for a in el.attributes() {
-                let plain = a.namespace().is_none() && LINK_ATTRS.contains(&a.name());
-                if plain || (a.namespace() == Some(XLINK_NS) && a.name() == "href") {
-                    push(a.value());
+            for (name, ns, value) in dom.attrs(el) {
+                let local = name.rsplit_once(':').map_or(name, |(_, l)| l);
+                let plain = ns.is_none() && LINK_ATTRS.contains(&name);
+                if plain || (ns == Some(XLINK_NS) && local == "href") {
+                    push(value);
                 }
             }
         }
-        if tag == "style"
-            && let Some(text) = el
-                .first_child()
-                .filter(|c| c.is_text())
-                .and_then(|c| c.text())
-        {
+        if tag == "style" {
+            let text = dom.text(el);
             for c in CSS_URL.captures_iter(text) {
                 push(&c[1]);
             }
@@ -237,27 +267,27 @@ fn doc_info(doc: &Document) -> DocInfo {
                 push(&c[1]);
             }
         }
-        if let Some(style) = el.attribute("style") {
+        if let Some(style) = dom.attr(el, "style") {
             for c in CSS_URL.captures_iter(style) {
                 push(&c[1]);
             }
         }
     }
-    for el in root.descendants() {
-        if is_html(&el, "link")
-            && el.attribute("rel").unwrap_or("stylesheet").to_lowercase() == "stylesheet"
+    for el in dom.descendants() {
+        if dom_is_html(dom, el, "link")
+            && dom.attr(el, "rel").unwrap_or("stylesheet").to_lowercase() == "stylesheet"
             && OEB_STYLES.contains(
-                &el.attribute("type")
+                &dom.attr(el, "type")
                     .unwrap_or(CSS_MIME)
                     .to_lowercase()
                     .as_str(),
             )
-            && let Some(h) = el.attribute("href")
+            && let Some(h) = dom.attr(el, "href")
         {
             info.sheets.push(h.to_owned());
         }
-        if is_html(&el, "style") {
-            info.styles.push(string_value(&el));
+        if dom_is_html(dom, el, "style") {
+            info.styles.push(dom_string_value(dom, el));
         }
     }
     info
@@ -280,9 +310,7 @@ fn sheet_refs(text: &str) -> (Vec<String>, Vec<String>) {
 }
 
 /// `f` of `text` parsed ([`package::parse_with`]), or None when `deckle_limits::parse_xml`
-/// refuses it (too deep, an entity with markup) or it is not well-formed: the file is then read
-/// as having no links. Calibre would read such a document with its HTML parser, which this
-/// module has not got yet (phase 2 Task 4).
+/// refuses it (too deep, an entity with markup) or it is not well-formed.
 fn read_xml<R>(text: &str, f: impl FnOnce(&Document) -> R) -> Option<R> {
     package::parse_with(text, f).ok()
 }
@@ -363,13 +391,36 @@ impl Book<'_> {
         read_text(self.zip, name)
     }
 
-    /// The links of the document at `href`; None when it cannot be read as XML.
-    fn doc(&mut self, href: &str) -> Result<Option<DocInfo>, Error> {
+    /// The bytes of the file `name`, or None if it is missing.
+    fn read_bytes(&mut self, name: &str) -> Result<Option<Vec<u8>>, Error> {
+        if !self.names.contains(name) {
+            return Ok(None);
+        }
+        match self.zip.read_bytes(name) {
+            Ok(b) => Ok(Some(b)),
+            Err(InspectError::MissingFile(_)) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// The links of the document at `href`, read the first time it is asked for: as a
+    /// document (`html`, `base.py` `_parse_xhtml`: `dom::parse`, which reads HTML that is not
+    /// XML), or as XML (`_parse_xml`). None when it cannot be read: `dom::parse` refuses it
+    /// (an encoding it does not decode, too deep, too large as HTML), or XML that
+    /// `deckle_limits::parse_xml` refuses or is not well-formed or UTF-8.
+    fn doc(&mut self, href: &str, html: bool) -> Result<Option<DocInfo>, Error> {
         let name = unquote(href);
         if let Some(d) = self.docs.get(&name) {
             return Ok(d.clone());
         }
-        let info = self.read(&name)?.and_then(|text| read_xml(&text, doc_info));
+        let info = if html {
+            self.read_bytes(&name)?
+                .and_then(|b| dom::parse(&b).ok())
+                .map(|d| doc_info(&d))
+        } else {
+            self.read(&name)?
+                .and_then(|text| read_xml(&text, |doc| doc_info(&dom::from_xml(doc))))
+        };
         self.docs.insert(name, info.clone());
         Ok(info)
     }
@@ -1049,7 +1100,7 @@ impl State {
                 self.push_spine(i, linear);
             } else if is_xml(&mt) {
                 let href = self.item(i).href.clone();
-                if book.doc(&href)?.is_some_and(|d| d.html_root) {
+                if book.doc(&href, false)?.is_some_and(|d| d.html_root) {
                     if let Some(it) = self.items[i].as_mut() {
                         it.media_type = XHTML_MIME.to_owned();
                     }
@@ -1074,7 +1125,7 @@ impl State {
                 if !is_doc(&item.media_type) {
                     continue;
                 }
-                let Some(info) = book.doc(&item.href)? else {
+                let Some(info) = book.doc(&item.href, true)? else {
                     continue;
                 };
                 for link in &info.body_links {
@@ -1391,7 +1442,7 @@ impl State {
         let mut seen = BTreeSet::new();
         for &i in docs {
             let href = self.item(i).href.clone();
-            let Some(info) = book.doc(&href)? else {
+            let Some(info) = book.doc(&href, is_doc(&self.item(i).media_type))? else {
                 continue;
             };
             for s in &info.sheets {
@@ -1482,7 +1533,7 @@ impl State {
             for i in unchecked {
                 let item = self.item(i).clone();
                 let links: Vec<String> = if is_doc(&item.media_type) || is_xml(&item.media_type) {
-                    match book.doc(&item.href)? {
+                    match book.doc(&item.href, is_doc(&item.media_type))? {
                         Some(info) => info
                             .links
                             .iter()

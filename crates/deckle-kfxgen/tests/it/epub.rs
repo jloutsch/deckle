@@ -521,25 +521,40 @@ fn an_html_contents_page_gives_the_contents() {
 }
 
 #[test]
-fn a_chapter_too_deep_to_parse_has_no_links() {
-    // 300 unclosed `<br>`s nest 300 levels once the end tags are recovered: `parse_xml`
-    // refuses the chapter, which is then read as having no links (Calibre parses it as HTML,
-    // phase 2 Task 4). The book still has its view.
+fn a_chapter_that_is_not_well_formed_still_has_its_links() {
+    // 300 unclosed `<br>`s: `parse_xml` refuses the chapter (300 levels once the end tags are
+    // recovered), and it is read as HTML, as Calibre reads it, so its link to `c.xhtml` adds
+    // that file to the spine.
     let chapter = format!(
-        r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title></head><body><p>{}</p></body></html>"#,
+        r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title></head><body><p>{}<a href="c.xhtml">c</a></p></body></html>"#,
         "line<br>".repeat(300)
     );
     let opf = opf2(
         r#"<item id="a" href="a.xhtml" media-type="application/xhtml+xml"/>
-<item id="b" href="b.xhtml" media-type="application/xhtml+xml"/>"#,
+<item id="b" href="b.xhtml" media-type="application/xhtml+xml"/>
+<item id="c" href="c.xhtml" media-type="application/xhtml+xml"/>"#,
         r#"<itemref idref="a"/><itemref idref="b"/>"#,
         "",
     );
-    let f = epub_with(&opf, &[("a.xhtml", &chapter), ("b.xhtml", CHAPTER)]);
+    let f = epub_with(
+        &opf,
+        &[
+            ("a.xhtml", &chapter),
+            ("b.xhtml", CHAPTER),
+            ("c.xhtml", CHAPTER),
+        ],
+    );
     let (pkg, mut zip) = open(f.path());
     let oeb = oeb_view(&pkg, &mut zip).unwrap();
-    let spine: Vec<&str> = oeb.spine.iter().map(|s| s.href.as_str()).collect();
-    assert_eq!(spine, ["a.xhtml", "b.xhtml"]);
+    let spine: Vec<(&str, bool)> = oeb
+        .spine
+        .iter()
+        .map(|s| (s.href.as_str(), s.linear))
+        .collect();
+    assert_eq!(
+        spine,
+        [("a.xhtml", true), ("b.xhtml", true), ("c.xhtml", false)]
+    );
 }
 
 #[test]

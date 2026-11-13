@@ -41,3 +41,8 @@ language codes in src/epub/package.rs is calibre's (`iso639['2to3']` in
 resources/localization/iso639.calibre_msgpack, built from the iso-codes package). The
 iso-codes data is licensed under the GNU Lesser General Public License v2.1, as calibre's
 COPYRIGHT file records for it (`Files: setup/iso*`).
+
+src/dom ports calibre 9.18.0's reading of a book's XHTML into a tree, under the same notice:
+src/calibre/ebooks/oeb/parse_utils.py, src/calibre/ebooks/oeb/base.py,
+src/calibre/ebooks/chardet.py, src/calibre/ebooks/conversion/preprocess.py,
+src/calibre/__init__.py, src/calibre/ebooks/html_entities.c and src/calibre/utils/speedup.c.
