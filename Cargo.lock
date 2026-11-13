@@ -1590,6 +1590,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "deckle-limits"
+version = "0.13.0"
+dependencies = [
+ "roxmltree",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "deckle-markdown"
 version = "0.13.0"
 dependencies = [
