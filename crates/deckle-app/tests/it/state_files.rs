@@ -16,8 +16,8 @@ const CUT: &[u8] = b"{\"cut\": [\"sho";
 
 /// Takes every copy name of `name` for this second and the next few, with empty files (so none
 /// matches the damaged bytes), then writes the damaged file.
-fn every_copy_name_taken(dir: &Path, name: &str) {
-    let now = Utc::now();
+#[cfg(unix)]
+fn every_copy_name_taken(dir: &Path, name: &str, now: deckle_digest::chrono::DateTime<Utc>) {
     for s in 0..4 {
         let stamp = (now + Duration::seconds(s)).format("%Y%m%dT%H%M%SZ");
         for k in 1..=1000 {
@@ -32,17 +32,26 @@ fn every_copy_name_taken(dir: &Path, name: &str) {
     std::fs::write(dir.join(name), CUT).unwrap();
 }
 
+// Unix only: the names are made fast enough there for the window below.
+#[cfg(unix)]
 #[test]
 fn no_copy_kept_in_a_writable_folder_refuses_every_save() {
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
+    let start = Utc::now();
     for name in [
         "frost.json",
         "deckle-shelves.json",
         "readers.json",
         "settings.json",
     ] {
-        every_copy_name_taken(d, name);
+        every_copy_name_taken(d, name, start);
+    }
+    // The names cover four seconds from `start`; the checks below take well under one. A file
+    // system too slow for that can't run this test.
+    if Utc::now() - start > Duration::seconds(2) {
+        eprintln!("skipped: making the names took more than two seconds");
+        return;
     }
 
     // The setup gives what it says.
