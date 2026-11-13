@@ -7,7 +7,7 @@
 
 use std::borrow::Cow;
 use std::cell::{Cell, Ref, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::LazyLock;
 
 use deckle_limits::MAX_DEPTH;
@@ -18,16 +18,16 @@ use html5ever::{Attribute, QualName, local_name, ns};
 use regex::Regex;
 use regex::bytes::Regex as BytesRegex;
 
-use super::{Attr, Dom, Error, NodeId, clean};
+use super::{Attr, Dom, Error, NodeId, XML_NS, clean};
 
-const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
 const XMLNS_NS: &str = "http://www.w3.org/2000/xmlns/";
 
 /// `parse_html`: `bytes` decoded, parsed and cleaned as Calibre's conversion pipeline reads a
-/// spine document. A file that is not XML is read as HTML; [`Error`] when it cannot be decoded,
-/// or read as HTML it nests deeper than `MAX_DEPTH` or builds far more elements than its size.
+/// spine document. A file that is not XML is read as HTML. [`Error`] when its entities expand
+/// past [`deckle_limits::MAX_ENTITY_TEXT`], or read as HTML it nests deeper than `MAX_DEPTH` or
+/// builds far more elements than its size.
 pub fn parse(bytes: &[u8]) -> Result<Dom, Error> {
-    let text = decode(bytes)?;
+    let text = decode(bytes);
     let text = strip_encoding_declarations(&text);
 
     // "Remove DOCTYPE declaration as it messes up parsing"
@@ -39,7 +39,7 @@ pub fn parse(bytes: &[u8]) -> Result<Dom, Error> {
     let mut has_html4_doctype = false;
     if pre.contains("<!DOCTYPE") {
         has_html4_doctype = HTML4_DOCTYPE.is_match(pre);
-        data = replace_user_entities(pre, &data);
+        data = replace_user_entities(pre, &data)?;
     }
 
     let data = preprocess(&data).replace('\0', "");
@@ -67,9 +67,8 @@ pub fn parse(bytes: &[u8]) -> Result<Dom, Error> {
 type Decoder = fn(&[u8]) -> Option<String>;
 
 /// `OEBBook.decode` with no input encoding (EPUB input sets none): a byte-order mark, else
-/// UTF-8, else the encoding the file declares (`xml_to_unicode`). Calibre then guesses with
-/// uchardet; the port refuses ([`Error::UndeclaredEncoding`]). Line ends become `\n`.
-fn decode(bytes: &[u8]) -> Result<String, Error> {
+/// UTF-8, else `xml_to_unicode`. Line ends become `\n`.
+fn decode(bytes: &[u8]) -> String {
     let fix = |s: String| s.replace("\r\n", "\n").replace('\r', "\n");
     let mut data = bytes;
     let bom: Option<(Decoder, usize)> = match data {
@@ -83,51 +82,92 @@ fn decode(bytes: &[u8]) -> Result<String, Error> {
     if let Some((dec, len)) = bom {
         data = &data[len..];
         if let Some(s) = dec(data) {
-            return Ok(fix(s));
+            return fix(s);
         }
     }
     if let Ok(s) = std::str::from_utf8(data) {
-        return Ok(fix(s.to_owned()));
+        return fix(s.to_owned());
     }
-    xml_to_unicode(data).map(fix)
+    fix(xml_to_unicode(data))
 }
 
 /// `chardet.py` `xml_to_unicode` (through `detect_xml_encoding`): a byte-order mark, else the
 /// first encoding a declaration pattern finds, decoded with Python's `'replace'`.
-fn xml_to_unicode(raw: &[u8]) -> Result<String, Error> {
+///
+/// With no declaration Calibre takes uchardet's guess (`force_encoding`, `detect`), or UTF-8 when
+/// it has none. The port has no detector and guesses windows-1252, what uchardet answers for
+/// most Western text that is not UTF-8 (DIVERGENCES.md, "Encodings").
+fn xml_to_unicode(raw: &[u8]) -> String {
     if let Some(rest) = raw.strip_prefix(b"\xef\xbb\xbf") {
-        return Ok(String::from_utf8_lossy(rest).into_owned());
+        return String::from_utf8_lossy(rest).into_owned();
     }
     if let Some(rest) = raw.strip_prefix(b"\xff\xfe") {
-        return Ok(utf16(rest, u16::from_le_bytes, true).unwrap_or_default());
+        return utf16(rest, u16::from_le_bytes, true).unwrap_or_default();
     }
     if let Some(rest) = raw.strip_prefix(b"\xfe\xff") {
-        return Ok(utf16(rest, u16::from_be_bytes, true).unwrap_or_default());
+        return utf16(rest, u16::from_be_bytes, true).unwrap_or_default();
     }
     let declared = ENCODING_PATS_BYTES
         .iter()
         .find_map(|p| p.captures(raw))
-        .map(|c| String::from_utf8_lossy(&c[1]).into_owned())
-        .ok_or(Error::UndeclaredEncoding)?;
+        .map(|c| String::from_utf8_lossy(&c[1]).into_owned());
+    let Some(declared) = declared else {
+        return cp1252(raw);
+    };
     match python_codec(&declared) {
-        Some(Codec::Utf8) => Ok(String::from_utf8_lossy(raw).into_owned()),
-        Some(Codec::Latin1) => Ok(raw.iter().map(|&b| char::from(b)).collect()),
-        Some(Codec::Ascii) => Ok(raw
+        Some(Codec::Utf8) => String::from_utf8_lossy(raw).into_owned(),
+        Some(Codec::Latin1) => raw.iter().map(|&b| char::from(b)).collect(),
+        Some(Codec::Ascii) => raw
             .iter()
             .map(|&b| if b < 0x80 { char::from(b) } else { '\u{fffd}' })
-            .collect()),
-        None => Err(Error::UnsupportedEncoding(declared)),
+            .collect(),
+        Some(Codec::Utf16Le) => utf16(raw, u16::from_le_bytes, true).unwrap_or_default(),
+        Some(Codec::Utf16Be) => utf16(raw, u16::from_be_bytes, true).unwrap_or_default(),
+        // Python's codec of that name, as near as `encoding_rs` has it (the WHATWG encodings);
+        // a name it does not know is decoded as UTF-8, as `detect_xml_encoding` does when
+        // `codecs.lookup` fails.
+        None => match encoding_rs::Encoding::for_label(declared.trim().as_bytes()) {
+            Some(e) if e == encoding_rs::WINDOWS_1252 => cp1252(raw),
+            Some(e) if e != encoding_rs::REPLACEMENT => {
+                e.decode_without_bom_handling(raw).0.into_owned()
+            }
+            _ => String::from_utf8_lossy(raw).into_owned(),
+        },
     }
+}
+
+/// Python's `cp1252` with `'replace'`: the five bytes it leaves undefined (0x81, 0x8D, 0x8F,
+/// 0x90, 0x9D) become U+FFFD, where the WHATWG encoding maps them to C1 controls.
+fn cp1252(raw: &[u8]) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for chunk in raw.split_inclusive(|b| matches!(b, 0x81 | 0x8d | 0x8f | 0x90 | 0x9d)) {
+        let (body, undefined) = match chunk.split_last() {
+            Some((0x81 | 0x8d | 0x8f | 0x90 | 0x9d, rest)) => (rest, true),
+            _ => (chunk, false),
+        };
+        out.push_str(
+            &encoding_rs::WINDOWS_1252
+                .decode_without_bom_handling(body)
+                .0,
+        );
+        if undefined {
+            out.push('\u{fffd}');
+        }
+    }
+    out
 }
 
 enum Codec {
     Utf8,
     Latin1,
     Ascii,
+    Utf16Le,
+    Utf16Be,
 }
 
-/// The codecs the port decodes, by Python's names and aliases (`encodings/aliases.py`), the
-/// label normalized as `encodings.normalize_encoding` does.
+/// The codecs the port decodes itself, by Python's names and aliases (`encodings/aliases.py`),
+/// the label normalized as `encodings.normalize_encoding` does. Latin-1 is Python's, not the
+/// WHATWG's (which reads the label as windows-1252).
 fn python_codec(label: &str) -> Option<Codec> {
     let mut norm = String::new();
     let mut punct = false;
@@ -155,6 +195,12 @@ fn python_codec(label: &str) -> Option<Codec> {
         "ascii" | "646" | "ansi_x3.4_1968" | "ansi_x3_4_1968" | "ansi_x3.4_1986" | "cp367"
         | "csascii" | "ibm367" | "iso646_us" | "iso_646.irv_1991" | "iso_ir_6" | "us"
         | "us_ascii" => Some(Codec::Ascii),
+        // Python's `utf-16` with no byte-order mark reads the machine's order: little-endian
+        // on every machine Calibre ships for.
+        "utf_16" | "u16" | "utf16" | "utf_16le" | "utf_16_le" | "unicodelittleunmarked" => {
+            Some(Codec::Utf16Le)
+        }
+        "utf_16be" | "utf_16_be" | "unicodebigunmarked" => Some(Codec::Utf16Be),
         _ => None,
     }
 }
@@ -236,7 +282,9 @@ static HTML5_DOCTYPE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)<!DOCTYPE\s+html\s*>").expect("valid pattern"));
 
 /// `parse_html`: the entities the DOCTYPE before `<html` defines, replaced in `data`.
-fn replace_user_entities(pre: &str, data: &str) -> String {
+/// [`Error::EntityText`] when the text they produce would pass
+/// [`deckle_limits::MAX_ENTITY_TEXT`]: a short value referenced many times multiplies.
+fn replace_user_entities(pre: &str, data: &str) -> Result<String, Error> {
     let mut entities: BTreeMap<&str, &str> = BTreeMap::new();
     for m in USER_ENTITY.captures_iter(pre) {
         let (Some(name), Some(val)) = (m.get(1), m.get(2)) else {
@@ -250,19 +298,28 @@ fn replace_user_entities(pre: &str, data: &str) -> String {
         entities.insert(name.as_str(), val);
     }
     if entities.is_empty() {
-        return data.to_owned();
+        return Ok(data.to_owned());
     }
     let alternation: Vec<String> = entities.keys().map(|k| regex::escape(k)).collect();
     let Ok(pat) = regex::RegexBuilder::new(&format!("&({});", alternation.join("|")))
         .size_limit(1 << 22)
         .build()
     else {
-        return data.to_owned();
+        return Ok(data.to_owned());
     };
-    pat.replace_all(data, |c: &regex::Captures| {
-        entities.get(&c[1]).copied().unwrap_or_default().to_owned()
-    })
-    .into_owned()
+    let value = |c: &regex::Captures| entities.get(&c[1]).copied().unwrap_or_default();
+    let mut produced: u64 = 0;
+    for c in pat.captures_iter(data) {
+        produced = produced.saturating_add(value(&c).len() as u64);
+        if produced > deckle_limits::MAX_ENTITY_TEXT {
+            return Err(Error::EntityText(deckle_limits::TooLarge {
+                limit: deckle_limits::MAX_ENTITY_TEXT,
+            }));
+        }
+    }
+    Ok(pat
+        .replace_all(data, |c: &regex::Captures| value(c).to_owned())
+        .into_owned())
 }
 
 /// `preprocess.py` `LIGATURES`.
@@ -499,7 +556,14 @@ pub(crate) fn from_xml(doc: &Document) -> Dom {
     let root = doc.root_element();
     let mut dom = Dom::new(root.tag_name().name(), root.tag_name().namespace());
     let r = dom.root;
-    dom.el_mut(r).attrs = xml_attrs(&root);
+    let attrs = xml_attrs(&mut dom, &root);
+    dom.el_mut(r).attrs = attrs;
+    // lxml's `root[-1]`: the last child that is not text.
+    dom.root_ends_in_comment = root
+        .children()
+        .rev()
+        .find(|c| !c.is_text())
+        .is_some_and(|c| c.is_comment() || c.is_pi());
     // roxmltree's node index → the element made for it.
     let mut made: Vec<Option<NodeId>> = Vec::new();
     let set = |made: &mut Vec<Option<NodeId>>, n: Node, id: NodeId| {
@@ -518,8 +582,9 @@ pub(crate) fn from_xml(doc: &Document) -> Dom {
             continue;
         };
         if n.is_element() {
-            let id = dom.alloc(n.tag_name().name(), n.tag_name().namespace(), xml_attrs(&n));
-            dom.append_child(parent, id);
+            let attrs = xml_attrs(&mut dom, &n);
+            let id = dom.alloc(n.tag_name().name(), n.tag_name().namespace(), attrs);
+            dom.attach(parent, id);
             set(&mut made, n, id);
         } else if let Some(t) = n.text().filter(|_| n.is_text()) {
             dom.append_text(parent, t);
@@ -528,7 +593,7 @@ pub(crate) fn from_xml(doc: &Document) -> Dom {
     dom
 }
 
-fn xml_attrs(n: &Node) -> Vec<Attr> {
+fn xml_attrs(dom: &mut Dom, n: &Node) -> Vec<Attr> {
     n.attributes()
         .map(|a| {
             let name = match a.namespace() {
@@ -539,11 +604,7 @@ fn xml_attrs(n: &Node) -> Vec<Attr> {
                 },
                 None => a.name().to_owned(),
             };
-            Attr {
-                name,
-                ns: a.namespace().map(str::to_owned),
-                value: a.value().to_owned(),
-            }
+            dom.new_attr(&name, a.namespace(), a.value().to_owned())
         })
         .collect()
 }
@@ -604,7 +665,8 @@ enum Kind {
         mathml_annotation_xml_integration_point: bool,
     },
     Text(String),
-    /// A comment or processing instruction: not kept.
+    /// A comment or processing instruction: not kept in the tree, but linked, so the parse can
+    /// tell whether `<html>` ends in one.
     Dropped,
 }
 
@@ -627,13 +689,13 @@ struct SinkNode {
 struct Sink {
     nodes: RefCell<Vec<SinkNode>>,
     over: RefCell<Vec<QualName>>,
+    /// Nodes and attributes made so far: an element costs one and one per attribute.
+    used: Cell<usize>,
     budget: usize,
     stopped: Cell<Option<Error>>,
 }
 
 const DOCUMENT: usize = 0;
-/// The handle of every comment and processing instruction.
-const DROPPED: usize = 1;
 /// The first handle of an element made past the budget.
 const OVER: usize = usize::MAX / 2;
 
@@ -649,8 +711,9 @@ impl Sink {
             next: None,
         };
         Sink {
-            nodes: RefCell::new(vec![node(Kind::Document), node(Kind::Dropped)]),
+            nodes: RefCell::new(vec![node(Kind::Document)]),
             over: RefCell::new(Vec::new()),
+            used: Cell::new(1),
             budget,
             stopped: Cell::new(None),
         }
@@ -661,21 +724,27 @@ impl Sink {
         self.stopped.set(prev.or(Some(e)));
     }
 
-    /// A handle that is a node of the tree (not dropped, not past the budget).
+    /// A handle that is a node of the sink's tree (not past the budget).
     fn kept(h: usize) -> bool {
-        h != DROPPED && h < OVER
+        h < OVER
     }
 
-    /// A new node, or a name past the budget.
+    /// A new node, or a name past the budget. It costs one, and one per attribute: the HTML
+    /// algorithm copies a formatting element with all its attributes each time it rebuilds it.
     fn push(&self, name: QualName, kind: Kind) -> usize {
-        let mut nodes = self.nodes.borrow_mut();
-        if nodes.len() >= self.budget {
-            drop(nodes);
+        let cost = 1 + match &kind {
+            Kind::Element { attrs, .. } => attrs.len(),
+            _ => 0,
+        };
+        let used = self.used.get().saturating_add(cost);
+        if used > self.budget {
             self.stop(Error::TooLarge(self.budget));
             let mut over = self.over.borrow_mut();
             over.push(name);
             return OVER + over.len() - 1;
         }
+        self.used.set(used);
+        let mut nodes = self.nodes.borrow_mut();
         nodes.push(SinkNode {
             name,
             kind,
@@ -802,7 +871,12 @@ impl Sink {
         let (local, ns) = html_name(&nodes[html].name);
         let mut dom = Dom::new(&local, ns);
         let r = dom.root;
-        dom.el_mut(r).attrs = html_attrs(&nodes[html].kind, &declared);
+        let attrs = html_attrs(&mut dom, &nodes[html].kind, &declared);
+        dom.el_mut(r).attrs = attrs;
+        dom.root_ends_in_comment = children(html)
+            .filter(|&c| !matches!(nodes[c].kind, Kind::Text(_)))
+            .last()
+            .is_some_and(|c| matches!(nodes[c].kind, Kind::Dropped));
         let mut stack = vec![(html, r, 0usize)];
         while let Some((s, d, depth)) = stack.pop() {
             for c in children(s) {
@@ -813,8 +887,9 @@ impl Sink {
                             return Err(Error::TooDeep);
                         }
                         let (local, ns) = html_name(&nodes[c].name);
-                        let id = dom.alloc(&local, ns, html_attrs(&nodes[c].kind, &declared));
-                        dom.append_child(d, id);
+                        let attrs = html_attrs(&mut dom, &nodes[c].kind, &declared);
+                        let id = dom.alloc(&local, ns, attrs);
+                        dom.attach(d, id);
                         stack.push((c, id, depth + 1));
                     }
                     Kind::Document | Kind::Dropped => {}
@@ -864,12 +939,13 @@ fn declared_prefixes(kind: &Kind) -> BTreeMap<String, String> {
 }
 
 /// An element's attributes by qualified name, namespace declarations left out, a prefix the
-/// root declares resolved.
-fn html_attrs(kind: &Kind, declared: &BTreeMap<String, String>) -> Vec<Attr> {
+/// root declares resolved, a name seen before (after it is made a valid XML name) left out.
+fn html_attrs(dom: &mut Dom, kind: &Kind, declared: &BTreeMap<String, String>) -> Vec<Attr> {
     let Kind::Element { attrs, .. } = kind else {
         return Vec::new();
     };
     let mut out: Vec<Attr> = Vec::with_capacity(attrs.len());
+    let mut seen: HashSet<String> = HashSet::with_capacity(attrs.len());
     for a in attrs {
         let local: &str = &a.name.local;
         let ns: &str = &a.name.ns;
@@ -887,14 +963,10 @@ fn html_attrs(kind: &Kind, declared: &BTreeMap<String, String>) -> Vec<Attr> {
         } else {
             Some(ns.to_owned())
         };
-        if out.iter().any(|o| o.name == name) {
+        if !seen.insert(name.clone()) {
             continue;
         }
-        out.push(Attr {
-            name,
-            ns,
-            value: a.value.to_string(),
-        });
+        out.push(dom.new_attr(&name, ns.as_deref(), a.value.to_string()));
     }
     out
 }
@@ -933,11 +1005,11 @@ impl TreeSink for Sink {
     }
 
     fn create_comment(&self, _text: StrTendril) -> usize {
-        DROPPED
+        self.push(QualName::new(None, ns!(), local_name!("")), Kind::Dropped)
     }
 
     fn create_pi(&self, _target: StrTendril, _data: StrTendril) -> usize {
-        DROPPED
+        self.push(QualName::new(None, ns!(), local_name!("")), Kind::Dropped)
     }
 
     fn append(&self, parent: &usize, child: NodeOrText<usize>) {

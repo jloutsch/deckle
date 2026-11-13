@@ -80,6 +80,7 @@ the limit, instead of slowing the computer or crashing. Real books are far insid
 |---|---|
 | EPUB, KPF, CBZ: one file inside the archive, unpacked | 256 MB |
 | EPUB, KPF: the whole archive, unpacked | 1 GB |
+| Text produced by a file's own entities | 16 MB |
 | CBZ, CBR: the whole archive, unpacked | 4 GB |
 | CBZ, CBR: one page | 256 MB |
 | DOCX: the whole document, unpacked, pictures included | 50 MB |

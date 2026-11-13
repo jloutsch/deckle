@@ -3,7 +3,7 @@
 //! cleaned as Calibre 9.18 does, against the `<body>` of the tree Calibre's kfxgen run recorded
 //! (`cascade/<book>/dom/NNN.xhtml`).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use deckle_kfx::epub_zip::{EpubReader, percent_decode};
 use deckle_kfx::fixtures;
@@ -13,13 +13,14 @@ use deckle_limits::roxmltree::{Node, ParsingOptions};
 use serde_json::Value;
 
 /// Every book under `fixtures/kfxgen/cascade/`.
-const BOOKS: [&str; 12] = [
+const BOOKS: [&str; 13] = [
     "css_quirks",
     "directions",
     "fake_margins",
     "fonts",
     "frames",
     "lists",
+    "malformed",
     "navigation",
     "no_toc",
     "notes",
@@ -28,31 +29,145 @@ const BOOKS: [&str; 12] = [
     "vertical",
 ];
 
-/// Tags a later step renames: (from, the names it may become).
-type Renames = &'static [(&'static str, &'static [&'static str])];
+/// Spine files whose body does not match the dump yet, and why. Each must still differ, and
+/// match once the differences named are allowed, so an entry goes when the port catches up and
+/// hides nothing else.
+struct NotYet {
+    book: &'static str,
+    href: &'static str,
+    /// Tags a later step renames: (from, the names it may become).
+    renames: &'static [(&'static str, &'static [&'static str])],
+    /// Attributes a later step removes.
+    removed: &'static [&'static str],
+    /// Attributes a later step adds.
+    added: &'static [&'static str],
+    why: &'static str,
+}
 
-/// Spine files whose body does not match the dump yet: (book, href, the tags a later step
-/// renames and what to, why). Each must still differ, and match but for those renames, so an
-/// entry goes when the port catches up and hides nothing else.
-const NOT_YET: &[(&str, &str, Renames, &str)] = &[(
-    "css_quirks",
-    "OEBPS/flatten.xhtml",
-    &[("font", &["span", "div"])],
-    "Calibre's CSS flattener makes each <font> a <div> if it holds a block, else a <span> \
-     (flatcss.py CSSFlattener.flatten_node), after parse_html: Task 9",
-)];
+const NOT_YET: &[NotYet] = &[
+    NotYet {
+        book: "css_quirks",
+        href: "OEBPS/flatten.xhtml",
+        renames: &[("font", &["span", "div"])],
+        removed: &[
+            "size", "face", "color", "align", "bgcolor", "valign", "type",
+        ],
+        added: &[],
+        why: "Calibre's CSS flattener makes each <font> a <div> if it holds a block, else a \
+              <span>, and turns presentational attributes into CSS \
+              (flatcss.py CSSFlattener.flatten_node), after parse_html: Task 9",
+    },
+    NotYet {
+        book: "malformed",
+        href: "OEBPS/unclosed.xhtml",
+        renames: &[("font", &["span"])],
+        removed: &["size"],
+        added: &[],
+        why: "the same flattener rule for the <font> left open",
+    },
+    NotYet {
+        book: "malformed",
+        href: "OEBPS/html4.xhtml",
+        renames: &[],
+        removed: &["align"],
+        added: &[],
+        why: "the flattener turns align into CSS (flatcss.py CSSFlattener.flatten_node)",
+    },
+    NotYet {
+        book: "lists",
+        href: "OEBPS/c1.xhtml",
+        renames: &[],
+        removed: &["type"],
+        added: &[],
+        why: "the flattener turns an <ol>'s type into CSS (flatcss.py CSSFlattener.flatten_node)",
+    },
+    NotYet {
+        book: "no_toc",
+        href: "OEBPS/one.xhtml",
+        renames: &[],
+        removed: &[],
+        added: &["id"],
+        why: "with no contents file Calibre gives each heading it lists an id calibre_toc_N \
+              (oeb/transforms/structure.py DetectStructure): Task 8",
+    },
+    NotYet {
+        book: "no_toc",
+        href: "OEBPS/two.xhtml",
+        renames: &[],
+        removed: &[],
+        added: &["id"],
+        why: "as one.xhtml",
+    },
+];
 
 /// The style Calibre's chapter marks carry (`DetectStructure`, phase 2 Task 8).
 fn is_chapter_mark(specified: &Value) -> bool {
     *specified == serde_json::json!({"display": "block", "page-break-after": "always"})
 }
 
-/// `(path, tag)` of `<body>` and every element under it in the dump, chapter marks left out
-/// and the paths counted without them.
-fn dump_body(xhtml: &str, marks: &BTreeSet<Vec<u32>>) -> Vec<(Vec<u32>, String)> {
+/// An element as the comparison sees it: its path, tag, text, tail and attributes but for
+/// those a later step owns.
+#[derive(Debug, Clone, PartialEq)]
+struct El {
+    path: Vec<u32>,
+    tag: String,
+    text: String,
+    tail: String,
+    attrs: Vec<(String, String)>,
+}
+
+/// Attributes Calibre's later steps own: classes and styles (the flattener), kfxgen's own,
+/// and a picture's size (the Stylizer removes it).
+fn compared(tag: &str, name: &str) -> bool {
+    !(name == "class"
+        || name == "style"
+        || name.starts_with("data-kfxgen-")
+        || (tag == "img" && (name == "width" || name == "height")))
+}
+
+/// The text of the text nodes from `first` on, up to the next element: lxml's text or tail with
+/// the comments, which the port does not keep, left out.
+fn text_run(first: Option<Node>) -> String {
+    std::iter::successors(first, |n| n.next_sibling())
+        .take_while(|n| !n.is_element())
+        .filter(|n| n.is_text())
+        .filter_map(|n| n.text())
+        .collect()
+}
+
+/// `<body>` and every element under it in the dump, chapter marks left out (their tails moved
+/// as removing them would) and the paths counted without them.
+fn dump_body(xhtml: &str, marks: &BTreeSet<Vec<u32>>) -> Vec<El> {
     let doc = deckle_limits::parse_xml(xhtml, ParsingOptions::default()).unwrap();
     let root = doc.root_element();
-    let mut out = Vec::new();
+    let el = |n: Node, path: Vec<u32>| {
+        let tag = n.tag_name().name().to_owned();
+        let mut attrs: Vec<(String, String)> = n
+            .attributes()
+            .map(|a| {
+                let name = match a.namespace() {
+                    Some("http://www.w3.org/XML/1998/namespace") => format!("xml:{}", a.name()),
+                    Some(uri) => format!("{}:{}", n.lookup_prefix(uri).unwrap_or(""), a.name()),
+                    None => a.name().to_owned(),
+                };
+                (name, a.value().to_owned())
+            })
+            .filter(|(name, _)| compared(&tag, name))
+            .collect();
+        attrs.sort();
+        El {
+            path,
+            text: text_run(n.first_child()),
+            tail: text_run(n.next_sibling()),
+            tag,
+            attrs,
+        }
+    };
+    let mut out: Vec<El> = Vec::new();
+    // roxmltree node index → its record.
+    let mut record: BTreeMap<usize, usize> = BTreeMap::new();
+    // A removed mark's tail: (the kept sibling before it, else its parent; the tail).
+    let mut moved: Vec<(Node, bool, String)> = Vec::new();
     // (node, its path in the dump, its path once the marks are gone)
     let mut stack: Vec<(Node, Vec<u32>, Vec<u32>)> = Vec::new();
     for (i, c) in root.children().filter(Node::is_element).enumerate() {
@@ -61,21 +176,35 @@ fn dump_body(xhtml: &str, marks: &BTreeSet<Vec<u32>>) -> Vec<(Vec<u32>, String)>
         }
     }
     while let Some((n, dump_path, path)) = stack.pop() {
-        out.push((path.clone(), n.tag_name().name().to_owned()));
+        record.insert(n.id().get_usize(), out.len());
+        out.push(el(n, path.clone()));
         let mut kids = Vec::new();
-        let mut kept = 0;
+        let mut prev_kept: Option<Node> = None;
         for (i, c) in n.children().filter(Node::is_element).enumerate() {
             let mut dp = dump_path.clone();
             dp.push(i as u32);
             if marks.contains(&dp) {
+                let tail = text_run(c.next_sibling());
+                match prev_kept {
+                    Some(prev) => moved.push((prev, true, tail)),
+                    None => moved.push((n, false, tail)),
+                }
                 continue;
             }
             let mut p = path.clone();
-            p.push(kept);
-            kept += 1;
+            p.push(kids.len() as u32);
+            prev_kept = Some(c);
             kids.push((c, dp, p));
         }
         stack.extend(kids.into_iter().rev());
+    }
+    for (n, is_tail, extra) in moved {
+        let e = &mut out[record[&n.id().get_usize()]];
+        if is_tail {
+            e.tail.push_str(&extra);
+        } else {
+            e.text.push_str(&extra);
+        }
     }
     out
 }
@@ -87,15 +216,28 @@ fn body(dom: &Dom) -> Option<NodeId> {
         .find(|&c| dom.tag(c) == "body")
 }
 
-/// `(path, tag)` of `<body>` and every element under it.
-fn parsed_body(dom: &Dom) -> Vec<(Vec<u32>, String)> {
+/// `<body>` and every element under it.
+fn parsed_body(dom: &Dom) -> Vec<El> {
     let Some(b) = body(dom) else {
         return Vec::new();
     };
     let mut out = Vec::new();
     let mut stack = vec![b];
     while let Some(n) = stack.pop() {
-        out.push((dom.path(n), dom.tag(n).to_owned()));
+        let tag = dom.tag(n).to_owned();
+        let mut attrs: Vec<(String, String)> = dom
+            .attrs(n)
+            .filter(|(name, ..)| compared(&tag, name))
+            .map(|(name, _, value)| (name.to_owned(), value.to_owned()))
+            .collect();
+        attrs.sort();
+        out.push(El {
+            path: dom.path(n),
+            text: dom.text(n).to_owned(),
+            tail: dom.tail(n).to_owned(),
+            tag,
+            attrs,
+        });
         stack.extend(dom.children(n).iter().rev());
     }
     out
@@ -124,6 +266,17 @@ fn read_spine_file(zip: &mut EpubReader, href: &str) -> Vec<u8> {
     zip.read_bytes(href)
         .or_else(|_| zip.read_bytes(&percent_decode(href)))
         .unwrap()
+}
+
+fn first_difference(got: &[El], want: &[El]) -> String {
+    let i = got.iter().zip(want).take_while(|(g, w)| g == w).count();
+    format!(
+        "element {i}: got {:?}, want {:?} ({} and {} elements)",
+        got.get(i),
+        want.get(i),
+        got.len(),
+        want.len()
+    )
 }
 
 #[test]
@@ -164,53 +317,73 @@ fn parse_cleanups_match_calibre() {
                 matched += 1;
                 continue;
             }
-            if let Some((.., renames, _)) =
-                NOT_YET.iter().find(|(b, h, ..)| *b == book && h == href)
-            {
-                let same = |(gp, gt): &(Vec<u32>, String), (wp, wt): &(Vec<u32>, String)| {
-                    gp == wp
-                        && (gt == wt
-                            || renames
-                                .iter()
-                                .any(|(from, to)| from == gt && to.contains(&wt.as_str())))
+            if let Some(ny) = NOT_YET.iter().find(|ny| ny.book == book && ny.href == href) {
+                let allowed = |g: &El| El {
+                    tag: ny
+                        .renames
+                        .iter()
+                        .find(|(from, _)| *from == g.tag)
+                        .map_or(g.tag.clone(), |_| "*renamed*".to_owned()),
+                    attrs: g
+                        .attrs
+                        .iter()
+                        .filter(|(name, _)| !ny.removed.contains(&name.as_str()))
+                        .cloned()
+                        .collect(),
+                    ..g.clone()
+                };
+                let want_allowed = |g: &El, w: &El| {
+                    let mut w = w.clone();
+                    w.attrs
+                        .retain(|(name, _)| !ny.added.contains(&name.as_str()));
+                    if ny
+                        .renames
+                        .iter()
+                        .any(|(from, to)| *from == g.tag && to.contains(&w.tag.as_str()))
+                    {
+                        w.tag = "*renamed*".to_owned();
+                    }
+                    w
                 };
                 assert!(
-                    got.len() == want.len() && got.iter().zip(&want).all(|(g, w)| same(g, w)),
-                    "{book} {href}: differs by more than {renames:?}:\n{got:?}\n{want:?}"
+                    got.len() == want.len()
+                        && got
+                            .iter()
+                            .zip(&want)
+                            .all(|(g, w)| allowed(g) == want_allowed(g, w)),
+                    "{book} {href}: differs by more than {:?}, {:?} and {:?}:\n{}",
+                    ny.renames,
+                    ny.removed,
+                    ny.added,
+                    first_difference(&got, &want)
                 );
             }
-            let i = got.iter().zip(&want).take_while(|(g, w)| g == w).count();
-            failed.push((
-                book.to_owned(),
-                href.clone(),
-                format!(
-                    "first difference at element {i}: got {:?}, want {:?} ({} and {} elements)",
-                    got.get(i),
-                    want.get(i),
-                    got.len(),
-                    want.len()
-                ),
-            ));
+            failed.push((book.to_owned(), href.clone(), first_difference(&got, &want)));
         }
     }
     let unexpected: Vec<_> = failed
         .iter()
-        .filter(|(b, h, _)| !NOT_YET.iter().any(|(nb, nh, ..)| nb == b && nh == h))
+        .filter(|(b, h, _)| !NOT_YET.iter().any(|ny| ny.book == b && ny.href == h))
         .collect();
     assert!(
         unexpected.is_empty(),
         "{matched} files match; these do not:\n{unexpected:#?}"
     );
-    for (b, h, _, why) in NOT_YET {
+    for ny in NOT_YET {
         assert!(
-            failed.iter().any(|(fb, fh, _)| fb == b && fh == h),
-            "{b} {h} matches now; take it off NOT_YET ({why})"
+            failed
+                .iter()
+                .any(|(fb, fh, _)| fb == ny.book && fh == ny.href),
+            "{} {} matches now; take it off NOT_YET ({})",
+            ny.book,
+            ny.href,
+            ny.why
         );
     }
     assert_eq!(
         matched + failed.len(),
-        45,
-        "the 12 books have 45 spine files"
+        49,
+        "the 13 books have 49 spine files"
     );
 }
 
@@ -320,16 +493,81 @@ fn utf16_and_latin1_decode() {
 }
 
 #[test]
-fn undeclared_non_utf8_is_a_typed_error() {
-    let bytes = latin1_cafe();
-    assert!(matches!(dom::parse(&bytes), Err(Error::UndeclaredEncoding)));
-    // An encoding the port does not decode is named.
-    let mut koi = b"<?xml version=\"1.0\" encoding=\"KOI8-R\"?>".to_vec();
-    koi.extend_from_slice(&bytes);
-    match dom::parse(&koi) {
-        Err(e @ Error::UnsupportedEncoding(_)) => assert!(e.to_string().contains("KOI8-R"), "{e}"),
-        other => panic!("expected UnsupportedEncoding, got {:?}", other.map(|_| ())),
+fn undeclared_non_utf8_decodes_as_windows_1252() {
+    // Calibre takes uchardet's guess (`chardet.py` `force_encoding`); the port guesses
+    // windows-1252, uchardet's answer for most Western text.
+    assert_eq!(first_p_text(&dom::parse(&latin1_cafe()).unwrap()), "café");
+}
+
+/// `chapter("")` with `raw` as the paragraph's bytes and `decl` before it.
+fn declared(decl: &str, raw: &[u8]) -> Vec<u8> {
+    let mut bytes = decl.as_bytes().to_vec();
+    let page = chapter("@");
+    let (a, b) = page.split_once('@').unwrap();
+    bytes.extend_from_slice(a.as_bytes());
+    bytes.extend_from_slice(raw);
+    bytes.extend_from_slice(b.as_bytes());
+    bytes
+}
+
+#[test]
+fn declared_legacy_encodings_decode() {
+    // windows-1252 as Python's cp1252: curly quotes, the euro, and U+FFFD for 0x81, which
+    // Python leaves undefined.
+    let cp = declared(
+        "<?xml version=\"1.0\" encoding=\"windows-1252\"?>",
+        b"\x93Quoted\x94 \x805 \x81",
+    );
+    assert_eq!(
+        first_p_text(&dom::parse(&cp).unwrap()),
+        "\u{201c}Quoted\u{201d} \u{20ac}5 \u{fffd}"
+    );
+    // Another encoding the WHATWG table has.
+    let koi = declared(
+        "<?xml version=\"1.0\" encoding=\"KOI8-R\"?>",
+        b"\xf0\xd2\xc9\xd7\xc5\xd4",
+    );
+    assert_eq!(first_p_text(&dom::parse(&koi).unwrap()), "Привет");
+    // A name no codec has: UTF-8 with replacement characters, as `detect_xml_encoding` falls
+    // back when `codecs.lookup` fails.
+    let unknown = declared("<?xml version=\"1.0\" encoding=\"x-no-such\"?>", b"caf\xe9");
+    assert_eq!(first_p_text(&dom::parse(&unknown).unwrap()), "caf\u{fffd}");
+}
+
+#[test]
+fn formatting_rebuilt_with_many_attributes_stops() {
+    // One `<b>` of 3,000 attributes, left open, which the HTML algorithm copies, attributes
+    // and all, into each of 3,000 paragraphs: 9 million attributes from 47 KB.
+    let attrs: String = (0..3000).map(|i| format!(" a{i}=v")).collect();
+    let src = format!("<html><body><p><b{attrs}>x</p>{}", "<p>x</p>".repeat(3000));
+    let start = std::time::Instant::now();
+    let r = dom::parse(src.as_bytes());
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(1),
+        "{:?}",
+        start.elapsed()
+    );
+    assert!(matches!(r, Err(Error::TooLarge(_))), "{:?}", r.map(|_| ()));
+}
+
+#[test]
+fn entities_past_16_mb_are_refused() {
+    // A 1,000-character entity named 20,000 times: 20 MB from 81 KB.
+    let src = format!(
+        "<!DOCTYPE html [<!ENTITY a \"{}\">]><html xmlns=\"http://www.w3.org/1999/xhtml\"><body><p>{}</p></body></html>",
+        "X".repeat(1000),
+        "&a;".repeat(20_000)
+    );
+    match dom::parse(src.as_bytes()) {
+        Err(e @ Error::EntityText(_)) => assert!(e.to_string().contains("16 MB"), "{e}"),
+        other => panic!("expected EntityText, got {:?}", other.map(|_| ())),
     }
+    // Under the cap they are replaced.
+    let src = "<!DOCTYPE html [<!ENTITY who \"the author\">]><html xmlns=\"http://www.w3.org/1999/xhtml\"><body><p>By &who;.</p></body></html>";
+    assert_eq!(
+        first_p_text(&dom::parse(src.as_bytes()).unwrap()),
+        "By the author."
+    );
 }
 
 #[test]
@@ -408,6 +646,72 @@ fn edits_keep_paths_and_text() {
 }
 
 #[test]
+fn siblings_and_text_edits() {
+    let mut dom = dom::parse(chapter("a<b>b</b>c<i>i</i>d<u>u</u>").as_bytes()).unwrap();
+    let p = dom.children(body(&dom).unwrap())[0];
+    let [b, i, u] = dom.children(p) else { panic!() };
+    let (b, i, u) = (*b, *i, *u);
+    assert_eq!([b, i, u].map(|n| dom.index_in_parent(n)), [0, 1, 2]);
+    assert_eq!(dom.prev_sibling(b), None);
+    assert_eq!(dom.prev_sibling(i), Some(b));
+    assert_eq!(dom.next_sibling(i), Some(u));
+    assert_eq!(dom.next_sibling(u), None);
+    assert_eq!(dom.index_in_parent(dom.root()), 0);
+
+    dom.set_text(i, "I");
+    dom.set_tail(i, "D");
+    let s = dom.append_child(p, "span");
+    assert_eq!(dom.parent(s), Some(p));
+    assert_eq!(dom.next_sibling(u), Some(s));
+    assert!(dom::to_xhtml(&dom).contains("<p>a<b>b</b>c<i>I</i>D<u>u</u><span/></p>"));
+
+    // Before an element already removed, or the root: nothing goes into the tree.
+    dom.remove(b);
+    let before = dom::to_xhtml(&dom);
+    for at in [b, dom.root()] {
+        let n = dom.insert_before(at, "div");
+        assert_eq!(dom.parent(n), None);
+        assert_eq!(dom::to_xhtml(&dom), before);
+    }
+}
+
+#[test]
+fn many_edits_on_wide_parents_are_linear() {
+    let src = format!(
+        "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body>{}</body></html>",
+        "<p>a</p>t".repeat(100_000)
+    );
+    let mut dom = dom::parse(src.as_bytes()).unwrap();
+    let body = body(&dom).unwrap();
+    let kids = dom.children(body).to_vec();
+
+    let start = std::time::Instant::now();
+    let items: Vec<(NodeId, &str)> = kids.iter().map(|&k| (k, "div")).collect();
+    let made = dom.insert_many_before(&items);
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(1),
+        "{:?}",
+        start.elapsed()
+    );
+    assert_eq!(dom.children(body).len(), 200_000);
+    assert_eq!(dom.children(body)[0], made[0]);
+    assert_eq!(dom.index_in_parent(kids[99_999]), 199_999);
+
+    let start = std::time::Instant::now();
+    dom.remove_many(&kids);
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(1),
+        "{:?}",
+        start.elapsed()
+    );
+    assert_eq!(dom.children(body), made.as_slice());
+    assert_eq!(dom.index_in_parent(made[99_999]), 99_999);
+    // Each removed paragraph's tail joined the new element before it.
+    assert_eq!(dom.tail(made[5]), "t");
+    assert_eq!(all_text(&dom, body).len(), 100_000);
+}
+
+#[test]
 fn to_xhtml_reads_back_as_the_same_tree() {
     let mut zip = EpubReader::open(&fixtures::kfxgen("sources/css_quirks.epub")).unwrap();
     let dom = dom::parse(&zip.read_bytes("OEBPS/cleanups.xhtml").unwrap()).unwrap();
@@ -451,4 +755,24 @@ fn html_that_rebuilds_formatting_at_every_block_stops() {
         .unwrap()
         .join()
         .unwrap();
+}
+
+#[test]
+fn a_trailing_comment_hides_lang_from_the_lower_casing() {
+    // `parse_html` lower-cases every name when the root's last child (lxml's `root[-1]`) has
+    // `LANG` or `DIR`. A comment after it is that last child, and has neither.
+    let page = |after: &str| {
+        format!(
+            "<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>T</title></head><BODY LANG=\"en\"><P>x</P></BODY>{after}</html>"
+        )
+    };
+    let tags = |src: String| {
+        let dom = dom::parse(src.as_bytes()).unwrap();
+        dom.descendants()
+            .map(|n| dom.tag(n).to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert!(tags(page("")).contains(&"p".to_owned()));
+    let kept = tags(page("<!-- c -->"));
+    assert!(kept.contains(&"P".to_owned()), "{kept:?}");
 }

@@ -12,6 +12,8 @@ deckle-kfx.workspace = true
 deckle-limits = { workspace = true, features = ["xml"] }
 roxmltree.workspace = true
 html5ever.workspace = true
+# Encodings a document declares (src/dom/parse.rs).
+encoding_rs.workspace = true
 cssparser.workspace = true
 selectors.workspace = true
 zip.workspace = true

@@ -15,6 +15,12 @@ Writes, into OUT_DIR (fixtures/kfxgen/sources):
   `margin-left: 3em` (removed), in half.xhtml 30 <p> one level down, half of them with it
   (kept, under the 95% Calibre needs). The two sets get different classes (see
   fake_margins()).
+- malformed.epub: files Calibre does not read as plain XHTML (parse_utils.py parse_html):
+  unclosed.xhtml has unclosed <p>, <br> and <font> tags and an unquoted attribute (read with
+  the HTML 5 parser); entities.xhtml defines entities in its DOCTYPE, one of them holding a
+  character reference, and uses an HTML entity XML does not know; html4.xhtml is HTML 4 with
+  upper-case tags and attributes and an HTML 4.0 DOCTYPE (names lower-cased); cp1252.xhtml is
+  windows-1252, declared in its XML declaration, with curly quotes, a euro sign and an e-acute.
 
 tools/ref/kfxgen_models.sh --cascade runs it. Fixed zip dates: the same script makes the same
 bytes. The dumps are the reference; nothing here says what Calibre does with them.
@@ -243,12 +249,74 @@ def fake_margins(out):
     )
 
 
+def malformed(out):
+    head = '<?xml version="1.0" encoding="utf-8"?>\n'
+    files = {
+        "unclosed": head
+        + f'<html xmlns="{XHTML_NS}"><head><title>Unclosed</title>'
+        '<link rel="stylesheet" type="text/css" href="style.css"/></head>\n<body>\n'
+        "<h1>Unclosed tags</h1>\n"
+        "<p class=first>An unquoted class, and a paragraph left open\n"
+        "<p>A break<br>then <font size=4>a font left open\n"
+        "<p>A last paragraph, closed.</p>\n"
+        "</body>\n</html>\n",
+        "entities": head
+        + '<!DOCTYPE html [<!ENTITY author "Fixture Author"><!ENTITY sep " &#8212; ">]>\n'
+        f'<html xmlns="{XHTML_NS}"><head><title>Entities</title></head>\n<body>\n'
+        "<p>By &author;&sep;with&nbsp;an HTML entity and &amp; an XML one.</p>\n"
+        "</body>\n</html>\n",
+        "html4": '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">\n'
+        "<HTML><HEAD><TITLE>Upper</TITLE></HEAD>\n<BODY>\n"
+        '<H2 ALIGN="center">HTML 4</H2>\n'
+        '<P CLASS="Upper">Upper-case tags<BR/>and attributes.</P>\n'
+        "</BODY></HTML>\n",
+        "cp1252": (
+            '<?xml version="1.0" encoding="windows-1252"?>\n'
+            f'<html xmlns="{XHTML_NS}"><head><title>Windows</title></head>\n<body>\n'
+            "<p>\u201cCurly quotes\u201d, \u20ac5 and caf\u00e9.</p>\n"
+            "</body>\n</html>\n"
+        ).encode("cp1252"),
+    }
+    manifest = "\n".join(
+        [
+            '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>',
+            '<item id="css" href="style.css" media-type="text/css"/>',
+        ]
+        + [
+            f'<item id="{fid}" href="{fid}.xhtml" media-type="application/xhtml+xml"/>'
+            for fid in files
+        ]
+    )
+    spine = "".join(f'<itemref idref="{fid}"/>' for fid in files)
+    ncx = (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head/>'
+        "<docTitle><text>Malformed</text></docTitle><navMap>"
+        + "".join(
+            f'<navPoint id="n{i}" playOrder="{i}"><navLabel><text>{fid}</text></navLabel>'
+            f'<content src="{fid}.xhtml"/></navPoint>'
+            for i, fid in enumerate(files, 1)
+        )
+        + "</navMap></ncx>\n"
+    )
+    write_epub(
+        out / "malformed.epub",
+        [
+            ("content.opf", opf2("Malformed", "<dc:language>en</dc:language>", manifest, spine)),
+            ("toc.ncx", ncx),
+            ("style.css", CSS),
+        ]
+        + [(f"{fid}.xhtml", text) for fid, text in files.items()],
+    )
+
+
 def main(out):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     package_quirks(out)
     no_toc(out)
     fake_margins(out)
+    malformed(out)
 
 
 if __name__ == "__main__":

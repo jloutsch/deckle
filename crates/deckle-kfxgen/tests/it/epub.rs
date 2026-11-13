@@ -12,13 +12,14 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 /// Every book under `fixtures/kfxgen/cascade/`.
-const BOOKS: [&str; 12] = [
+const BOOKS: [&str; 13] = [
     "css_quirks",
     "directions",
     "fake_margins",
     "fonts",
     "frames",
     "lists",
+    "malformed",
     "navigation",
     "no_toc",
     "notes",

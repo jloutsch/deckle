@@ -306,7 +306,8 @@ This entry goes when Task 7 makes them.
 
 Calibre reads a document that is not XML with `html5-parser` (`parse_utils.py` `html5_parse`),
 and the port with `html5ever` (`src/dom/parse.rs`). Both follow the HTML 5 parsing algorithm, and
-the book loads with all its text, but the trees can differ:
+the book loads with all its text. On the `malformed` cascade book (tags left open, an unquoted
+attribute) the two trees are the same; they can differ:
 
 - `html5-parser` runs with `maybe_xhtml`, which reads `<p/>` as an empty paragraph;
   `html5ever` reads it as an opening tag, so what follows goes inside it.
@@ -315,25 +316,40 @@ the book loads with all its text, but the trees can differ:
 - An attribute prefix (`epub:type`) gets its namespace only from a declaration on `<html>`.
 - When the HTML tree is more than 100 levels deep, Calibre parses again with libxml2's HTML
   parser (`_html4_parse`). The port keeps `html5ever`'s tree up to `MAX_DEPTH` (256) and refuses
-  the file past it (`dom::Error::TooDeep`), and also refuses one that builds more elements than
-  its length in bytes plus 1,024 (`dom::Error::TooLarge`), which the algorithm does when it
-  rebuilds many open formatting elements in every paragraph. Both stop work that would
-  otherwise grow with the square of the file's size.
+  the file past it (`dom::Error::TooDeep`), and also refuses one whose elements and attributes
+  together outnumber its length in bytes plus 1,024 (`dom::Error::TooLarge`): the algorithm
+  copies each open formatting element, attributes and all, into every paragraph that follows.
+  Both stop work that would otherwise grow with the square of the file's size.
 
 ## Encodings
 
 Calibre decodes a document by its byte-order mark, as UTF-8, by the encoding it declares, or
-else by uchardet's guess (`base.py` `OEBBook.decode`, `chardet.py` `xml_to_unicode`). The port
-does the first three for UTF-8, UTF-16, UTF-32, Latin-1 and ASCII, under any name Python gives
-them, and refuses the rest: a document that is not UTF-8 and declares nothing is
-`dom::Error::UndeclaredEncoding`, one that declares another encoding (`windows-1252`,
-`Shift_JIS`, …) `dom::Error::UnsupportedEncoding`, naming it. Calibre decodes a name Python does
-not know as UTF-8.
+else by uchardet's guess (`base.py` `OEBBook.decode`, `chardet.py` `xml_to_unicode`,
+`force_encoding`). The port differs in two places:
+
+- **No declaration.** The port has no detector and decodes a file that is not UTF-8 and
+  declares nothing as windows-1252 (Python's `cp1252`), uchardet's answer for most Western text.
+  Calibre can guess another encoding, or UTF-8 when uchardet has no answer.
+- **Declared encodings.** UTF-8, UTF-16, Latin-1 and ASCII are decoded as Python does, under
+  any name Python gives them. Any other name is looked up in the WHATWG tables (`encoding_rs`),
+  which can map a name to a wider encoding than Python's codec of that name (`iso-8859-9` to
+  windows-1254, `euc-kr` to windows-949, for instance) or decode a few bytes differently.
+  windows-1252 keeps Python's U+FFFD for its five undefined bytes. A name neither knows, or one
+  the WHATWG tables mark as unsafe (`iso-2022-kr`, `hz-gb-2312`), is decoded as UTF-8 with
+  replacement characters, as Calibre does with a name Python does not know.
+
+## Entities a file defines
+
+Calibre replaces the entities a document's DOCTYPE defines with their text, however much text
+that makes (`parse_html`). A short value referenced many times multiplies: a 100 KB file can
+name 100 MB. The port refuses a file whose entities would make more than 16 MB
+(`deckle_limits::MAX_ENTITY_TEXT`, `dom::Error::EntityText`).
 
 ## Calibre steps the element tree leaves out
 
 - Comments and processing instructions are dropped and the text around them joined. Calibre
-  keeps them in the tree; no path or style counts them.
+  keeps them in the tree; no path or style counts them. The one rule that reads one, the
+  lower-casing check on the root's last child, is told whether that child was a comment.
 - `HTMLPreProcessor`'s rule sets for Baen books, Book Designer and calibre's own pdftohtml
   output, and the user's search and replace, are not run.
 - A document whose root is `<ncx>` is kept as parsed; Calibre parses it again as XML

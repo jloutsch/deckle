@@ -71,6 +71,9 @@ pub const MAX_PDF_BYTES: u64 = 200 * MB;
 pub const MAX_EMBEDDED_IMAGE_BYTES: u64 = 10 * MB;
 /// A KOReader plugin archive, unpacked.
 pub const MAX_PLUGIN_BYTES: u64 = 20 * MB;
+/// EPUB to KFX: the text the entities a book file defines in its DOCTYPE expand to. A short
+/// value referenced many times multiplies: a 100 KB file can name 100 MB.
+pub const MAX_ENTITY_TEXT: u64 = 16 * MB;
 
 /// Largest reservation made from a size a file declares (rule 1 of the size-limits design):
 /// `Vec::with_capacity(declared.min(MAX_RESERVE))`.

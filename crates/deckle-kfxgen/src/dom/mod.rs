@@ -7,7 +7,7 @@
 //! not well-formed, as HTML with `html5ever`, then cleans the tree as Calibre does. The tree is
 //! lxml's model: elements only, each with the text before its first child (`text`) and the text
 //! after it (`tail`); comments and processing instructions are dropped, their neighbours' text
-//! joined. Element names are kept as Calibre keeps them (as written on the XML path, in lower
+//! joined. Names (tags, attribute names, namespaces) are stored once each in a table. Element names are kept as Calibre keeps them (as written on the XML path, in lower
 //! case on the HTML one), attributes by their qualified name (`epub:type`).
 //!
 //! Hostile input: every walk is a loop over the arena, never recursion; the tree is never
@@ -22,30 +22,32 @@ pub(crate) use parse::from_xml;
 pub use parse::parse;
 pub use write::to_xhtml;
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use deckle_limits::MAX_DEPTH;
 
 /// The XHTML namespace.
 pub(crate) const XHTML_NS: &str = "http://www.w3.org/1999/xhtml";
+/// The namespace of the `xml:` prefix.
+const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
 
 /// Why a file could not be read as a tree.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// Not UTF-8, no byte-order mark and no encoding declared. Calibre guesses the encoding
-    /// with uchardet; the port does not (DIVERGENCES.md, "Encodings").
-    #[error("this file is not UTF-8 and does not say which encoding it is in")]
-    UndeclaredEncoding,
-    /// Declares an encoding the port does not decode (DIVERGENCES.md, "Encodings").
-    #[error("this file is in the {0} encoding, which Deckle does not read")]
-    UnsupportedEncoding(String),
-    /// Read as HTML, it builds far more elements than its size accounts for (the HTML parsing
-    /// algorithm rebuilds formatting elements at every block), so the parse was stopped.
-    #[error("this file builds more than {0} elements when read as HTML")]
+    /// Read as HTML, it builds far more elements and attributes than its size accounts for
+    /// (the HTML parsing algorithm copies open formatting elements, attributes and all, into
+    /// every paragraph), so the parse was stopped.
+    #[error("this file builds more than {0} elements and attributes when read as HTML")]
     TooLarge(usize),
     /// Read as HTML (it is not XML `deckle_limits::parse_xml` reads), its elements nest more
     /// than `MAX_DEPTH` deep. Calibre falls back to libxml2's HTML parser there
     /// (DIVERGENCES.md, "XHTML that is not well-formed").
     #[error("this file is nested more than {MAX_DEPTH} levels deep")]
     TooDeep,
+    /// The entities its DOCTYPE defines expand to more than
+    /// [`deckle_limits::MAX_ENTITY_TEXT`] of text (DIVERGENCES.md, "Entities a file defines").
+    #[error("this file's own entities make {0} of text")]
+    EntityText(deckle_limits::TooLarge),
 }
 
 /// An element of a [`Dom`].
@@ -58,19 +60,24 @@ impl NodeId {
     }
 }
 
+/// An index into [`Dom`]'s table of names: tags, attribute names and namespace URIs, each
+/// stored once. [`NO_NS`] is the empty string, no namespace.
+type Name = u32;
+const NO_NS: Name = 0;
+
 #[derive(Debug, Clone)]
 struct Attr {
     /// The qualified name as written: `class`, `epub:type`, `xml:lang`.
-    name: String,
+    name: Name,
     /// The namespace URI of a prefixed name.
-    ns: Option<String>,
+    ns: Name,
     value: String,
 }
 
 #[derive(Debug, Clone)]
 struct Element {
-    tag: String,
-    ns: Option<String>,
+    tag: Name,
+    ns: Name,
     attrs: Vec<Attr>,
     text: String,
     tail: String,
@@ -85,6 +92,11 @@ struct Element {
 pub struct Dom {
     nodes: Vec<Element>,
     root: NodeId,
+    names: Vec<Box<str>>,
+    name_ids: BTreeMap<Box<str>, Name>,
+    /// The root's last child node is a comment or processing instruction, which the tree does
+    /// not keep (lxml's `root[-1]`, read by [`clean`]).
+    root_ends_in_comment: bool,
 }
 
 impl Dom {
@@ -93,18 +105,51 @@ impl Dom {
         let mut dom = Dom {
             nodes: Vec::new(),
             root: NodeId(0),
+            names: Vec::new(),
+            name_ids: BTreeMap::new(),
+            root_ends_in_comment: false,
         };
+        dom.intern("");
         dom.root = dom.alloc(tag, ns, Vec::new());
         dom
+    }
+
+    /// `s`'s index in the table of names, added if it is new.
+    fn intern(&mut self, s: &str) -> Name {
+        if let Some(&id) = self.name_ids.get(s) {
+            return id;
+        }
+        let id = Name::try_from(self.names.len()).unwrap_or(Name::MAX);
+        self.names.push(s.into());
+        self.name_ids.insert(s.into(), id);
+        id
+    }
+
+    fn name(&self, id: Name) -> &str {
+        self.names.get(id as usize).map_or("", |s| s)
+    }
+
+    fn ns_name(&self, id: Name) -> Option<&str> {
+        (id != NO_NS).then(|| self.name(id))
+    }
+
+    /// An attribute for [`Dom::alloc`].
+    fn new_attr(&mut self, name: &str, ns: Option<&str>, value: String) -> Attr {
+        Attr {
+            name: self.intern(name),
+            ns: ns.map_or(NO_NS, |n| self.intern(n)),
+            value,
+        }
     }
 
     fn alloc(&mut self, tag: &str, ns: Option<&str>, attrs: Vec<Attr>) -> NodeId {
         // The arena holds at most one element per three bytes of input, or the HTML parser's
         // budget, far below u32::MAX for any file the archive reader hands over.
         let id = NodeId(u32::try_from(self.nodes.len()).unwrap_or(u32::MAX));
+        let (tag, ns) = (self.intern(tag), ns.map_or(NO_NS, |n| self.intern(n)));
         self.nodes.push(Element {
-            tag: tag.to_owned(),
-            ns: ns.map(str::to_owned),
+            tag,
+            ns,
             attrs,
             text: String::new(),
             tail: String::new(),
@@ -130,44 +175,51 @@ impl Dom {
 
     /// The element's local name, as Calibre keeps it (see the module documentation).
     pub fn tag(&self, n: NodeId) -> &str {
-        &self.el(n).tag
+        self.name(self.el(n).tag)
     }
 
     /// The element's namespace URI; None for an element in no namespace.
-    pub(crate) fn namespace(&self, n: NodeId) -> Option<&str> {
-        self.el(n).ns.as_deref()
+    pub fn namespace(&self, n: NodeId) -> Option<&str> {
+        self.ns_name(self.el(n).ns)
+    }
+
+    fn set_namespace(&mut self, n: NodeId, ns: Option<&str>) {
+        let id = ns.map_or(NO_NS, |s| self.intern(s));
+        self.el_mut(n).ns = id;
     }
 
     /// The value of the attribute of qualified name `name`.
     pub fn attr(&self, n: NodeId, name: &str) -> Option<&str> {
+        let id = *self.name_ids.get(name)?;
         self.el(n)
             .attrs
             .iter()
-            .find(|a| a.name == name)
+            .find(|a| a.name == id)
             .map(|a| a.value.as_str())
     }
 
     /// The element's attributes in order: (qualified name, namespace URI, value).
-    pub(crate) fn attrs(&self, n: NodeId) -> impl Iterator<Item = (&str, Option<&str>, &str)> {
+    pub fn attrs(&self, n: NodeId) -> impl Iterator<Item = (&str, Option<&str>, &str)> {
         self.el(n)
             .attrs
             .iter()
-            .map(|a| (a.name.as_str(), a.ns.as_deref(), a.value.as_str()))
+            .map(|a| (self.name(a.name), self.ns_name(a.ns), a.value.as_str()))
     }
 
     /// Sets the attribute `name` (a name in no namespace, or one already on the element) to
     /// `value`, or removes it when `value` is None. A new attribute goes last.
     pub fn set_attr(&mut self, n: NodeId, name: &str, value: Option<&str>) {
+        let id = self.intern(name);
         let attrs = &mut self.el_mut(n).attrs;
-        let at = attrs.iter().position(|a| a.name == name);
+        let at = attrs.iter().position(|a| a.name == id);
         match (at, value) {
             (Some(i), Some(v)) => v.clone_into(&mut attrs[i].value),
             (Some(i), None) => {
                 attrs.remove(i);
             }
             (None, Some(v)) => attrs.push(Attr {
-                name: name.to_owned(),
-                ns: None,
+                name: id,
+                ns: NO_NS,
                 value: v.to_owned(),
             }),
             (None, None) => {}
@@ -184,6 +236,31 @@ impl Dom {
         &self.el(n).children
     }
 
+    /// The element's index among its parent's child elements; 0 for the root and for a
+    /// removed element.
+    pub fn index_in_parent(&self, n: NodeId) -> usize {
+        match self.el(n).parent {
+            Some(_) => self.el(n).pos as usize,
+            None => 0,
+        }
+    }
+
+    /// The child element of the same parent just before `n`.
+    pub fn prev_sibling(&self, n: NodeId) -> Option<NodeId> {
+        let p = self.el(n).parent?;
+        let i = (self.el(n).pos as usize).checked_sub(1)?;
+        self.el(p).children.get(i).copied()
+    }
+
+    /// The child element of the same parent just after `n`.
+    pub fn next_sibling(&self, n: NodeId) -> Option<NodeId> {
+        let p = self.el(n).parent?;
+        self.el(p)
+            .children
+            .get(self.el(n).pos as usize + 1)
+            .copied()
+    }
+
     /// lxml's `text`: the text before the first child element.
     pub fn text(&self, n: NodeId) -> &str {
         &self.el(n).text
@@ -194,42 +271,162 @@ impl Dom {
         &self.el(n).tail
     }
 
-    /// A new, empty element named `tag`, in `at`'s namespace, inserted just before `at`. `at`
-    /// should not be the root; if it is, the new element becomes the root's first child.
-    pub fn insert_before(&mut self, at: NodeId, tag: &str) -> NodeId {
-        let ns = self.el(at).ns.clone();
-        let n = self.alloc(tag, ns.as_deref(), Vec::new());
-        match self.el(at).parent {
-            Some(p) => {
-                let pos = self.el(at).pos as usize;
-                self.insert_child(p, pos, n);
-            }
-            None => self.insert_child(self.root, 0, n),
-        }
+    /// Sets lxml's `text` of `n`.
+    pub fn set_text(&mut self, n: NodeId, text: &str) {
+        text.clone_into(&mut self.el_mut(n).text);
+    }
+
+    /// Sets lxml's `tail` of `n`.
+    pub fn set_tail(&mut self, n: NodeId, tail: &str) {
+        tail.clone_into(&mut self.el_mut(n).tail);
+    }
+
+    /// A new, empty element named `tag`, in `parent`'s namespace, after its last child.
+    pub fn append_child(&mut self, parent: NodeId, tag: &str) -> NodeId {
+        let ns = self.el(parent).ns;
+        let n = self.alloc(tag, None, Vec::new());
+        self.el_mut(n).ns = ns;
+        self.attach(parent, n);
         n
     }
 
-    /// Takes `n` and everything under it out of the tree. Its tail stays where it was: it
-    /// joins the previous sibling's tail, or the parent's text (`parse_utils.py`
-    /// `parse_html`'s `remove_elem`). Removing the root does nothing.
-    pub fn remove(&mut self, n: NodeId) {
-        let Some(p) = self.el(n).parent else {
-            return;
-        };
-        let pos = self.el(n).pos as usize;
-        let tail = std::mem::take(&mut self.el_mut(n).tail);
-        match pos.checked_sub(1).map(|i| self.el(p).children[i]) {
-            Some(prev) => self.el_mut(prev).tail.push_str(&tail),
-            None => self.el_mut(p).text.push_str(&tail),
+    /// A new, empty element named `tag`, in `at`'s namespace, just before `at`
+    /// ([`Dom::insert_many_before`] for one). When `at` is the root or has been removed, the new
+    /// element is put nowhere: it is returned with no parent and the tree is unchanged.
+    pub fn insert_before(&mut self, at: NodeId, tag: &str) -> NodeId {
+        self.insert_many_before(&[(at, tag)])[0]
+    }
+
+    /// For each `(at, tag)`, a new, empty element named `tag`, in `at`'s namespace, just before
+    /// `at`; several before the same element go in the order given. Each parent's children are
+    /// rebuilt once, however many go in. Returns the new elements in the order given; one whose
+    /// `at` is the root or removed has no parent, as [`Dom::insert_before`] says.
+    pub fn insert_many_before(&mut self, items: &[(NodeId, &str)]) -> Vec<NodeId> {
+        // One: shift the siblings after it, not rebuild them all.
+        if let [(at, tag)] = items {
+            let ns = self.el(*at).ns;
+            let n = self.alloc(tag, None, Vec::new());
+            self.el_mut(n).ns = ns;
+            if let Some(p) = self.el(*at).parent {
+                let pos = self.el(*at).pos as usize;
+                self.el_mut(p).children.insert(pos, n);
+                self.el_mut(n).parent = Some(p);
+                self.renumber(p, pos);
+            }
+            return vec![n];
         }
-        self.el_mut(p).children.remove(pos);
-        self.renumber(p, pos);
-        self.el_mut(n).parent = None;
+        let mut made = Vec::with_capacity(items.len());
+        // parent → (position of `at`, order given, new element)
+        let mut by_parent: BTreeMap<NodeId, Vec<(u32, usize, NodeId)>> = BTreeMap::new();
+        for (i, &(at, tag)) in items.iter().enumerate() {
+            let ns = self.el(at).ns;
+            let n = self.alloc(tag, None, Vec::new());
+            self.el_mut(n).ns = ns;
+            made.push(n);
+            if let Some(p) = self.el(at).parent {
+                by_parent
+                    .entry(p)
+                    .or_default()
+                    .push((self.el(at).pos, i, n));
+            }
+        }
+        for (p, mut new) in by_parent {
+            new.sort_unstable();
+            let old = std::mem::take(&mut self.el_mut(p).children);
+            let mut kids = Vec::with_capacity(old.len() + new.len());
+            let mut next = new.into_iter().peekable();
+            for (i, c) in old.into_iter().enumerate() {
+                while let Some((_, _, n)) = next.next_if(|&(pos, ..)| pos as usize == i) {
+                    kids.push(n);
+                }
+                kids.push(c);
+            }
+            for (i, &c) in kids.iter().enumerate() {
+                let e = self.el_mut(c);
+                e.parent = Some(p);
+                e.pos = u32::try_from(i).unwrap_or(u32::MAX);
+            }
+            self.el_mut(p).children = kids;
+        }
+        made
+    }
+
+    /// Takes `n` and everything under it out of the tree ([`Dom::remove_many`] for one).
+    pub fn remove(&mut self, n: NodeId) {
+        self.remove_many(&[n]);
+    }
+
+    /// Takes each of `nodes` and everything under it out of the tree. A removed element's tail
+    /// stays where it was: it joins the tail of the nearest earlier sibling not removed, or the
+    /// parent's text (`parse_utils.py` `parse_html`'s `remove_elem`, applied in document order).
+    /// The root, an element already removed and a repeat are passed over. Each parent's
+    /// children are compacted once, however many go.
+    pub fn remove_many(&mut self, nodes: &[NodeId]) {
+        // One: shift the siblings after it, not rebuild them all.
+        if let [n] = nodes {
+            let n = *n;
+            let Some(p) = self.el(n).parent else {
+                return;
+            };
+            let pos = self.el(n).pos as usize;
+            let tail = std::mem::take(&mut self.el_mut(n).tail);
+            match pos.checked_sub(1).map(|i| self.el(p).children[i]) {
+                Some(prev) => self.el_mut(prev).tail.push_str(&tail),
+                None => self.el_mut(p).text.push_str(&tail),
+            }
+            self.el_mut(p).children.remove(pos);
+            self.renumber(p, pos);
+            self.el_mut(n).parent = None;
+            return;
+        }
+        // (parent, position, element), in document order within each parent.
+        let mut gone: Vec<(NodeId, u32, NodeId)> = nodes
+            .iter()
+            .filter_map(|&n| Some((self.el(n).parent?, self.el(n).pos, n)))
+            .collect();
+        gone.sort_unstable();
+        gone.dedup();
+        let removed: BTreeSet<NodeId> = gone.iter().map(|g| g.2).collect();
+        // For a removed element: the nearest earlier sibling not removed.
+        let mut prev_kept: BTreeMap<NodeId, Option<NodeId>> = BTreeMap::new();
+        for &(p, pos, n) in &gone {
+            let prev = (pos as usize).checked_sub(1).and_then(|i| {
+                let s = self.el(p).children[i];
+                if removed.contains(&s) {
+                    prev_kept.get(&s).copied().flatten()
+                } else {
+                    Some(s)
+                }
+            });
+            prev_kept.insert(n, prev);
+            let tail = std::mem::take(&mut self.el_mut(n).tail);
+            match prev {
+                Some(s) => self.el_mut(s).tail.push_str(&tail),
+                None => self.el_mut(p).text.push_str(&tail),
+            }
+        }
+        let mut last = None;
+        for &(p, ..) in &gone {
+            if last == Some(p) {
+                continue;
+            }
+            last = Some(p);
+            let mut kids = std::mem::take(&mut self.el_mut(p).children);
+            kids.retain(|c| !removed.contains(c));
+            for (i, &c) in kids.iter().enumerate() {
+                self.el_mut(c).pos = u32::try_from(i).unwrap_or(u32::MAX);
+            }
+            self.el_mut(p).children = kids;
+        }
+        for n in removed {
+            self.el_mut(n).parent = None;
+        }
     }
 
     /// Renames `n` to `tag`, in the same namespace.
     pub fn rename(&mut self, n: NodeId, tag: &str) {
-        tag.clone_into(&mut self.el_mut(n).tag);
+        let id = self.intern(tag);
+        self.el_mut(n).tag = id;
     }
 
     /// The element's path from the root: its index among its parent's child elements, for
@@ -257,7 +454,7 @@ impl Dom {
     }
 
     /// Appends `child`, which has no parent, as the last child of `parent`.
-    fn append_child(&mut self, parent: NodeId, child: NodeId) {
+    fn attach(&mut self, parent: NodeId, child: NodeId) {
         let pos = self.el(parent).children.len();
         self.el_mut(parent).children.push(child);
         let c = self.el_mut(child);
@@ -265,12 +462,11 @@ impl Dom {
         c.pos = u32::try_from(pos).unwrap_or(u32::MAX);
     }
 
-    /// Inserts `child`, which has no parent, at `pos` among `parent`'s children.
-    fn insert_child(&mut self, parent: NodeId, pos: usize, child: NodeId) {
-        let pos = pos.min(self.el(parent).children.len());
-        self.el_mut(parent).children.insert(pos, child);
+    /// Makes `child`, which has no parent, `parent`'s first child.
+    fn attach_first(&mut self, parent: NodeId, child: NodeId) {
+        self.el_mut(parent).children.insert(0, child);
         self.el_mut(child).parent = Some(parent);
-        self.renumber(parent, pos);
+        self.renumber(parent, 0);
     }
 
     /// Sets `pos` for `parent`'s children from index `from` on.
@@ -290,6 +486,13 @@ impl Dom {
         kids
     }
 
+    /// Detaches `n` with its tail, as lxml's `remove` does (Calibre's own removals, not
+    /// `remove_elem`).
+    fn detach_with_tail(&mut self, n: NodeId) {
+        self.el_mut(n).tail.clear();
+        self.remove(n);
+    }
+
     /// Appends `s` where text after `parent`'s last child goes: that child's tail, or
     /// `parent`'s text when it has no child.
     fn append_text(&mut self, parent: NodeId, s: &str) {
@@ -300,7 +503,6 @@ impl Dom {
     }
 
     fn is_xhtml(&self, n: NodeId, tag: &str) -> bool {
-        let e = self.el(n);
-        e.tag == tag && e.ns.as_deref() == Some(XHTML_NS)
+        self.tag(n) == tag && self.namespace(n) == Some(XHTML_NS)
     }
 }

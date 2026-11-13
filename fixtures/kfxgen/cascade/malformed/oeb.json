@@ -1,0 +1,96 @@
+{
+ "spine": [
+  {
+   "href": "OEBPS/unclosed.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/entities.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/html4.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/cp1252.xhtml",
+   "linear": true
+  }
+ ],
+ "page_progression_direction": null,
+ "manifest": [
+  {
+   "id": "cp1252",
+   "href": "OEBPS/cp1252.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "entities",
+   "href": "OEBPS/entities.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "html4",
+   "href": "OEBPS/html4.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "unclosed",
+   "href": "OEBPS/unclosed.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "page_css",
+   "href": "page_styles.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "css",
+   "href": "stylesheet.css",
+   "media_type": "text/css"
+  }
+ ],
+ "toc": [
+  {
+   "title": "unclosed",
+   "href": "OEBPS/unclosed.xhtml",
+   "children": []
+  },
+  {
+   "title": "entities",
+   "href": "OEBPS/entities.xhtml",
+   "children": []
+  },
+  {
+   "title": "html4",
+   "href": "OEBPS/html4.xhtml",
+   "children": []
+  },
+  {
+   "title": "cp1252",
+   "href": "OEBPS/cp1252.xhtml",
+   "children": []
+  }
+ ],
+ "auto_generated_toc": false,
+ "guide": [],
+ "metadata": {
+  "title": [
+   "Malformed"
+  ],
+  "creator": [
+   "Fixture Author"
+  ],
+  "description": [],
+  "language": [
+   "eng"
+  ],
+  "publisher": [],
+  "date": [],
+  "cover": []
+ },
+ "raw": {
+  "opfname": "OEBPS/content.opf",
+  "sha256": "aec913ae9c65679e8236209a036ac7b8eefbf46f32e2423c5727bfce14052628"
+ }
+}

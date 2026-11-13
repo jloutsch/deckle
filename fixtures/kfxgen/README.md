@@ -96,7 +96,7 @@ hrefs, unreadable JPEGs). The books are `ARG_BOOKS` in that script, their other 
 | `split_title` | a title spelled over two paragraphs, and over two with a rule between (#64): kfxgen's heading takes the first block's style (#490) but not its small caps, transform, spacing and colour (#239); a title in one block, which gives them |
 
 **Calibre path** (`ebook-convert` with kfxgen, CSS applied): the source is
-`sources/<name>.epub`, every one but `css_quirks`, `package_quirks`, `no_toc` and `fake_margins`,
+`sources/<name>.epub`, every one but `css_quirks`, `package_quirks`, `no_toc`, `fake_margins` and `malformed`,
 which are `cascade/` sources only. For each, the script also checks that replaying the model gives exactly
 the KFX `ebook-convert` wrote. The script builds from the committed sources. kfxgen's
 `test_books` is untracked in places, so no commit pins it: `kfxgen_models.sh --refresh-sources`
@@ -220,6 +220,7 @@ The manifest is Calibre's after its transforms: the book's stylesheets are gone,
 | `package_quirks` | 4 | 33 KB | made by `tools/ref/make_cascade_epubs.py`: an HTML cover page, a `linear="no"` file, a duplicate spine entry, a linked file the spine leaves out, a year-only date, `en-US`, an NCX entry with no label |
 | `no_toc` | 2 | 17 KB | the same script: no NCX and no nav, so Calibre makes the contents |
 | `fake_margins` | 2 | 20 KB | the same script: a margin `RemoveFakeMargins` removes, and one it keeps |
+| `malformed` | 4 | 29 KB | the same script: files Calibre does not read as plain XHTML: tags left open and an unquoted attribute (its HTML parser), DOCTYPE entities, HTML 4 in upper case, windows-1252 |
 | `lists` | 2 | 28 KB | lists |
 | `notes` | 6 | 62 KB | pop-up notes (`noteref`), notes lists |
 | `vertical` | 3 | 51 KB | vertical-rl Japanese, rtl spine, ruby |
@@ -229,7 +230,7 @@ The manifest is Calibre's after its transforms: the book's stylesheets are gone,
 | `frames` | 6 | 78 KB | figures, pictures, floats |
 | `navigation` | 4 | 37 KB | an NCX naming places inside chapters |
 
-718 KB in all, with `ua_rules.json` (19 KB).
+747 KB in all, with `ua_rules.json` (19 KB).
 
 ## Phase 1 timings
 

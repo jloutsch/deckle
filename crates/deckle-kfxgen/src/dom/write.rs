@@ -5,9 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{Dom, NodeId};
-
-const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
+use super::{Dom, NodeId, XML_NS};
 
 /// `dom` as XHTML text.
 pub fn to_xhtml(dom: &Dom) -> String {

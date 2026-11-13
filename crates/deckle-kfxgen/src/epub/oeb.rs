@@ -11,14 +11,14 @@ use std::sync::LazyLock;
 
 use deckle_kfx::epub_zip::{EpubReader, InspectError};
 use deckle_limits::MAX_DEPTH;
-use deckle_limits::roxmltree::{Document, Node};
+use deckle_limits::roxmltree::Document;
 use regex::Regex;
 
 use super::package::{
     self, NCX_MIME, Opf, OpfItem, OpfItemref, OpfRef, abshref, dirname, is_linear, normpath,
-    posix_join, read_text, splitext, string_value, unquote, urldefrag, urlnormalize, urlquote,
+    posix_join, read_text, splitext, unquote, urldefrag, urlnormalize, urlquote,
 };
-use super::toc::{self, NavPoint, is_html};
+use super::toc::{self, NavPoint};
 use super::{Error, GuideRef, Item, Metadata, Oeb, Package, SpineRef, TocNode};
 use crate::dom::{self, Dom, NodeId, XHTML_NS};
 
@@ -316,45 +316,48 @@ fn read_xml<R>(text: &str, f: impl FnOnce(&Document) -> R) -> Option<R> {
 }
 
 /// `reader.py` `_toc_from_html`: the links under the fragment of the guide's `toc` document
-/// `doc` at `base`, one entry per target, their texts joined.
-fn html_toc(
-    doc: &Document,
-    base: &str,
-    frag: &str,
-    hrefs: &BTreeMap<String, usize>,
-) -> Vec<TocNode> {
-    let root = doc.root_element();
-    let is_link = |a: &Node| is_html(a, "a") && a.attribute("href").is_some();
+/// `dom` at `base`, one entry per target, their texts joined.
+fn html_toc(dom: &Dom, base: &str, frag: &str, hrefs: &BTreeMap<String, usize>) -> Vec<TocNode> {
+    let root = dom.root();
+    let is_link = |a: NodeId| dom_is_html(dom, a, "a") && dom.attr(a, "href").is_some();
     let mut elem = root;
     if !frag.is_empty() {
         let by = |attr: &str| {
-            root.descendants()
+            dom.descendants()
                 .skip(1)
-                .find(|e| e.is_element() && e.attribute(attr) == Some(frag))
+                .find(|&e| dom.attr(e, attr) == Some(frag))
         };
         elem = by("id").or_else(|| by("name")).unwrap_or(root);
         // Up to the first element with a link inside: the ancestors of every link, each
         // marked once.
-        let mut has_link: BTreeSet<usize> = BTreeSet::new();
-        for a in root.descendants().filter(is_link) {
-            for p in a.ancestors().skip(1) {
-                if !has_link.insert(p.id().get_usize()) {
+        let mut has_link: BTreeSet<NodeId> = BTreeSet::new();
+        for a in dom.descendants().filter(|&a| is_link(a)) {
+            let mut p = dom.parent(a);
+            while let Some(q) = p {
+                if !has_link.insert(q) {
                     break;
                 }
+                p = dom.parent(q);
             }
         }
-        while elem != root && !has_link.contains(&elem.id().get_usize()) {
-            elem = elem.parent_element().unwrap_or(root);
+        while elem != root && !has_link.contains(&elem) {
+            elem = dom.parent(elem).unwrap_or(root);
         }
     }
     let mut order: Vec<String> = Vec::new();
     let mut titles: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for a in elem.descendants().skip(1).filter(is_link) {
-        let href = abshref(base, &urlnormalize(a.attribute("href").unwrap_or("")));
+    // The elements under `elem`, in document order.
+    let mut stack: Vec<NodeId> = dom.children(elem).iter().rev().copied().collect();
+    while let Some(a) = stack.pop() {
+        stack.extend(dom.children(a).iter().rev());
+        if !is_link(a) {
+            continue;
+        }
+        let href = abshref(base, &urlnormalize(dom.attr(a, "href").unwrap_or("")));
         if !hrefs.contains_key(urldefrag(&href).0) {
             continue;
         }
-        let title = collapse(&string_value(&a));
+        let title = collapse(&dom_string_value(dom, a));
         if !titles.contains_key(&href) {
             order.push(href.clone());
         }
@@ -406,7 +409,7 @@ impl Book<'_> {
     /// The links of the document at `href`, read the first time it is asked for: as a
     /// document (`html`, `base.py` `_parse_xhtml`: `dom::parse`, which reads HTML that is not
     /// XML), or as XML (`_parse_xml`). None when it cannot be read: `dom::parse` refuses it
-    /// (an encoding it does not decode, too deep, too large as HTML), or XML that
+    /// (too deep or too large as HTML, entities past their limit), or XML that
     /// `deckle_limits::parse_xml` refuses or is not well-formed or UTF-8.
     fn doc(&mut self, href: &str, html: bool) -> Result<Option<DocInfo>, Error> {
         let name = unquote(href);
@@ -1300,15 +1303,14 @@ impl State {
             return Ok(false);
         };
         let base = self.item(i).href.clone();
-        let Some(text) = book.read(&unquote(&base))? else {
+        // `item.data`: `parse_html` for a document (`base.py` `_parse_xhtml`).
+        let Some(dom) = book
+            .read_bytes(&unquote(&base))?
+            .and_then(|b| dom::parse(&b).ok())
+        else {
             return Ok(false);
         };
-        let hrefs = &self.hrefs;
-        let read = |doc: &Document| html_toc(doc, &base, &frag, hrefs);
-        let Some(toc) = read_xml(&text, read) else {
-            return Ok(false);
-        };
-        self.toc = toc;
+        self.toc = html_toc(&dom, &base, &frag, &self.hrefs);
         Ok(true)
     }
 
