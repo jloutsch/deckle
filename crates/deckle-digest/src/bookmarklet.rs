@@ -85,6 +85,14 @@ fn token_with(
 ) -> std::io::Result<String> {
     let path = dir.join("bookmarklet.token");
     let read = || {
+        // Another process may have made the file and not written it yet (the create-new step
+        // below): an empty file is read again for up to 200 ms before it counts as damaged.
+        for _ in 0..10 {
+            match std::fs::metadata(&path) {
+                Ok(m) if m.len() == 0 => std::thread::sleep(std::time::Duration::from_millis(20)),
+                _ => break,
+            }
+        }
         deckle_core::state_file::read_with(&path, |text| {
             let t = text.trim();
             if t.len() == 32 && t.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -147,6 +155,18 @@ fn make_private(path: &Path) {
 /// `bytes` to `path`, 0600, synced; with `new`, only when `path` doesn't exist yet.
 fn write_private(path: &Path, bytes: &[u8], new: bool) -> std::io::Result<()> {
     use std::io::Write;
+    write_private_with(path, new, |f| {
+        f.write_all(bytes)?;
+        f.sync_all()
+    })
+}
+
+/// [`write_private`] with the write passed in, so a test can make it fail.
+fn write_private_with(
+    path: &Path,
+    new: bool,
+    write: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> std::io::Result<()> {
     let mut open = std::fs::OpenOptions::new();
     open.write(true);
     if new {
@@ -157,8 +177,13 @@ fn write_private(path: &Path, bytes: &[u8], new: bool) -> std::io::Result<()> {
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut open, 0o600);
     let mut f = open.open(path)?;
-    f.write_all(bytes)?;
-    f.sync_all()
+    let written = write(&mut f);
+    // A file this call made and couldn't fill is removed, so no empty token is left behind.
+    if new && written.is_err() {
+        drop(f);
+        let _ = std::fs::remove_file(path);
+    }
+    written
 }
 
 /// The popup script; `kind` is an extra query parameter (with its leading `&`), or empty.
@@ -793,6 +818,54 @@ mod tests {
             .map(|e| e.file_name())
             .collect();
         assert_eq!(left, ["bookmarklet.token"], "no temp file left");
+    }
+
+    /// A new file whose write fails is removed: an empty token file would block every start
+    /// until someone deleted it.
+    #[test]
+    fn a_new_token_file_whose_write_fails_is_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarklet.token");
+        let e = write_private_with(&path, true, |_| Err(std::io::Error::other("disk full")));
+        assert!(e.is_err());
+        assert!(!path.exists());
+    }
+
+    /// Another process has made the file but not written it yet: the read waits a little
+    /// instead of calling it damaged.
+    #[test]
+    fn a_token_still_being_written_is_waited_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarklet.token");
+        std::fs::write(&path, b"").unwrap();
+        let writer = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(60));
+                std::fs::write(&path, "0123456789abcdef0123456789abcdef").unwrap();
+            })
+        };
+        assert_eq!(
+            token(dir.path()).unwrap(),
+            "0123456789abcdef0123456789abcdef"
+        );
+        writer.join().unwrap();
+        let copies = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().contains(".damaged-"))
+            .count();
+        assert_eq!(copies, 0);
+    }
+
+    /// An empty file that stays empty is still damaged, and kept.
+    #[test]
+    fn an_empty_token_that_stays_empty_is_damaged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarklet.token");
+        std::fs::write(&path, b"").unwrap();
+        assert!(token(dir.path()).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"");
     }
 
     /// Threads of one process starting together end with one token and no error.
