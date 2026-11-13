@@ -143,10 +143,10 @@ pub async fn update(
         })
         .await;
         if !matches!(saved, Ok(Ok(()))) {
-            if let Ok(Err(e)) = saved {
-                if deckle_core::state_file::say_once(&e) {
-                    eprintln!("koreader sync: {e}");
-                }
+            if let Ok(Err(e)) = saved
+                && deckle_core::state_file::say_once(&e)
+            {
+                eprintln!("koreader sync: {e}");
             }
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
