@@ -55,7 +55,7 @@ pub enum Error {
 pub struct NodeId(u32);
 
 impl NodeId {
-    fn index(self) -> usize {
+    pub(crate) fn index(self) -> usize {
         self.0 as usize
     }
 }

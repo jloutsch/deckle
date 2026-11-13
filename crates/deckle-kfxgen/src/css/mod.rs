@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! A book's stylesheets as the rules Calibre 9.18's Stylizer holds (phase 2 plan, Tasks 5 and
-//! 6).
+//! A book's stylesheets as the rules Calibre 9.18's Stylizer holds (phase 2 plan, Tasks 5 to
+//! 7).
 //!
 //! Calibre parses CSS with css_parser 1.1.1 and keeps what it reads in that library's form:
 //! property names in lower case, values written back by its serializer (`.5em` as `0.5em`,
@@ -12,7 +12,9 @@
 //! `abshref`), `ebooks/conversion/preprocess.py` (`CSSPreProcessor`),
 //! `ebooks/oeb/normalize_css.py`, `tinycss/media3.py` and `tinycss/fonts3.py`;
 //! css_parser's own behaviour, which is not in Calibre's source, was read from Calibre 9.18 and
-//! is described where it is ported. Where the port differs on purpose, `DIVERGENCES.md` says so.
+//! is described where it is ported. [`parse_selector`] and [`select`] match a rule's selector as
+//! Calibre's own engine, `css_selectors`, does (Task 7). Where the port differs on purpose,
+//! `DIVERGENCES.md` says so.
 //!
 //! Hostile input: every count the input controls is bounded by
 //! [`deckle_limits::MAX_STYLE_RULES`], [`deckle_limits::MAX_STYLE_DECLS`] or a nesting limit,
@@ -27,6 +29,7 @@ mod defaults;
 mod font_shorthand;
 mod media;
 mod normalize;
+mod select;
 mod selector;
 mod sheet;
 mod value;
@@ -34,6 +37,7 @@ mod value;
 pub use defaults::{DEFAULTS, INHERITED};
 pub use media::media_ok;
 pub use normalize::{DEFAULT_PROFILE, Profile, normalize};
+pub use select::{Parsed, Selector, matches, parse_selector, select};
 pub use sheet::parse_sheet;
 pub use value::{parse_style_attr, serialize_value};
 

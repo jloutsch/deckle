@@ -426,3 +426,48 @@ the declaration and the rest of the stylesheet are lost, so Calibre keeps the ru
 and the rule holding it, empty. The port reads
 the address as `a)b.png`, written `url("a\)b.png")`, and keeps the rules after it
 (`an_escaped_parenthesis_in_a_url_keeps_the_sheet`).
+
+## Selectors that stop Calibre's conversion
+
+Calibre's selector engine (`css_selectors`) raises an exception the Stylizer does not catch for a
+few selectors, and the conversion stops: a function named after one of its own dispatch
+functions that takes other arguments (`p:root()`, `p:empty()`, `:class(a)`), an attribute
+selector with `!=` (`[a!=b]`) or no name (`[*|=b]`), more than about 400 parts in one compound
+or 300 compounds (Python's recursion limit), a `:nth-*()` number past 10^308. The port drops
+the rule (`Parsed::Dropped`) and goes on. It also drops a selector of more than 256 parts in all
+(type, id, class, attribute and pseudo-class selectors and pseudo-elements, those inside
+`:is()`, `:not()`, `:has()` and `of` included; `css/select.rs` `MAX_PARTS`), which bounds the
+tests matching makes per element; Calibre applies one of 257 to about 300 parts.
+
+## Unknown pseudo-classes Calibre never reaches
+
+Calibre evaluates a selector lazily: a class, id, `:is()` or `:has()` that no element passes
+ends the evaluation of the parts written before it in its compound, and a `:nth-*()` argument is
+read only when an element reaches it. An unknown pseudo-class or an unreadable argument raises
+only when evaluation reaches it, so whether the rule is skipped depends on the document:
+`:foo.zz` raises nothing where no element has class `zz`, and `:not(:foo.zz)` then matches
+every element. The port checks every
+part of a selector before matching and drops the rule whenever one would raise
+(`probed_selectors_agree_with_calibre` lists the probed cases). Parts before a `:root` or
+`:scope` in their compound are never evaluated by Calibre, and the port does not check them
+either.
+
+## The pseudo-class a rule is stored under
+
+`stylizer.py` finds the pseudo-class a rule's declarations are stored under with a regular
+expression whose alternatives come from a Python frozenset, in an order that changes from one
+run to the next (string hashing is randomised). For `:focus-within`, `:focus-visible` and
+`:target-within`, Calibre stores the rule under the full name or under `focus` or `target`,
+depending on the run; the port always reports the full name. The port also reports the name in
+lower case and folds case in ASCII only, where Calibre keeps the text's spelling and folds
+case as Python's `re.I` does (`ſ` for `s`); css_parser writes pseudo-class names in lower case,
+so only an attribute value or an escaped name in the selector can differ.
+
+## Numbers in :nth-child() and the like
+
+Calibre reads the `an+b` of `:nth-*()` with Python's `int()` and tests a position with true
+division. The port holds a number as an i128 that stops at ±2^125, refuses non-ASCII decimal
+digits (Python reads `٣` as 3), and divides as f64, which is Python's result when both numbers
+are below 2^53 and can round differently past it. Calibre's `int()` refuses more than 4300
+digits, as the port does. A unicode escape naming a surrogate code point is read as U+FFFD,
+where Python keeps the surrogate.

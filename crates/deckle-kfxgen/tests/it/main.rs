@@ -3,6 +3,7 @@
 
 mod corpus;
 mod css_normalize;
+mod css_select;
 mod css_sheet;
 mod dom;
 mod epub;

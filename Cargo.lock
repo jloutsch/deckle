@@ -1571,6 +1571,7 @@ dependencies = [
  "deckle-limits",
  "encoding_rs",
  "html5ever",
+ "precomputed-hash",
  "regex",
  "roxmltree",
  "selectors",
