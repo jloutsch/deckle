@@ -9,14 +9,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
-use deckle_kfx::epub_zip::{EpubReader, InspectError};
+use deckle_kfx::epub_zip::EpubReader;
+use deckle_limits::MAX_DEPTH;
 use deckle_limits::roxmltree::{Document, Node};
-use deckle_limits::{MAX_DEPTH, XmlError};
 use regex::Regex;
 
 use super::package::{
     self, NCX_MIME, Opf, OpfItem, OpfItemref, OpfRef, abshref, dirname, is_linear, normpath,
-    posix_join, splitext, string_value, unquote, urldefrag, urlnormalize, urlquote,
+    posix_join, read_text, splitext, string_value, unquote, urldefrag, urlnormalize, urlquote,
 };
 use super::toc::{self, NavPoint, is_html};
 use super::{Error, GuideRef, Item, Metadata, Oeb, Package, SpineRef, TocNode};
@@ -270,26 +270,21 @@ fn sheet_refs(text: &str) -> (Vec<String>, Vec<String>) {
         .captures_iter(&text)
         .filter_map(|c| c.get(1).or(c.get(2)).map(|m| m.as_str().trim().to_owned()))
         .collect();
+    let imported: BTreeSet<&str> = imports.iter().map(String::as_str).collect();
     let urls = CSS_URL
         .captures_iter(&text)
         .map(|c| c[1].trim().trim_matches(['"', '\'']).trim().to_owned())
-        .filter(|u| !u.is_empty() && !imports.contains(u))
+        .filter(|u| !u.is_empty() && !imported.contains(u.as_str()))
         .collect();
     (imports, urls)
 }
 
-/// `f` of `text` parsed ([`package::parse_with`]), or None when it is not well-formed:
-/// Calibre would read it with its HTML parser, which this module has not got yet (phase 2
-/// Task 4). A file refused for its depth or entities is an error.
-fn read_xml<R>(text: &str, file: &str, f: impl FnOnce(&Document) -> R) -> Result<Option<R>, Error> {
-    match package::parse_with(text, f) {
-        Ok(r) => Ok(Some(r)),
-        Err(source @ (XmlError::TooDeep | XmlError::EntityMarkup)) => Err(Error::Xml {
-            file: file.to_owned(),
-            source,
-        }),
-        Err(_) => Ok(None),
-    }
+/// `f` of `text` parsed ([`package::parse_with`]), or None when `deckle_limits::parse_xml`
+/// refuses it (too deep, an entity with markup) or it is not well-formed: the file is then read
+/// as having no links. Calibre would read such a document with its HTML parser, which this
+/// module has not got yet (phase 2 Task 4).
+fn read_xml<R>(text: &str, f: impl FnOnce(&Document) -> R) -> Option<R> {
+    package::parse_with(text, f).ok()
 }
 
 /// `reader.py` `_toc_from_html`: the links under the fragment of the guide's `toc` document
@@ -301,11 +296,7 @@ fn html_toc(
     hrefs: &BTreeMap<String, usize>,
 ) -> Vec<TocNode> {
     let root = doc.root_element();
-    let has_link = |n: &Node| {
-        n.descendants()
-            .skip(1)
-            .any(|a| is_html(&a, "a") && a.attribute("href").is_some())
-    };
+    let is_link = |a: &Node| is_html(a, "a") && a.attribute("href").is_some();
     let mut elem = root;
     if !frag.is_empty() {
         let by = |attr: &str| {
@@ -314,17 +305,23 @@ fn html_toc(
                 .find(|e| e.is_element() && e.attribute(attr) == Some(frag))
         };
         elem = by("id").or_else(|| by("name")).unwrap_or(root);
-        while elem != root && !has_link(&elem) {
+        // Up to the first element with a link inside: the ancestors of every link, each
+        // marked once.
+        let mut has_link: BTreeSet<usize> = BTreeSet::new();
+        for a in root.descendants().filter(is_link) {
+            for p in a.ancestors().skip(1) {
+                if !has_link.insert(p.id().get_usize()) {
+                    break;
+                }
+            }
+        }
+        while elem != root && !has_link.contains(&elem.id().get_usize()) {
             elem = elem.parent_element().unwrap_or(root);
         }
     }
     let mut order: Vec<String> = Vec::new();
     let mut titles: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for a in elem
-        .descendants()
-        .skip(1)
-        .filter(|a| is_html(a, "a") && a.attribute("href").is_some())
-    {
+    for a in elem.descendants().skip(1).filter(is_link) {
         let href = abshref(base, &urlnormalize(a.attribute("href").unwrap_or("")));
         if !hrefs.contains_key(urldefrag(&href).0) {
             continue;
@@ -358,39 +355,23 @@ impl Book<'_> {
         self.names.contains(&unquote(href))
     }
 
-    /// The text of the file `name`, or None if it is missing or not UTF-8 (phase 2 Task 4
-    /// decodes other encodings).
+    /// The text of the file `name`, or None if it is missing or not UTF-8.
     fn read(&mut self, name: &str) -> Result<Option<String>, Error> {
         if !self.names.contains(name) {
             return Ok(None);
         }
-        match self.zip.read_string(name) {
-            Ok(t) => Ok(Some(t)),
-            Err(InspectError::MissingFile(_)) => Ok(None),
-            Err(InspectError::Io(e)) if e.kind() == std::io::ErrorKind::InvalidData => Ok(None),
-            Err(e) => Err(e.into()),
-        }
+        read_text(self.zip, name)
     }
 
+    /// The links of the document at `href`; None when it cannot be read as XML.
     fn doc(&mut self, href: &str) -> Result<Option<DocInfo>, Error> {
         let name = unquote(href);
         if let Some(d) = self.docs.get(&name) {
             return Ok(d.clone());
         }
-        let info = match self.read(&name)? {
-            Some(text) => read_xml(&text, &name, doc_info)?,
-            None => None,
-        };
+        let info = self.read(&name)?.and_then(|text| read_xml(&text, doc_info));
         self.docs.insert(name, info.clone());
         Ok(info)
-    }
-
-    fn size(&mut self, href: &str) -> u64 {
-        self.zip
-            .zip
-            .by_name(&unquote(href))
-            .map(|f| f.size())
-            .unwrap_or(0)
     }
 }
 
@@ -414,10 +395,55 @@ struct NavToc {
     nav_href: String,
 }
 
+/// The OPF's guide as `epub_input.py` edits it: its references in order, each findable by its
+/// type in lower case, the way `set_guide_type` compares them.
+#[derive(Default)]
+struct OpfGuide {
+    refs: Vec<Option<OpfRef>>,
+    /// Positions in `refs` of the live references, by lower-case type.
+    by_type: BTreeMap<String, Vec<usize>>,
+}
+
+impl OpfGuide {
+    fn new(refs: impl IntoIterator<Item = OpfRef>) -> OpfGuide {
+        let mut g = OpfGuide::default();
+        for r in refs {
+            g.push(r);
+        }
+        g
+    }
+
+    fn push(&mut self, r: OpfRef) {
+        let kind = r.kind.as_deref().unwrap_or("").to_lowercase();
+        self.by_type.entry(kind).or_default().push(self.refs.len());
+        self.refs.push(Some(r));
+    }
+
+    /// Removes every reference whose type in lower case is `kind`.
+    fn remove_type(&mut self, kind: &str) {
+        for i in self.by_type.remove(kind).unwrap_or_default() {
+            self.refs[i] = None;
+        }
+    }
+
+    /// The position of the first reference whose type in lower case is `kind`.
+    fn first(&self, kind: &str) -> Option<usize> {
+        self.by_type.get(kind).and_then(|v| v.first().copied())
+    }
+
+    fn get_mut(&mut self, i: usize) -> Option<&mut OpfRef> {
+        self.refs.get_mut(i).and_then(Option::as_mut)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &OpfRef> {
+        self.refs.iter().flatten()
+    }
+}
+
 struct Input {
     manifest: Vec<OpfItem>,
     spine: Vec<OpfItemref>,
-    guide: Vec<OpfRef>,
+    guide: OpfGuide,
     toc: TocAttr,
 }
 
@@ -456,14 +482,14 @@ impl Input {
         for i in &mut manifest {
             i.href = fix(&i.href);
         }
-        let mut guide = opf.guide.clone();
-        for g in &mut guide {
-            g.href = fix(&g.href);
-        }
+        let guide = opf.guide.iter().map(|g| OpfRef {
+            href: fix(&g.href),
+            ..g.clone()
+        });
         Input {
             manifest,
             spine: opf.spine.clone(),
-            guide,
+            guide: OpfGuide::new(guide),
             toc: match &opf.spine_toc {
                 Some(id) => TocAttr::Id(id.clone()),
                 None => TocAttr::None,
@@ -513,20 +539,19 @@ impl Input {
         }
     }
 
-    /// The first guide reference of type cover: its index and its href without fragment.
+    /// The first guide reference of type cover: its position and its href without fragment.
     fn guide_cover(&self) -> Option<(usize, String)> {
-        let i = self
-            .guide
-            .iter()
-            .position(|g| g.kind.as_deref().unwrap_or("").to_lowercase() == "cover")?;
-        let href = self.guide[i].href.as_deref().unwrap_or("");
+        let i = self.guide.first("cover")?;
+        let href = self.guide.refs[i]
+            .as_ref()
+            .and_then(|g| g.href.as_deref())
+            .unwrap_or("");
         Some((i, urldefrag(href).0.to_owned()))
     }
 
     /// `epub_input.py` `set_guide_type`.
     fn set_guide_type(&mut self, kind: &str, href: Option<String>, title: &str) {
-        self.guide
-            .retain(|g| g.kind.as_deref().unwrap_or("").to_lowercase() != kind);
+        self.guide.remove_type(kind);
         if let Some(href) = href {
             self.guide.push(OpfRef {
                 kind: Some(kind.to_owned()),
@@ -563,24 +588,26 @@ impl Input {
             return None;
         }
         if self.spine.len() == 1 {
-            self.guide
-                .retain(|g| g.kind.as_deref().unwrap_or("").to_lowercase() != "cover");
+            self.guide.remove_type("cover");
             return None;
         }
         self.spine.remove(0);
-        match self.raster_cover(opf) {
-            Some(rc) => self.guide[gi].href = Some(rc),
+        let href = match self.raster_cover(opf) {
+            Some(rc) => rc,
             None => {
                 // Calibre renders the page to this file; the port cannot (DIVERGENCES.md,
                 // "An HTML cover with no cover image"), so the reader finds no such file.
-                self.guide[gi].href = Some("calibre_raster_cover.jpg".to_owned());
                 self.manifest.push(OpfItem {
                     id: Some("calibre_raster_cover".to_owned()),
                     href: Some("calibre_raster_cover.jpg".to_owned()),
                     media_type: Some("image/jpeg".to_owned()),
                     properties: String::new(),
                 });
+                "calibre_raster_cover.jpg".to_owned()
             }
+        };
+        if let Some(g) = self.guide.get_mut(gi) {
+            g.href = Some(href);
         }
         self.set_guide_type("titlepage", Some(guide_cover.clone()), "Cover page");
         Some(guide_cover)
@@ -640,7 +667,7 @@ impl Input {
     }
 
     /// `opf2.py` `OPF.epub3_nav`: the root-relative path of the EPUB 3 nav.
-    fn epub3_nav(&self, opf: &Opf, book: &Book) -> Option<String> {
+    fn epub3_nav(&self, opf: &Opf, names: &BTreeSet<String>) -> Option<String> {
         if opf.version < 3.0 {
             return None;
         }
@@ -657,73 +684,82 @@ impl Input {
                         .to_lowercase()
                         .contains("html")
                     && i.id.as_deref().is_some_and(|s| !s.is_empty())
-                    && i.href.as_deref().is_some_and(|h| book.names.contains(h))
+                    && i.href.as_deref().is_some_and(|h| names.contains(h))
             })
             .and_then(|i| i.href.clone())
     }
 
-    /// `epub_input.py` `convert_epub3_nav` and `landmarks_to_guide`. The nav's landmarks go
-    /// into the guide; its contents become the NCX the reader reads. A nav that is not
-    /// well-formed XML is skipped until phase 2 Task 4 brings an HTML parser.
+    /// `epub_input.py` `convert_epub3_nav` and `landmarks_to_guide`, for the nav `text` at
+    /// `nav_path`. The nav's landmarks go into the guide; its contents become the NCX the
+    /// reader reads. A nav that is not well-formed XML is skipped until phase 2 Task 4 brings
+    /// an HTML parser.
     fn convert_epub3_nav(
         &mut self,
-        opf: &Opf,
-        book: &mut Book,
+        nav_path: &str,
+        text: &str,
+        book: &Book,
         removed_cover: Option<&str>,
-    ) -> Result<Option<NavToc>, Error> {
-        let Some(nav_path) = self.epub3_nav(opf, book) else {
-            return Ok(None);
-        };
-        let Some(text) = book.read(&nav_path)? else {
-            return Ok(None);
-        };
-        let nav_dir = dirname(&nav_path);
+    ) -> Option<NavToc> {
+        let nav_dir = dirname(nav_path);
         let nav_name = &nav_path[nav_path.rfind('/').map_or(0, |i| i + 1)..];
-        let read = |doc: &Document| (toc::landmarks(doc), toc::nav_points(doc, nav_name));
-        let Some((landmarks, points)) = read_xml(&text, &nav_path, read)? else {
-            return Ok(None);
-        };
-        // `landmarks_to_guide`.
         let base = if nav_dir.is_empty() { "." } else { nav_dir };
         let nav_href = urlquote(nav_name);
-        let mut seen: Vec<String> = Vec::new();
-        for lm in landmarks {
-            let gtype = guide_type_for_epubtype(&lm.epub_type);
-            if gtype == "cover" || seen.contains(&gtype) {
-                continue;
+        // `landmarks_to_guide`: the accepted landmarks, (guide type, href, title).
+        let read = |doc: &Document| {
+            let mut seen: BTreeSet<String> = BTreeSet::new();
+            let mut found: Vec<(String, String, String)> = Vec::new();
+            for lm in toc::landmarks(doc) {
+                let gtype = guide_type_for_epubtype(lm.epub_type);
+                if gtype == "cover" || seen.contains(&gtype) {
+                    continue;
+                }
+                let (path, frag) = urldefrag(lm.href);
+                let path = normpath(&posix_join(
+                    base,
+                    if path.is_empty() { &nav_href } else { path },
+                ));
+                if Some(path.as_str()) == removed_cover || !book.has(&path) {
+                    continue;
+                }
+                seen.insert(gtype.clone());
+                let href = if frag.is_empty() {
+                    path
+                } else {
+                    format!("{path}#{frag}")
+                };
+                found.push((gtype, href, lm.title()));
             }
-            let (path, frag) = urldefrag(&lm.href);
-            let path = normpath(&posix_join(
-                base,
-                if path.is_empty() { &nav_href } else { path },
-            ));
-            if Some(path.as_str()) == removed_cover || !book.has(&path) {
-                continue;
-            }
-            seen.push(gtype.clone());
-            let href = if frag.is_empty() {
-                path
-            } else {
-                format!("{path}#{frag}")
-            };
-            self.set_guide_type(&gtype, Some(href), &lm.title);
+            (found, toc::nav_points(doc, nav_name))
+        };
+        let (landmarks, points) = read_xml(text, read)?;
+        let mut rank: BTreeMap<String, usize> = BTreeMap::new();
+        for (gtype, href, title) in landmarks {
+            rank.insert(gtype.clone(), rank.len());
+            self.set_guide_type(&gtype, Some(href), &title);
         }
-        // Landmarks first, in their order.
-        let rank = |g: &OpfRef| {
-            seen.iter()
-                .position(|s| Some(s.as_str()) == g.kind.as_deref())
-        };
-        self.guide.sort_by_key(|g| rank(g).unwrap_or(usize::MAX));
+        // Landmarks first, in their order; the rest after, in theirs.
+        if !rank.is_empty() {
+            let mut refs: Vec<OpfRef> = std::mem::take(&mut self.guide.refs)
+                .into_iter()
+                .flatten()
+                .collect();
+            refs.sort_by_key(|g| {
+                g.kind
+                    .as_deref()
+                    .and_then(|k| rank.get(k))
+                    .copied()
+                    .unwrap_or(usize::MAX)
+            });
+            self.guide = OpfGuide::new(refs);
+        }
 
-        let Some(points) = points else {
-            return Ok(None);
-        };
+        let points = points?;
         self.toc = TocAttr::Nav;
-        Ok(Some(NavToc {
+        Some(NavToc {
             points,
             base: urlnormalize(&posix_join(nav_dir, "calibre_nav.ncx")),
-            nav_href: urlnormalize(&nav_path),
-        }))
+            nav_href: urlnormalize(nav_path),
+        })
     }
 
     /// The rest of `convert`: DTBook refused, page templates and mislabelled fonts out of the
@@ -788,19 +824,35 @@ struct MItem {
     properties: Vec<String>,
 }
 
-/// A guide reference under its key, the type as written (`Guide.refs`).
+/// A guide reference (`Guide.Reference`), kept under its key: the type as written
+/// (`Guide.refs`). The guide's order is not kept: `oeb.json` lists it sorted.
 #[derive(Debug, Clone)]
 struct GRef {
-    key: String,
     kind: String,
     title: Option<String>,
     href: String,
 }
 
-enum Ncx {
-    None,
-    Nav,
-    Item(String),
+/// Where the nav and the NCX are, found once by [`package_files`] for `read_package` and
+/// `oeb_view`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PackageFiles {
+    /// The nav's path in the archive (`opf2.py` `OPF.epub3_nav`).
+    pub nav_path: Option<String>,
+    /// The NCX's href in Calibre's manifest (`reader.py` `_find_ncx`).
+    pub ncx_href: Option<String>,
+}
+
+/// The nav and the NCX of the OPF `opf` in a folder `opf_dir` of an archive of `names`: the
+/// same rules `oeb_view` applies, on the manifest as Calibre's reader first makes it.
+pub(crate) fn package_files(opf: &Opf, opf_dir: &str, names: &BTreeSet<String>) -> PackageFiles {
+    let input = Input::new(opf, opf_dir);
+    let mut st = State::default();
+    st.manifest_from_opf(&input.manifest, names);
+    PackageFiles {
+        nav_path: input.epub3_nav(opf, names),
+        ncx_href: st.ncx_item(&input.toc).map(|i| st.item(i).href.clone()),
+    }
 }
 
 #[derive(Default)]
@@ -808,9 +860,16 @@ struct State {
     items: Vec<Option<MItem>>,
     ids: BTreeMap<String, usize>,
     hrefs: BTreeMap<String, usize>,
+    /// The live items by href in lower case (`Manifest.generate`, `_guide_from_opf`).
+    lower_hrefs: BTreeMap<String, BTreeSet<usize>>,
+    /// For `Manifest.generate`: by base, the first number not known to be taken. Cleared when
+    /// an item is removed.
+    next_id: BTreeMap<String, usize>,
+    next_href: BTreeMap<(String, String), usize>,
     spine: Vec<(usize, bool)>,
+    in_spine: BTreeSet<usize>,
     ppd: Option<String>,
-    guide: Vec<GRef>,
+    guide: BTreeMap<String, GRef>,
     toc: Vec<TocNode>,
     auto: bool,
     meta: Metadata,
@@ -834,6 +893,10 @@ impl State {
         let i = self.items.len();
         self.ids.insert(id.clone(), i);
         self.hrefs.insert(href.clone(), i);
+        self.lower_hrefs
+            .entry(href.to_lowercase())
+            .or_default()
+            .insert(i);
         self.items.push(Some(MItem {
             id,
             href,
@@ -844,36 +907,65 @@ impl State {
 
     /// `Manifest.remove`, which also takes the item out of the spine.
     fn remove(&mut self, i: usize) {
-        if let Some(it) = self.items[i].take() {
-            self.ids.remove(&it.id);
-            self.hrefs.remove(&it.href);
+        let Some(it) = self.items[i].take() else {
+            return;
+        };
+        self.ids.remove(&it.id);
+        self.hrefs.remove(&it.href);
+        let lower = it.href.to_lowercase();
+        if let Some(set) = self.lower_hrefs.get_mut(&lower) {
+            set.remove(&i);
+            if set.is_empty() {
+                self.lower_hrefs.remove(&lower);
+            }
+        }
+        self.next_id.clear();
+        self.next_href.clear();
+        if self.in_spine.remove(&i) {
             self.spine.retain(|s| s.0 != i);
         }
     }
 
-    /// `Manifest.generate(id)`.
-    fn generate_id(&self, base: &str) -> String {
-        let mut id = base.to_owned();
-        let mut n = 1;
-        while self.ids.contains_key(&id) {
-            id = format!("{base}{n}");
-            n += 1;
+    fn push_spine(&mut self, i: usize, linear: bool) {
+        if self.in_spine.insert(i) {
+            self.spine.push((i, linear));
         }
-        id
     }
 
-    /// `Manifest.generate(href=…)`.
-    fn generate_href(&self, href: &str) -> String {
-        let href = urlnormalize(href);
-        let (base, ext) = splitext(&href);
-        let lower: BTreeSet<String> = self.hrefs.keys().map(|h| h.to_lowercase()).collect();
-        let mut out = href.clone();
-        let mut n = 1;
-        while lower.contains(&out.to_lowercase()) {
-            out = format!("{base}{n}{ext}");
-            n += 1;
+    /// `Manifest.generate(id)`: `base`, else the first of `base1`, `base2`… not taken.
+    fn generate_id(&mut self, base: &str) -> String {
+        if !self.ids.contains_key(base) {
+            return base.to_owned();
         }
-        out
+        let n = self.next_id.entry(base.to_owned()).or_insert(1);
+        loop {
+            let id = format!("{base}{n}");
+            if !self.ids.contains_key(&id) {
+                return id;
+            }
+            *n += 1;
+        }
+    }
+
+    /// `Manifest.generate(href=…)`: `href`, else the first of `base1.ext`, `base2.ext`… whose
+    /// lower case no href has.
+    fn generate_href(&mut self, href: &str) -> String {
+        let href = urlnormalize(href);
+        if !self.lower_hrefs.contains_key(&href.to_lowercase()) {
+            return href;
+        }
+        let (base, ext) = splitext(&href);
+        let n = self
+            .next_href
+            .entry((base.to_owned(), ext.to_owned()))
+            .or_insert(1);
+        loop {
+            let out = format!("{base}{n}{ext}");
+            if !self.lower_hrefs.contains_key(&out.to_lowercase()) {
+                return out;
+            }
+            *n += 1;
+        }
     }
 
     /// `reader.py` `_metadata_from_opf`, then `MergeMetadata` with no user metadata (the
@@ -904,8 +996,8 @@ impl State {
     }
 
     /// `_manifest_from_opf`: each item whose file exists, once per href, ids made unique.
-    fn manifest_from_opf(&mut self, input: &Input, book: &Book) {
-        for it in &input.manifest {
+    fn manifest_from_opf(&mut self, manifest: &[OpfItem], names: &BTreeSet<String>) {
+        for it in manifest {
             let Some(href) = it.href.clone() else {
                 continue;
             };
@@ -917,7 +1009,7 @@ impl State {
                     .unwrap_or_else(|| BINARY_MIME.to_owned());
             }
             let mt = mt.to_lowercase();
-            if self.hrefs.contains_key(&href) || !book.has(&href) {
+            if self.hrefs.contains_key(&href) || !names.contains(&unquote(&href)) {
                 continue;
             }
             let props = it
@@ -954,14 +1046,14 @@ impl State {
             let mt = self.item(i).media_type.to_lowercase();
             let linear = is_linear(r.linear.as_deref());
             if is_doc(&mt) {
-                self.spine.push((i, linear));
+                self.push_spine(i, linear);
             } else if is_xml(&mt) {
                 let href = self.item(i).href.clone();
                 if book.doc(&href)?.is_some_and(|d| d.html_root) {
                     if let Some(it) = self.items[i].as_mut() {
                         it.media_type = XHTML_MIME.to_owned();
                     }
-                    self.spine.push((i, linear));
+                    self.push_spine(i, linear);
                 }
             }
         }
@@ -972,6 +1064,8 @@ impl State {
         // collects them in a set; the port keeps the order it finds them in (DIVERGENCES.md,
         // "Linked files added to the spine").
         let mut extras: Vec<usize> = Vec::new();
+        // The spine, the extras and the new ones.
+        let mut known: BTreeSet<usize> = self.in_spine.clone();
         let mut unchecked: Vec<usize> = self.spine.iter().map(|s| s.0).collect();
         while !unchecked.is_empty() {
             let mut new: Vec<usize> = Vec::new();
@@ -992,14 +1086,9 @@ impl State {
                     let Some(&found) = self.hrefs.get(&href) else {
                         continue;
                     };
-                    if !is_doc(&self.item(found).media_type)
-                        || self.spine.iter().any(|s| s.0 == found)
-                        || extras.contains(&found)
-                        || new.contains(&found)
-                    {
-                        continue;
+                    if is_doc(&self.item(found).media_type) && known.insert(found) {
+                        new.push(found);
                     }
-                    new.push(found);
                 }
             }
             extras.extend(&new);
@@ -1007,7 +1096,7 @@ impl State {
         }
         for i in extras {
             if Some(self.item(i).href.as_str()) != removed_cover {
-                self.spine.push((i, false));
+                self.push_spine(i, false);
             }
         }
         for v in &opf.ppds {
@@ -1029,24 +1118,16 @@ impl State {
             key.to_owned()
         };
         let r = GRef {
-            key: key.to_owned(),
             kind,
             title,
             href: urlnormalize(href),
         };
-        match self.guide.iter_mut().find(|g| g.key == key) {
-            Some(g) => *g = r,
-            None => self.guide.push(r),
-        }
-    }
-
-    fn guide_get(&self, key: &str) -> Option<&GRef> {
-        self.guide.iter().find(|g| g.key == key)
+        self.guide.insert(key.to_owned(), r);
     }
 
     /// `_guide_from_opf`: references to files in the manifest, the first of each type.
     fn guide_from_opf(&mut self, input: &Input) {
-        for r in &input.guide {
+        for r in input.guide.iter() {
             let (Some(href), Some(kind)) = (
                 r.href.as_deref().filter(|h| !h.is_empty()),
                 r.kind.as_deref().filter(|k| !k.is_empty()),
@@ -1056,36 +1137,45 @@ impl State {
             let path = urlnormalize(urldefrag(href).0);
             let mut href = href.to_owned();
             if !self.hrefs.contains_key(&path) {
-                let lower = path.to_lowercase();
-                match self.hrefs.keys().find(|h| h.to_lowercase() == lower) {
-                    Some(h) => href = h.clone(),
+                // The first href in the manifest's order that matches in lower case.
+                match self
+                    .lower_hrefs
+                    .get(&path.to_lowercase())
+                    .and_then(|s| s.first())
+                {
+                    Some(&i) => href = self.item(i).href.clone(),
                     None => continue,
                 }
             }
-            if self.guide_get(kind).is_none() {
+            if !self.guide.contains_key(kind) {
                 self.guide_add(kind, r.title.clone(), &href);
             }
         }
     }
 
-    /// `_find_ncx`: the NCX comes out of the manifest.
-    fn find_ncx(&mut self, input: &Input) -> Ncx {
-        let found = match &input.toc {
-            TocAttr::Nav => return Ncx::Nav,
+    /// `_find_ncx`: the spine's `toc` item, else the first item of the NCX type.
+    fn ncx_item(&self, toc: &TocAttr) -> Option<usize> {
+        match toc {
+            TocAttr::Nav => None,
             TocAttr::Id(id) => self.ids.get(id).copied(),
             TocAttr::None => self
                 .live()
                 .find(|(_, it)| it.media_type == NCX_MIME)
                 .map(|(i, _)| i),
-        };
-        match found {
-            Some(i) => {
-                let href = self.item(i).href.clone();
-                self.remove(i);
-                Ncx::Item(href)
-            }
-            None => Ncx::None,
         }
+    }
+
+    /// `_find_ncx`: the NCX comes out of the manifest; its text is `pkg.ncx_text`. Should the
+    /// item differ from the one `read_package` found (DIVERGENCES.md, "An NCX listed in the
+    /// spine as a document"), no NCX is read.
+    fn find_ncx<'p>(&mut self, toc: &TocAttr, pkg: &'p Package) -> Option<(&'p str, String)> {
+        let i = self.ncx_item(toc)?;
+        let href = self.item(i).href.clone();
+        self.remove(i);
+        (pkg.files.ncx_href.as_deref() == Some(href.as_str()))
+            .then_some(pkg.ncx_text.as_deref())
+            .flatten()
+            .map(|text| (text, href))
     }
 
     /// `_toc_from_navpoint`: an entry with no label gives way to its children; one with no
@@ -1122,32 +1212,26 @@ impl State {
         out
     }
 
-    /// `_toc_from_opf`: the NCX, else the guide's HTML contents, else the OPF's tour; else
-    /// Calibre generates the contents (`auto_generated_toc`, left to phase 2 Task 8).
+    /// `_toc_from_opf`: the nav or the NCX, else the guide's HTML contents; else Calibre
+    /// generates the contents (`auto_generated_toc`, left to phase 2 Task 8). The OPF's tour
+    /// (OEB 1) is not read (DIVERGENCES.md, "Calibre steps the book view leaves out").
     fn toc_from_opf(
         &mut self,
-        ncx: Ncx,
+        ncx: Option<(&str, String)>,
         nav: Option<&NavToc>,
-        opf: &Opf,
         book: &mut Book,
     ) -> Result<(), Error> {
         self.auto = false;
-        let points = match (ncx, nav) {
-            (Ncx::Nav, Some(nav)) => Some((nav.points.clone(), nav.base.clone())),
-            (Ncx::Item(href), _) => {
-                let name = unquote(&href);
-                match book.read(&name)? {
-                    Some(text) => read_xml(&text, &name, toc::ncx_points)?.map(|p| (p, href)),
-                    None => None,
-                }
-            }
-            _ => None,
+        let points = match (nav, ncx) {
+            (Some(nav), _) => Some((nav.points.clone(), nav.base.clone())),
+            (None, Some((text, href))) => read_xml(text, toc::ncx_points).map(|p| (p, href)),
+            (None, None) => None,
         };
         if let Some((points, base)) = points {
             self.toc = self.toc_from_points(&points, &base, 0);
             return Ok(());
         }
-        if self.toc_from_html(book)? || self.toc_from_tour(opf) {
+        if self.toc_from_html(book)? {
             return Ok(());
         }
         self.auto = true;
@@ -1156,7 +1240,7 @@ impl State {
 
     /// `_toc_from_html`: the links of the guide's `toc` document, under its fragment.
     fn toc_from_html(&mut self, book: &mut Book) -> Result<bool, Error> {
-        let Some(g) = self.guide_get("toc") else {
+        let Some(g) = self.guide.get("toc") else {
             return Ok(false);
         };
         let (path, frag) = urldefrag(&g.href);
@@ -1165,41 +1249,16 @@ impl State {
             return Ok(false);
         };
         let base = self.item(i).href.clone();
-        let name = unquote(&base);
-        let Some(text) = book.read(&name)? else {
+        let Some(text) = book.read(&unquote(&base))? else {
             return Ok(false);
         };
         let hrefs = &self.hrefs;
         let read = |doc: &Document| html_toc(doc, &base, &frag, hrefs);
-        let Some(toc) = read_xml(&text, &name, read)? else {
+        let Some(toc) = read_xml(&text, read) else {
             return Ok(false);
         };
         self.toc = toc;
         Ok(true)
-    }
-
-    /// `_toc_from_tour` (OEB 1).
-    fn toc_from_tour(&mut self, opf: &Opf) -> bool {
-        let Some(sites) = &opf.tour else {
-            return false;
-        };
-        for s in sites {
-            let (Some(title), Some(href)) = (
-                s.title.as_deref().filter(|t| !t.is_empty()),
-                s.href.as_deref().filter(|h| !h.is_empty()),
-            ) else {
-                continue;
-            };
-            if !self.hrefs.contains_key(urldefrag(&urlnormalize(href)).0) {
-                continue;
-            }
-            self.toc.push(TocNode {
-                title: title.to_owned(),
-                href: href.to_owned(),
-                children: Vec::new(),
-            });
-        }
-        true
     }
 
     /// `epub_input.py` `postprocess_book` and `plumber.py`: the first contents entry that
@@ -1232,49 +1291,18 @@ impl State {
         }
     }
 
-    /// `transforms/guide.py` `Clean`: a Microsoft cover image becomes the cover, `start`
-    /// becomes `text`, and types Calibre does not know go.
-    fn clean_guide(&mut self, book: &mut Book) {
-        if self.guide_get("cover").is_none() {
-            let mut covers: Vec<(GRef, u64)> = Vec::new();
-            for x in [
-                "other.ms-coverimage-standard",
-                "coverimagestandard",
-                "other.ms-titleimage-standard",
-                "other.ms-titleimage",
-                "other.ms-coverimage",
-                "other.ms-thumbimage-standard",
-                "other.ms-thumbimage",
-                "thumbimagestandard",
-            ] {
-                if let Some(g) = self.guide_get(x).cloned()
-                    && self.hrefs.contains_key(&g.href)
-                {
-                    // Calibre compares `len(item.data)`: the size of an image's bytes.
-                    let size = book.size(&g.href);
-                    covers.push((g, size));
-                }
-            }
-            covers.sort_by_key(|c| std::cmp::Reverse(c.1));
-            if let Some((g, _)) = covers.into_iter().next() {
-                for r in self.guide.iter_mut().filter(|r| r.key == g.key) {
-                    r.kind = "cover".to_owned();
-                }
-                self.guide.push(GRef {
-                    key: "cover".to_owned(),
-                    kind: "cover".to_owned(),
-                    ..g
-                });
-            }
-        }
-        if self.guide_get("text").is_none()
-            && let Some(start) = self.guide_get("start").cloned()
+    /// `transforms/guide.py` `Clean`: `start` becomes `text`, and types Calibre does not know
+    /// go. Calibre also makes a Microsoft cover image the cover; the port does not
+    /// (DIVERGENCES.md, "Calibre steps the book view leaves out").
+    fn clean_guide(&mut self) {
+        if !self.guide.contains_key("text")
+            && let Some(start) = self.guide.get("start").cloned()
         {
             self.guide_add("text", start.title, &start.href);
-            self.guide.retain(|g| g.key != "start");
+            self.guide.remove("start");
         }
-        self.guide.retain(|g| {
-            let k = g.key.to_lowercase();
+        self.guide.retain(|key, g| {
+            let k = key.to_lowercase();
             KNOWN_GUIDE_TYPES.contains(&k.as_str())
                 || k.starts_with(CUSTOM_GUIDE_TYPE_PREFIX)
                 || g.title
@@ -1285,7 +1313,7 @@ impl State {
 
     /// `MergeMetadata.set_cover` with no cover given: the guide's cover is the cover image.
     fn set_cover(&mut self) {
-        let Some(href) = self.guide_get("cover").map(|g| g.href.clone()) else {
+        let Some(href) = self.guide.get("cover").map(|g| g.href.clone()) else {
             self.meta.cover.clear();
             return;
         };
@@ -1304,7 +1332,8 @@ impl State {
     fn flattened(&self, nav_href: Option<&str>) -> Vec<usize> {
         let mut items: Vec<usize> = self.spine.iter().map(|s| s.0).collect();
         let titlepage = self
-            .guide_get("titlepage")
+            .guide
+            .get("titlepage")
             .and_then(|g| self.hrefs.get(urldefrag(&g.href).0).copied());
         let nav = nav_href.and_then(|h| self.hrefs.get(h).copied());
         for i in [titlepage, nav].into_iter().flatten() {
@@ -1317,7 +1346,8 @@ impl State {
 
     /// The files the flattened stylesheets name: every `url()` of the stylesheets and
     /// `<style>` elements of the flattened documents, followed through `@import`. Calibre
-    /// keeps only what a rule in use names (DIVERGENCES.md, "Files a stylesheet names").
+    /// keeps only what a rule in use names (DIVERGENCES.md, "Which files stay in the
+    /// manifest").
     fn flattened_css_urls(
         &self,
         book: &mut Book,
@@ -1389,7 +1419,8 @@ impl State {
     /// `CSSFlattener.replace_css` and `collect_global_css`: the book's stylesheets go, and
     /// Calibre's `stylesheet.css` and `page_styles.css` come in. Calibre writes one
     /// `page_styles*.css` per distinct set of `@page` and `@font-face` rules; the port writes
-    /// one until the css module can tell them apart. Returns the two new items.
+    /// one until the css module can tell them apart (DIVERGENCES.md, "One page_styles.css until
+    /// the CSS is read"). Returns the two new items.
     fn replace_css(&mut self) -> [usize; 2] {
         let styles: Vec<usize> = self
             .live()
@@ -1437,7 +1468,7 @@ impl State {
                 used.insert(i);
             }
         }
-        for g in &self.guide {
+        for g in self.guide.values() {
             if let Some(&i) = self.hrefs.get(urldefrag(&g.href).0) {
                 used.insert(i);
             }
@@ -1507,7 +1538,7 @@ impl State {
         manifest.sort_by(|a, b| (&a.href, &a.id).cmp(&(&b.href, &b.id)));
         let mut guide: Vec<GuideRef> = self
             .guide
-            .iter()
+            .values()
             .map(|g| GuideRef {
                 kind: g.kind.clone(),
                 href: g.href.clone(),
@@ -1529,7 +1560,7 @@ impl State {
 /// Calibre 9.18's book view of the EPUB `pkg` read from `zip`, as kfxgen's output plugin
 /// receives it.
 pub fn oeb_view(pkg: &Package, zip: &mut EpubReader) -> Result<Oeb, Error> {
-    let opf = Opf::parse(&pkg.opf_text, &pkg.opf_path)?;
+    let opf = &pkg.opf;
     let opf_dir = zip.opf_dir.clone();
     let names = zip.names().into_iter().collect();
     let mut book = Book {
@@ -1539,28 +1570,31 @@ pub fn oeb_view(pkg: &Package, zip: &mut EpubReader) -> Result<Oeb, Error> {
     };
 
     // `epub_input.py` `convert`.
-    let mut input = Input::new(&opf, &opf_dir);
+    let mut input = Input::new(opf, &opf_dir);
     let removed_cover = if opf.version >= 3.0 {
-        input.rationalize_cover3(&opf)
+        input.rationalize_cover3(opf)
     } else {
-        input.rationalize_cover2(&opf)
+        input.rationalize_cover2(opf)
     };
     let removed_cover = removed_cover.as_deref();
-    let nav = input.convert_epub3_nav(&opf, &mut book, removed_cover)?;
+    let nav = match (&pkg.files.nav_path, &pkg.nav_text) {
+        (Some(path), Some(text)) => input.convert_epub3_nav(path, text, &book, removed_cover),
+        _ => None,
+    };
     input.clean_spine()?;
 
     // `reader.py` `OEBReader._all_from_opf`.
     let mut st = State::default();
-    st.metadata_from_opf(&opf);
-    st.manifest_from_opf(&input, &book);
-    st.spine_from_opf(&input, &opf, &mut book, removed_cover)?;
+    st.metadata_from_opf(opf);
+    st.manifest_from_opf(&input.manifest, &book.names);
+    st.spine_from_opf(&input, opf, &mut book, removed_cover)?;
     st.guide_from_opf(&input);
-    let ncx = st.find_ncx(&input);
-    st.toc_from_opf(ncx, nav.as_ref(), &opf, &mut book)?;
+    let ncx = st.find_ncx(&input.toc, pkg);
+    st.toc_from_opf(ncx, nav.as_ref(), &mut book)?;
 
     // `postprocess_book`, then `plumber.py`'s transforms.
     st.drop_cover_entry(removed_cover);
-    st.clean_guide(&mut book);
+    st.clean_guide();
     st.set_cover();
     let docs = st.flattened(nav.as_ref().map(|n| n.nav_href.as_str()));
     let css_urls = st.flattened_css_urls(&mut book, &docs)?;

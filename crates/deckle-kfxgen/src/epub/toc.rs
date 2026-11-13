@@ -90,29 +90,39 @@ pub(crate) fn nav_points(doc: &Document, nav_name: &str) -> Option<Vec<NavPoint>
         .map(|ol| walk(&ol, nav_name, 0))
 }
 
-/// A landmark of the nav: its first `epub:type`, href and text.
-pub(crate) struct Landmark {
-    pub epub_type: String,
-    pub href: String,
-    pub title: String,
+/// A link of a landmarks nav that has an href and an `epub:type`.
+pub(crate) struct Landmark<'a, 'i> {
+    /// The first of its `epub:type` values.
+    pub epub_type: &'a str,
+    pub href: &'a str,
+    pub node: Node<'a, 'i>,
 }
 
-/// `landmarks_to_guide`: the links of every `<nav epub:type="landmarks">` that have an href
-/// and an `epub:type`, in document order.
-pub(crate) fn landmarks(doc: &Document) -> Vec<Landmark> {
+impl Landmark<'_, '_> {
+    /// Its text, stripped.
+    pub fn title(&self) -> String {
+        string_value(&self.node).trim().to_owned()
+    }
+}
+
+/// `landmarks_to_guide`: the links of every `<nav epub:type="landmarks">` that have an href and
+/// an `epub:type`, in document order. Calibre walks the links of each such nav, so a link
+/// inside nested landmarks navs comes once per nav and its `seen` drops the repeats; a
+/// landmarks nav inside another is skipped here, which gives the same guide.
+pub(crate) fn landmarks<'a, 'i>(doc: &'a Document<'i>) -> impl Iterator<Item = Landmark<'a, 'i>> {
+    fn is_landmarks(n: &Node) -> bool {
+        is_html(n, "nav") && epub_type(n) == Some("landmarks")
+    }
     doc.descendants()
-        .filter(|n| is_html(n, "nav") && epub_type(n) == Some("landmarks"))
+        .filter(|n| is_landmarks(n) && !n.ancestors().skip(1).any(|a| is_landmarks(&a)))
         .flat_map(|nav| nav.descendants().filter(|a| is_html(a, "a")))
-        .filter_map(|a| {
-            let href = a.attribute("href").filter(|h| !h.is_empty())?;
-            let first = epub_type(&a)?.split_whitespace().next()?;
+        .filter_map(|node| {
             Some(Landmark {
-                epub_type: first.to_owned(),
-                href: href.to_owned(),
-                title: string_value(&a).trim().to_owned(),
+                href: node.attribute("href").filter(|h| !h.is_empty())?,
+                epub_type: epub_type(&node)?.split_whitespace().next()?,
+                node,
             })
         })
-        .collect()
 }
 
 /// The nav points of every `navMap` of an NCX (`_toc_from_ncx`).

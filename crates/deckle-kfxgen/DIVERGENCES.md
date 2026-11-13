@@ -277,3 +277,27 @@ These change the book only in uncommon cases and are not ported:
 - `data:` URLs become manifest files (`transforms/data_url.py`).
 - With no title, Calibre takes the title sort (`calibre:title_sort` or the title's file-as) as
   the title before falling back to `Unknown`.
+- Calibre reads an OEB 1 package (the `…/oeb-package/1.0` namespace) and Dublin Core 1.0 and
+  0.9 elements as OPF 2 and DC 1.1 (`reader.py` `_read_opf`, `_clean_opf`). The port refuses
+  an OEB 1 package and does not read those older Dublin Core elements.
+- With no NCX, nav or HTML contents page, Calibre takes the contents from an OEB 1 `<tour>`
+  (`reader.py` `_toc_from_tour`). The port generates them instead.
+- With no guide cover, Calibre makes the largest of the Microsoft cover images the guide names
+  (`other.ms-coverimage-standard` and the like) the cover (`transforms/guide.py` `Clean`). The
+  port drops those references as types it does not know.
+
+## An NCX listed in the spine as a document
+
+With no `toc` attribute on the spine, Calibre reads the first manifest item of the NCX type
+as the contents, after its reader has turned spine entries whose root is an XHTML `<html>`
+into documents (`reader.py` `_spine_from_opf`, then `_find_ncx`). `read_package` finds the NCX
+before that step. If the first NCX-typed item is such a spine document, Calibre reads the next
+NCX-typed item and the port reads none.
+
+## One page_styles.css until the CSS is read
+
+Calibre writes one `page_styles*.css` per distinct set of `@page` and `@font-face` rules among
+the files it flattens (`flatcss.py` `collect_global_css`). Telling those sets apart needs the
+book's CSS, which the css module reads (phase 2 Tasks 5 to 7); until then `oeb_view` writes one
+`page_styles.css`. The `cascade/` test allow-lists the others by id (`css_quirks` has three).
+This entry goes when Task 7 makes them.

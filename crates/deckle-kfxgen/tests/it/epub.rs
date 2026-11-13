@@ -3,6 +3,7 @@
 //! `cascade/<book>/oeb.json` dumps, Calibre 9.18's own view recorded inside a kfxgen run.
 
 use std::io::Write as _;
+use std::time::{Duration, Instant};
 
 use deckle_kfx::epub_zip::EpubReader;
 use deckle_kfx::fixtures;
@@ -26,14 +27,13 @@ const BOOKS: [&str; 12] = [
     "vertical",
 ];
 
-/// Manifest items in a dump that the port does not make yet, by book: (book, ids, why).
-/// Each listed id must be in the dump, so the entry goes when the port catches up.
+/// Manifest items in a dump that the port does not make yet, by book: (book, ids, the
+/// DIVERGENCES.md section that says why). Each listed id must be in the dump, so the entry
+/// goes when the port catches up.
 const NOT_YET_MADE: &[(&str, &[&str], &str)] = &[(
     "css_quirks",
     &["page_css1", "page_css2"],
-    "Calibre writes one page_styles*.css per distinct set of @page and @font-face rules among \
-     the files it flattens (flatcss.py collect_global_css). Telling them apart needs the \
-     book's CSS, which the css module reads (Tasks 5 to 7); oeb_view always writes one.",
+    "One page_styles.css until the CSS is read",
 )];
 
 fn open(path: &std::path::Path) -> (Package, EpubReader) {
@@ -101,6 +101,8 @@ fn the_dumps_are_from_calibre_9_18() {
 
 #[test]
 fn every_cascade_fixture_oeb_matches_calibre() {
+    let divergences =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/DIVERGENCES.md")).unwrap();
     let mut failures = Vec::new();
     for book in BOOKS {
         let dump: Value = serde_json::from_slice(
@@ -127,7 +129,11 @@ fn every_cascade_fixture_oeb_matches_calibre() {
         let mut want = dump.clone();
         want.as_object_mut().unwrap().remove("raw");
         let mut got = oeb_json(&oeb);
-        for &(b, ids, _why) in NOT_YET_MADE {
+        for &(b, ids, section) in NOT_YET_MADE {
+            assert!(
+                divergences.contains(&format!("\n## {section}\n")),
+                "DIVERGENCES.md has no section {section:?}"
+            );
             if b != book {
                 continue;
             }
@@ -257,6 +263,283 @@ fn missing_cover_is_not_an_error() {
     assert!(oeb.guide.is_empty());
     assert!(oeb.manifest.iter().all(|i| i.id != "cover-img"));
     assert_eq!(oeb.spine.len(), 1);
+}
+
+/// An EPUB 3 package of `manifest`, `spine` and `meta`, with the nav `nav.xhtml` listed.
+fn opf3(manifest: &str, spine: &str, meta: &str) -> String {
+    format!(
+        r#"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">x</dc:identifier>
+<dc:language>en</dc:language>{meta}</metadata>
+<manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+{manifest}</manifest><spine>{spine}</spine></package>"#
+    )
+}
+
+fn nav_doc(body: &str) -> String {
+    format!(
+        r#"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>N</title></head><body>{body}</body></html>"#
+    )
+}
+
+#[test]
+fn nested_landmark_navs_give_each_link_once() {
+    // `epub_input.py` `landmarks_to_guide` walks every landmarks nav, so a link inside 200
+    // nested navs is met 200 times; `seen` drops the repeats. 10,000 links of custom types
+    // give 10,000 guide entries (`guide.py` `Clean` keeps `other.calibre-epub-type-…`).
+    let links: String = (0..10_000)
+        .map(|i| format!(r##"<a epub:type="t{i}" href="c.xhtml#a{i}">L{i}</a>"##))
+        .collect();
+    let nav = nav_doc(&format!(
+        "{}{links}{}",
+        r#"<nav epub:type="landmarks">"#.repeat(200),
+        "</nav>".repeat(200)
+    ));
+    let opf = opf3(
+        r#"<item id="c" href="c.xhtml" media-type="application/xhtml+xml"/>"#,
+        r#"<itemref idref="c"/>"#,
+        "<dc:title>T</dc:title>",
+    );
+    let f = epub_with(&opf, &[("c.xhtml", CHAPTER), ("nav.xhtml", &nav)]);
+    // roxmltree parses recursively: in a debug build 200 nested elements need more than a
+    // test thread's 2 MB of stack (it overflows between 128 and 160 levels; a release build
+    // parses 256 levels in 2 MB).
+    let path = f.path().to_owned();
+    let (oeb, took) = std::thread::Builder::new()
+        .stack_size(16 << 20)
+        .spawn(move || {
+            let start = Instant::now();
+            let (pkg, mut zip) = open(&path);
+            let oeb = oeb_view(&pkg, &mut zip).unwrap();
+            (oeb, start.elapsed())
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(oeb.guide.len(), 10_000);
+    let mut kinds: Vec<&str> = oeb.guide.iter().map(|g| g.kind.as_str()).collect();
+    kinds.dedup();
+    assert_eq!(kinds.len(), 10_000);
+    assert!(
+        oeb.guide
+            .iter()
+            .all(|g| g.href == format!("c.xhtml#a{}", &g.kind["other.calibre-epub-type-t".len()..]))
+    );
+    assert!(took < Duration::from_secs(3), "took {took:?}");
+}
+
+#[test]
+fn a_large_package_reads_in_linear_time() {
+    // 20,000 manifest items (8,000 of them sharing the id `dup`), 20,000 itemrefs, 20,000
+    // guide references (half in the wrong case) and 20,000 creators with refines.
+    const N: usize = 20_000;
+    let id = |i: usize| {
+        if i < 8_000 {
+            "dup".to_owned()
+        } else {
+            format!("i{i}")
+        }
+    };
+    let mut manifest = String::new();
+    let mut spine = String::new();
+    let mut guide = String::new();
+    let mut meta = String::from("<dc:title>T</dc:title>");
+    let doc = r#"<html xmlns="http://www.w3.org/1999/xhtml"><body/></html>"#;
+    let names: Vec<String> = (0..N).map(|i| format!("f{i}.xhtml")).collect();
+    for i in 0..N {
+        manifest.push_str(&format!(
+            r#"<item id="{}" href="f{i}.xhtml" media-type="application/xhtml+xml"/>"#,
+            id(i)
+        ));
+        spine.push_str(&format!(r#"<itemref idref="{}"/>"#, id(i)));
+        let href = if i % 2 == 0 {
+            format!("f{i}.xhtml")
+        } else {
+            format!("F{i}.XHTML")
+        };
+        guide.push_str(&format!(r#"<reference type="t{i}" href="{href}"/>"#));
+        meta.push_str(&format!(
+            r##"<dc:creator id="a{i}">Writer {i}</dc:creator><meta refines="#a{i}" property="role" scheme="marc:relators">aut</meta>"##
+        ));
+    }
+    let opf = opf3(&manifest, &spine, &meta)
+        .replace("</spine>", &format!("</spine><guide>{guide}</guide>"));
+    let mut files: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), doc)).collect();
+    let nav = nav_doc("");
+    files.push(("nav.xhtml", &nav));
+    let f = epub_with(&opf, &files);
+    let start = Instant::now();
+    let (pkg, mut zip) = open(f.path());
+    let oeb = oeb_view(&pkg, &mut zip).unwrap();
+    let took = start.elapsed();
+    // Each spine idref once: `dup` names the first of its items.
+    assert_eq!(oeb.spine.len(), 1 + (N - 8_000));
+    assert_eq!(oeb.metadata.creator.len(), N);
+    // About 1.9 s in a debug build, and linear in N; it took 208 s before the package was
+    // read through indexes.
+    assert!(took < Duration::from_secs(6), "took {took:?}");
+}
+
+#[test]
+fn opf3_refines_give_roles_and_titles() {
+    // `opf3.py`: `find_main_title` takes the title refined as `main`, `find_subtitle` the one
+    // whose title-type holds `subtitle`, and `read_title` joins them with ": ". `read_authors`
+    // keeps creators whose refined role is `aut` (no scheme, or `marc:relators`), so the
+    // illustrator goes; `uniq` drops a repeat only when its name, file-as and display-seq
+    // all match, so the second "B. Writer", with another file-as, stays; `display-seq` orders
+    // them.
+    let meta = r##"<dc:title id="t1">Sub</dc:title><dc:title id="t2">Main</dc:title>
+<meta refines="#t1" property="title-type">subtitle</meta>
+<meta refines="#t2" property="title-type">main</meta>
+<dc:creator id="c1">A. Writer</dc:creator>
+<meta refines="#c1" property="role" scheme="marc:relators">aut</meta>
+<meta refines="#c1" property="display-seq">2</meta>
+<dc:creator id="c2">I. Lustrator</dc:creator>
+<meta refines="#c2" property="role" scheme="marc:relators">ill</meta>
+<dc:creator id="c3">B. Writer</dc:creator>
+<meta refines="#c3" property="role">aut</meta>
+<meta refines="#c3" property="file-as">Writer, B.</meta>
+<meta refines="#c3" property="display-seq">1</meta>
+<dc:creator id="c4">B. Writer</dc:creator>
+<meta refines="#c4" property="role">aut</meta>
+<meta refines="#c4" property="file-as">Writer, Bee</meta>
+<meta refines="#c4" property="display-seq">1</meta>
+<dc:creator id="c5">A. Writer</dc:creator>
+<meta refines="#c5" property="role" scheme="marc:relators">aut</meta>
+<meta refines="#c5" property="display-seq">2</meta>"##;
+    let opf = opf3(
+        r#"<item id="c" href="c.xhtml" media-type="application/xhtml+xml"/>"#,
+        r#"<itemref idref="c"/>"#,
+        meta,
+    );
+    let f = epub_with(&opf, &[("c.xhtml", CHAPTER), ("nav.xhtml", &nav_doc(""))]);
+    let (pkg, mut zip) = open(f.path());
+    let oeb = oeb_view(&pkg, &mut zip).unwrap();
+    assert_eq!(oeb.metadata.title, ["Main: Sub"]);
+    assert_eq!(
+        oeb.metadata.creator,
+        ["B. Writer", "B. Writer", "A. Writer"]
+    );
+}
+
+#[test]
+fn nav_landmarks_become_the_guide() {
+    // `epub_input.py` `landmarks_to_guide`: each landmark's first epub:type through
+    // `guide_type_for_epubtype` (bodymatter → text, titlepage → title-page, others under
+    // `other.calibre-epub-type-`), the first of each type, none for `cover` (left to
+    // `rationalize_cover3`) or a missing file. They replace the OPF's references of the same
+    // type; `guide.py` `Clean` then drops the OPF's unknown `other.x`.
+    let opf = opf3(
+        r#"<item id="c" href="c.xhtml" media-type="application/xhtml+xml"/>
+<item id="d" href="d.xhtml" media-type="application/xhtml+xml"/>"#,
+        r#"<itemref idref="c"/><itemref idref="d"/>"#,
+        "<dc:title>T</dc:title>",
+    )
+    .replace(
+        "</spine>",
+        r#"</spine><guide><reference type="text" href="d.xhtml"/><reference type="other.x" href="d.xhtml"/></guide>"#,
+    );
+    let nav = nav_doc(
+        r##"<nav epub:type="landmarks"><ol>
+<li><a epub:type="bodymatter chapter" href="c.xhtml#start">Start</a></li>
+<li><a epub:type="bodymatter" href="d.xhtml">Again</a></li>
+<li><a epub:type="titlepage" href="d.xhtml">Title</a></li>
+<li><a epub:type="cover" href="c.xhtml">Cover</a></li>
+<li><a epub:type="loi" href="missing.xhtml">Pictures</a></li>
+<li><a epub:type="appendix" href="d.xhtml#app">Appendix</a></li>
+</ol></nav>"##,
+    );
+    let f = epub_with(
+        &opf,
+        &[
+            ("c.xhtml", CHAPTER),
+            ("d.xhtml", CHAPTER),
+            ("nav.xhtml", &nav),
+        ],
+    );
+    let (pkg, mut zip) = open(f.path());
+    let oeb = oeb_view(&pkg, &mut zip).unwrap();
+    let guide: Vec<(&str, &str)> = oeb
+        .guide
+        .iter()
+        .map(|g| (g.kind.as_str(), g.href.as_str()))
+        .collect();
+    assert_eq!(
+        guide,
+        [
+            ("other.calibre-epub-type-appendix", "d.xhtml#app"),
+            ("text", "c.xhtml#start"),
+            ("title-page", "d.xhtml"),
+        ]
+    );
+}
+
+#[test]
+fn an_html_contents_page_gives_the_contents() {
+    // `reader.py` `_toc_from_html`, with no NCX: the links under the guide's `toc` fragment,
+    // or under its nearest ancestor that has links, one entry per target in the order first
+    // met, the texts of links to the same target joined by a space. A link outside the
+    // manifest is left out.
+    let contents = r##"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>C</title></head><body>
+<p><a href="a.xhtml">Not in the list</a></p>
+<div><h1 id="list">Contents</h1>
+<p><a href="a.xhtml">One</a></p><p><a href="b.xhtml#x">Two</a></p>
+<p><a href="a.xhtml">  First  chapter </a></p><p><a href="gone.xhtml">Gone</a></p></div>
+</body></html>"##;
+    let opf = opf2(
+        r#"<item id="toc" href="toc.xhtml" media-type="application/xhtml+xml"/>
+<item id="a" href="a.xhtml" media-type="application/xhtml+xml"/>
+<item id="b" href="b.xhtml" media-type="application/xhtml+xml"/>"#,
+        r#"<itemref idref="toc"/><itemref idref="a"/><itemref idref="b"/>"#,
+        "",
+    )
+    .replace(
+        "</spine>",
+        r##"</spine><guide><reference type="toc" href="toc.xhtml#list"/></guide>"##,
+    );
+    let f = epub_with(
+        &opf,
+        &[
+            ("toc.xhtml", contents),
+            ("a.xhtml", CHAPTER),
+            ("b.xhtml", CHAPTER),
+        ],
+    );
+    let (pkg, mut zip) = open(f.path());
+    let oeb = oeb_view(&pkg, &mut zip).unwrap();
+    assert!(!oeb.auto_generated_toc);
+    let toc: Vec<(&str, &str)> = oeb
+        .toc
+        .iter()
+        .map(|n| (n.title.as_str(), n.href.as_str()))
+        .collect();
+    assert_eq!(
+        toc,
+        [("One First chapter", "a.xhtml"), ("Two", "b.xhtml#x")]
+    );
+}
+
+#[test]
+fn a_chapter_too_deep_to_parse_has_no_links() {
+    // 300 unclosed `<br>`s nest 300 levels once the end tags are recovered: `parse_xml`
+    // refuses the chapter, which is then read as having no links (Calibre parses it as HTML,
+    // phase 2 Task 4). The book still has its view.
+    let chapter = format!(
+        r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title></head><body><p>{}</p></body></html>"#,
+        "line<br>".repeat(300)
+    );
+    let opf = opf2(
+        r#"<item id="a" href="a.xhtml" media-type="application/xhtml+xml"/>
+<item id="b" href="b.xhtml" media-type="application/xhtml+xml"/>"#,
+        r#"<itemref idref="a"/><itemref idref="b"/>"#,
+        "",
+    );
+    let f = epub_with(&opf, &[("a.xhtml", &chapter), ("b.xhtml", CHAPTER)]);
+    let (pkg, mut zip) = open(f.path());
+    let oeb = oeb_view(&pkg, &mut zip).unwrap();
+    let spine: Vec<&str> = oeb.spine.iter().map(|s| s.href.as_str()).collect();
+    assert_eq!(spine, ["a.xhtml", "b.xhtml"]);
 }
 
 #[test]

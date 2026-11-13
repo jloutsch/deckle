@@ -4,23 +4,20 @@
 //! `ebooks/metadata/opf3.py` for EPUB 3), dates (`utils/date.py`), languages
 //! (`utils/localization.py`) and hrefs (`ebooks/oeb/base.py`).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use deckle_kfx::epub_zip::{EpubReader, join, percent_decode};
+use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Timelike};
+use deckle_kfx::epub_zip::{EpubReader, InspectError, percent_decode};
 use deckle_limits::XmlError;
 use deckle_limits::roxmltree::{Document, Node, ParsingOptions};
 
-use super::{Error, GuideRef, Item, Metadata, Package, SpineRef};
+use super::{Error, GuideRef, Item, Metadata, Package, SpineRef, oeb};
 
 pub(crate) const OPF2_NS: &str = "http://www.idpf.org/2007/opf";
-/// `reader.py` `_read_opf` maps every `…/oeb-package/1.0` spelling to OPF 1.
-const OPF1_NS_PREFIX: &str = "http://openebook.org/namespaces/oeb-package/1.0";
-/// `base.py` `DC_NSES`: DC 1.1, 1.0 and 0.9, all read as DC 1.1 (`_clean_opf`).
-const DC_NSES: [&str; 3] = [
-    "http://purl.org/dc/elements/1.1/",
-    "http://purl.org/dc/elements/1.0/",
-    "http://purl.org/metadata/dublin_core",
-];
+/// Dublin Core 1.1. Calibre also reads OPF 1 packages and DC 1.0 and 0.9 elements as these
+/// (`reader.py` `_read_opf`, `_clean_opf`); the port does not (DIVERGENCES.md, "Calibre steps
+/// the book view leaves out").
+const DC11_NS: &str = "http://purl.org/dc/elements/1.1/";
 pub(crate) const NCX_MIME: &str = "application/x-dtbncx+xml";
 /// `opf3.py` `reserved_prefixes['marc']`.
 const MARC_NS: &str = "http://id.loc.gov/vocabulary/";
@@ -153,7 +150,7 @@ pub(crate) fn recover_end_tags(text: &str) -> Option<String> {
 // The OPF model
 // ---------------------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct OpfItem {
     pub id: Option<String>,
     pub href: Option<String>,
@@ -162,28 +159,22 @@ pub(crate) struct OpfItem {
     pub properties: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct OpfItemref {
     pub idref: Option<String>,
     pub linear: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct OpfRef {
     pub kind: Option<String>,
     pub title: Option<String>,
     pub href: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct OpfSite {
-    pub title: Option<String>,
-    pub href: Option<String>,
-}
-
 /// The metadata Calibre's OPF readers make (`Metadata` in `ebooks/metadata/book/base.py`), for
 /// the fields `oeb.json` records.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct CalibreMeta {
     pub title: Option<String>,
     pub authors: Vec<String>,
@@ -194,7 +185,7 @@ pub(crate) struct CalibreMeta {
 }
 
 /// One parsed OPF.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Opf {
     /// `OPF.package_version`: the `version` attribute as a number, 0 if it isn't one.
     pub version: f64,
@@ -204,34 +195,27 @@ pub(crate) struct Opf {
     /// The spine's `page-progression-direction` attributes, as written.
     pub ppds: Vec<String>,
     pub guide: Vec<OpfRef>,
-    /// The first `<tour>`'s sites (OEB 1).
-    pub tour: Option<Vec<OpfSite>>,
     /// `content` of the first metadata `meta` whose `name` holds "cover" (`OPF.raster_cover`).
     pub cover_meta: Option<String>,
     /// `opf3.py` `read_prefixes`: the reserved prefixes, then the package's `prefix`.
-    pub prefixes: Vec<(String, String)>,
+    pub prefixes: BTreeMap<String, String>,
     pub raw: Metadata,
     pub calibre: CalibreMeta,
 }
 
 fn opf_ns(ns: Option<&str>) -> bool {
-    match ns {
-        None | Some("") => true,
-        Some(ns) => ns == OPF2_NS || ns.starts_with(OPF1_NS_PREFIX),
-    }
+    matches!(ns, None | Some("") | Some(OPF2_NS))
 }
 
-/// An OPF element `name` (`_clean_opf` puts the empty and OPF 1 namespaces into OPF 2).
+/// An OPF element `name` (`_clean_opf` puts the empty namespace into OPF 2).
 fn is_opf(n: &Node, name: &str) -> bool {
     n.is_element() && n.tag_name().name() == name && opf_ns(n.tag_name().namespace())
 }
 
-/// A Dublin Core element `name`, any of `DC_NSES`, its name in any case (`_clean_opf`).
+/// A Dublin Core element `name`, its name in any case (`_clean_opf`).
 fn is_dc(n: &Node, name: &str) -> bool {
     n.is_element()
-        && n.tag_name()
-            .namespace()
-            .is_some_and(|ns| DC_NSES.contains(&ns))
+        && n.tag_name().namespace() == Some(DC11_NS)
         && n.tag_name().name().eq_ignore_ascii_case(name)
 }
 
@@ -270,9 +254,10 @@ const RESERVED_PREFIXES: [(&str, &str); 8] = [
     ("xsd", "http://www.w3.org/2001/XMLSchema#"),
 ];
 
-/// `opf3.py` `read_prefixes`: `parse_prefixes` reads `(\S+): \s*(\S+)`.
-fn read_prefixes(root: &Node) -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = RESERVED_PREFIXES
+/// `opf3.py` `read_prefixes`: `parse_prefixes` reads `(\S+): \s*(\S+)`; a later prefix of the
+/// same name wins.
+fn read_prefixes(root: &Node) -> BTreeMap<String, String> {
+    let mut out: BTreeMap<String, String> = RESERVED_PREFIXES
         .iter()
         .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
         .collect();
@@ -281,8 +266,7 @@ fn read_prefixes(root: &Node) -> Vec<(String, String)> {
         let mut i = 0;
         while i + 1 < words.len() {
             if let Some(name) = words[i].strip_suffix(':').filter(|n| !n.is_empty()) {
-                out.retain(|(k, _)| k != name);
-                out.push((name.to_owned(), words[i + 1].to_owned()));
+                out.insert(name.to_owned(), words[i + 1].to_owned());
                 i += 2;
             } else {
                 i += 1;
@@ -293,19 +277,11 @@ fn read_prefixes(root: &Node) -> Vec<(String, String)> {
 }
 
 impl Opf {
-    /// The URL a prefix stands for.
-    fn prefix(&self, p: &str) -> Option<&str> {
-        self.prefixes
-            .iter()
-            .find(|(k, _)| k == p)
-            .map(|(_, v)| v.as_str())
-    }
-
     /// `opf3.py` `expand_prefix` of one property with the package's prefixes.
     pub(crate) fn expand_prefix(&self, raw: &str) -> String {
         match raw.rsplit_once(':') {
             Some((p, r)) if !p.is_empty() && !r.is_empty() => {
-                format!("{}:{r}", self.prefix(p).unwrap_or(p))
+                format!("{}:{r}", self.prefixes.get(p).map_or(p, String::as_str))
             }
             _ => raw.to_owned(),
         }
@@ -367,15 +343,6 @@ impl Opf {
                 href: attr(&c, "href"),
             })
             .collect();
-        let tour = children("tours").find(|c| is_opf(c, "tour")).map(|t| {
-            t.children()
-                .filter(|c| is_opf(c, "site"))
-                .map(|c| OpfSite {
-                    title: attr(&c, "title"),
-                    href: attr(&c, "href"),
-                })
-                .collect()
-        });
         // `_clean_opf`: everything under the package's metadata elements, flattened.
         let meta: Vec<Node> = root
             .children()
@@ -406,7 +373,6 @@ impl Opf {
             spine_toc,
             ppds,
             guide,
-            tour,
             cover_meta,
             prefixes,
             raw,
@@ -443,57 +409,80 @@ fn normalize_whitespace(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// What the `refines` metas say of one id, as `opf3.py` reads them
+/// (`properties_for_id_with_scheme`, `properties_for_id`): gathered once per id, so a package
+/// with many creators or titles is read in one pass.
+#[derive(Debug, Default)]
+struct Refined {
+    /// `title-type`, the last one (`properties_for_id` keeps the last value of a key).
+    title_type: Option<String>,
+    /// `file-as`, the first one.
+    file_as: Option<String>,
+    /// `display-seq`, the first one.
+    display_seq: Option<String>,
+    /// Any `role`.
+    has_role: bool,
+    /// `is_relators_role(props, 'aut')` and `(props, 'edt')`.
+    aut: bool,
+    edt: bool,
+}
+
+/// `opf3.py` `read_refines` and `properties_for_id_with_scheme`, for every id at once.
+fn read_refines<'a>(
+    prefixes: &BTreeMap<String, String>,
+    meta: &[Node<'a, '_>],
+) -> BTreeMap<&'a str, Refined> {
+    let mut out: BTreeMap<&str, Refined> = BTreeMap::new();
+    for m in meta.iter().filter(|n| is_opf(n, "meta")) {
+        let Some(id) = m.attribute("refines").and_then(|r| r.strip_prefix('#')) else {
+            continue;
+        };
+        let Some(key) = m.attribute("property").filter(|k| !k.is_empty()) else {
+            continue;
+        };
+        let val = direct_text(m).unwrap_or_default().trim().to_owned();
+        if val.is_empty() {
+            continue;
+        }
+        let mut scheme = m.attribute("scheme").filter(|s| !s.is_empty());
+        let mut scheme_ns = None;
+        if let Some((p, r)) = scheme.and_then(|s| s.split_once(':'))
+            && !p.is_empty()
+            && !r.is_empty()
+            && let Some(ns) = prefixes.get(p)
+        {
+            scheme_ns = Some(ns.as_str());
+            scheme = Some(r);
+        }
+        let r = out.entry(id).or_default();
+        match key {
+            "title-type" => r.title_type = Some(val),
+            "file-as" => {
+                r.file_as.get_or_insert(val);
+            }
+            "display-seq" => {
+                r.display_seq.get_or_insert(val);
+            }
+            "role" => {
+                r.has_role = true;
+                // `is_relators_role`.
+                let relators = scheme_ns.is_none()
+                    || (scheme_ns == Some(MARC_NS) && scheme == Some("relators"));
+                let role = val.to_lowercase();
+                r.aut |= relators && role == "aut";
+                r.edt |= relators && role == "edt";
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// `opf3.py` `read_metadata`, for the fields `oeb.json` records.
-fn opf3_metadata(prefixes: &[(String, String)], meta: &[Node]) -> CalibreMeta {
-    let prefix = |p: &str| -> Option<String> {
-        prefixes
-            .iter()
-            .find(|(k, _)| k == p)
-            .map(|(_, v)| v.clone())
-    };
-    // `read_refines`.
-    let refines: Vec<&Node> = meta
-        .iter()
-        .filter(|n| is_opf(n, "meta"))
-        .filter(|n| n.attribute("refines").is_some_and(|r| r.starts_with('#')))
-        .collect();
-    // `properties_for_id_with_scheme`: (property, scheme namespace, scheme, value).
-    let props = |id: Option<&str>| -> Vec<(String, Option<String>, Option<String>, String)> {
-        let Some(id) = id else { return Vec::new() };
-        refines
-            .iter()
-            .filter(|m| m.attribute("refines").and_then(|r| r.strip_prefix('#')) == Some(id))
-            .filter_map(|m| {
-                let key = m.attribute("property").filter(|k| !k.is_empty())?;
-                let val = direct_text(m).unwrap_or_default().trim().to_owned();
-                if val.is_empty() {
-                    return None;
-                }
-                let mut scheme = m
-                    .attribute("scheme")
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_owned);
-                let mut scheme_ns = None;
-                if let Some(s) = scheme.clone()
-                    && let Some((p, r)) = s.split_once(':')
-                    && !p.is_empty()
-                    && !r.is_empty()
-                    && let Some(ns) = prefix(p)
-                {
-                    scheme_ns = Some(ns);
-                    scheme = Some(r.to_owned());
-                }
-                Some((key.to_owned(), scheme_ns, scheme, val))
-            })
-            .collect()
-    };
-    let prop = |id: Option<&str>, key: &str| -> Option<String> {
-        props(id)
-            .into_iter()
-            .rev()
-            .find(|p| p.0 == key)
-            .map(|p| p.3)
-    };
+fn opf3_metadata(prefixes: &BTreeMap<String, String>, meta: &[Node]) -> CalibreMeta {
+    let refines = read_refines(prefixes, meta);
+    let refined = |n: &Node| n.attribute("id").and_then(|id| refines.get(id));
+    let title_type = |n: &Node| refined(n).and_then(|r| r.title_type.as_deref());
     let dc = |name: &str| -> Vec<&Node> { meta.iter().filter(|n| is_dc(n, name)).collect() };
 
     // `find_main_title`, `find_subtitle`, `read_title`.
@@ -503,12 +492,12 @@ fn opf3_metadata(prefixes: &[(String, String)], meta: &[Node]) -> CalibreMeta {
         .collect();
     let main = titles
         .iter()
-        .find(|t| prop(t.attribute("id"), "title-type").as_deref() == Some("main"))
+        .find(|t| title_type(t) == Some("main"))
         .or(titles.first());
     let title = main.map(|m| {
         let mut ans = direct_text(m).unwrap_or_default().trim().to_owned();
         let sub = titles.iter().find(|t| {
-            let q = prop(t.attribute("id"), "title-type").unwrap_or_default();
+            let q = title_type(t).unwrap_or("");
             q.contains("subtitle") || q.contains("sub-title")
         });
         if let Some(st) = sub
@@ -524,24 +513,26 @@ fn opf3_metadata(prefixes: &[(String, String)], meta: &[Node]) -> CalibreMeta {
     type Author = (String, Option<String>, i64);
     let mut roled: Vec<Author> = Vec::new();
     let mut unroled: Vec<Author> = Vec::new();
+    // `editors_map`: a later editor of the same name replaces the earlier in its place.
     let mut editors: Vec<Author> = Vec::new();
+    let mut editor_at: BTreeMap<String, usize> = BTreeMap::new();
+    let none = Refined::default();
     for item in dc("creator") {
         let val = direct_text(item).unwrap_or_default().trim().to_owned();
         if val.is_empty() {
             continue;
         }
-        let ps = props(item.attribute("id"));
+        let r = refined(item).unwrap_or(&none);
         let author = || -> Author {
-            let file_as = ps
-                .iter()
-                .find(|p| p.0 == "file-as")
-                .map(|p| p.3.clone())
+            let file_as = r
+                .file_as
+                .clone()
                 .or_else(|| item.attribute((OPF2_NS, "file-as")).map(str::to_owned))
                 .filter(|s| !s.is_empty());
-            let seq = ps
-                .iter()
-                .find(|p| p.0 == "display-seq")
-                .and_then(|p| p.3.trim().parse().ok())
+            let seq = r
+                .display_seq
+                .as_deref()
+                .and_then(|s| s.trim().parse().ok())
                 .unwrap_or(0);
             (
                 normalize_whitespace(&val),
@@ -549,25 +540,18 @@ fn opf3_metadata(prefixes: &[(String, String)], meta: &[Node]) -> CalibreMeta {
                 seq,
             )
         };
-        let roles: Vec<_> = ps.iter().filter(|p| p.0 == "role").collect();
-        // `is_relators_role`.
-        let is_role = |q: &str| {
-            roles.iter().any(|(_, ns, scheme, role)| {
-                role.to_lowercase() == q
-                    && (ns.is_none()
-                        || (ns.as_deref() == Some(MARC_NS)
-                            && scheme.as_deref() == Some("relators")))
-            })
-        };
-        if !roles.is_empty() {
-            if is_role("aut") {
+        if r.has_role {
+            if r.aut {
                 roled.push(author());
             }
-            if is_role("edt") {
+            if r.edt {
                 let a = author();
-                match editors.iter_mut().find(|e| e.0 == a.0) {
-                    Some(e) => *e = a,
-                    None => editors.push(a),
+                match editor_at.get(&a.0) {
+                    Some(&i) => editors[i] = a,
+                    None => {
+                        editor_at.insert(a.0.clone(), editors.len());
+                        editors.push(a);
+                    }
                 }
             }
         } else if let Some(r) = item.attribute((OPF2_NS, "role")) {
@@ -585,22 +569,18 @@ fn opf3_metadata(prefixes: &[(String, String)], meta: &[Node]) -> CalibreMeta {
     } else {
         editors
     };
-    let mut seen = Vec::new();
-    authors.retain(|a| {
-        let new = !seen.contains(a);
-        if new {
-            seen.push(a.clone());
-        }
-        new
-    });
+    // `uniq`.
+    let mut seen: BTreeSet<Author> = BTreeSet::new();
+    authors.retain(|a| seen.insert(a.clone()));
     authors.sort_by_key(|a| a.2);
 
     // `read_languages`.
     let mut languages: Vec<String> = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
     for l in dc("language") {
         if let Some(v) = canonicalize_lang(direct_text(l).unwrap_or_default().trim())
-            && !languages.contains(&v)
             && v != "und"
+            && seen.insert(v.clone())
         {
             languages.push(v);
         }
@@ -742,62 +722,33 @@ fn opf2_metadata(meta: &[Node]) -> CalibreMeta {
 
 /// A moment in UTC, ordered by time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct Date {
-    days: i64,
-    secs: u32,
-    micros: u32,
-}
-
-/// Days from 1970-01-01 to `y-m-d` in the proleptic Gregorian calendar.
-fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let mp = (i64::from(m) + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (yoe + era * 400 + i64::from(m <= 2), m, d)
-}
-
-fn days_in_month(y: i64, m: u32) -> u32 {
-    match m {
-        2 if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 => 29,
-        2 => 28,
-        4 | 6 | 9 | 11 => 30,
-        _ => 31,
-    }
-}
+pub(crate) struct Date(NaiveDateTime);
 
 impl Date {
     /// `utils/date.py` `is_date_undefined`: before 101-01-02 (`UNDEFINED_DATE` is 101-01-01).
     fn is_undefined(&self) -> bool {
-        let (y, m, d) = civil_from_days(self.days);
-        y < 101 || (y == 101 && m == 1 && d == 1)
+        self.0.date() < NaiveDate::from_ymd_opt(101, 1, 2).expect("a valid date")
     }
 
     /// Python's `datetime.isoformat()` of the date in UTC, as `utils/date.py` `isoformat`
     /// writes it.
     pub(crate) fn isoformat(&self) -> String {
-        let (y, m, d) = civil_from_days(self.days);
-        let (h, mi, s) = (self.secs / 3600, self.secs / 60 % 60, self.secs % 60);
-        let frac = if self.micros == 0 {
+        let d = self.0;
+        let micros = d.nanosecond() / 1000;
+        let frac = if micros == 0 {
             String::new()
         } else {
-            format!(".{:06}", self.micros)
+            format!(".{micros:06}")
         };
-        format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}{frac}+00:00")
+        format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{frac}+00:00",
+            d.year(),
+            d.month(),
+            d.day(),
+            d.hour(),
+            d.minute(),
+            d.second()
+        )
     }
 }
 
@@ -813,16 +764,15 @@ fn digits(s: &str, min: usize, max: usize) -> Option<(u32, &str)> {
 /// month of a year-only date"). With `only_date_fix` (`opf3.py` `parse_date`), a date with no
 /// time is moved off the first and last day of its month (`fix_only_date`). Only ISO 8601
 /// forms are read: `YYYY`, `YYYY-MM`, `YYYY-MM-DD`, then `[T ]HH:MM[:SS[.f]]` and `Z` or
-/// `±HH[:MM]` (DIVERGENCES.md, "Dates in other forms"). An empty string is Calibre's undefined
-/// date.
+/// `±HH[:MM]` (DIVERGENCES.md, "Dates in other forms"). A date outside Python's years 1 to
+/// 9999, before or after its zone is applied, raises in Calibre and is skipped (None). An
+/// empty string is Calibre's undefined date.
 pub(crate) fn parse_date(raw: &str, only_date_fix: bool) -> Option<Date> {
     let raw = raw.trim();
     if raw.is_empty() {
-        return Some(Date {
-            days: days_from_civil(101, 1, 1),
-            secs: 0,
-            micros: 0,
-        });
+        return NaiveDate::from_ymd_opt(101, 1, 1)
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .map(Date);
     }
     let (y, rest) = digits(raw, 4, 4)?;
     let (mut m, mut d, mut rest) = (1, 15, rest);
@@ -836,15 +786,15 @@ pub(crate) fn parse_date(raw: &str, only_date_fix: bool) -> Option<Date> {
             rest = r;
         }
     }
-    let y = i64::from(y);
-    if !(1..=12).contains(&m) || d == 0 || d > days_in_month(y, m) {
+    if y == 0 {
         return None;
     }
-    let (mut secs, mut micros, mut offset) = (0i64, 0u32, 0i64);
+    let mut date = NaiveDate::from_ymd_opt(i32::try_from(y).ok()?, m, d)?;
+    let (mut time, mut offset) = (NaiveTime::MIN, 0i64);
     if let Some(r) = rest.strip_prefix(['T', ' ']) {
         let (h, r) = digits(r, 1, 2)?;
         let (mi, r) = digits(r.strip_prefix(':')?, 2, 2)?;
-        let (mut s, mut r) = (0, r);
+        let (mut s, mut micros, mut r) = (0, 0, r);
         if let Some(r2) = r.strip_prefix(':') {
             let (ss, r2) = digits(r2, 2, 2)?;
             s = ss;
@@ -854,25 +804,18 @@ pub(crate) fn parse_date(raw: &str, only_date_fix: bool) -> Option<Date> {
                 if n == 0 {
                     return None;
                 }
-                let frac = format!("{:0<6}", &r3[..n.min(6)]);
-                micros = frac.parse().ok()?;
+                micros = format!("{:0<6}", &r3[..n.min(6)]).parse().ok()?;
                 r = &r3[n..];
             }
         }
-        if h > 23 || mi > 59 || s > 59 {
-            return None;
-        }
-        secs = i64::from(h * 3600 + mi * 60 + s);
+        time = NaiveTime::from_hms_micro_opt(h, mi, s, micros)?;
         rest = r;
         if let Some(r) = rest.strip_prefix(['Z', 'z']) {
             rest = r;
         } else if let Some(sign) = rest.chars().next().filter(|c| *c == '+' || *c == '-') {
             let (oh, r) = digits(&rest[1..], 2, 2)?;
             let r = r.strip_prefix(':').unwrap_or(r);
-            let (om, r) = match digits(r, 2, 2) {
-                Some(x) => x,
-                None => (0, r),
-            };
+            let (om, r) = digits(r, 2, 2).unwrap_or((0, r));
             let o = i64::from(oh * 3600 + om * 60);
             offset = if sign == '-' { -o } else { o };
             rest = r;
@@ -881,22 +824,19 @@ pub(crate) fn parse_date(raw: &str, only_date_fix: bool) -> Option<Date> {
     if !rest.is_empty() {
         return None;
     }
-    let mut days = days_from_civil(y, m, d);
-    if only_date_fix && !raw.contains(' ') && !raw.contains('T') && secs == 0 && micros == 0 {
+    if only_date_fix && !raw.contains(' ') && !raw.contains('T') && time == NaiveTime::MIN {
         // `utils/date.py` `fix_only_date`: `n.month > val.month` is false for 31 December.
-        if d == days_in_month(y, m) && m < 12 {
-            days -= 1;
+        if date.succ_opt().is_some_and(|n| n.month() > date.month()) {
+            date = date.pred_opt()?;
         }
-        if civil_from_days(days).2 == 1 {
-            days += 1;
+        if date.day() == 1 {
+            date = date.succ_opt()?;
         }
     }
-    let total = days * 86_400 + secs - offset;
-    Some(Date {
-        days: total.div_euclid(86_400),
-        secs: total.rem_euclid(86_400) as u32,
-        micros,
-    })
+    let utc = date
+        .and_time(time)
+        .checked_sub_signed(TimeDelta::seconds(offset))?;
+    (1..=9999).contains(&utc.year()).then_some(Date(utc))
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1107,14 +1047,24 @@ pub(crate) fn is_linear(linear: Option<&str>) -> bool {
     })
 }
 
-/// Reads the package files of `zip`: the OPF, the EPUB 3 nav and the NCX.
+/// The text of the file `name` in `zip`, or None if it is missing or not UTF-8 (phase 2 Task 4
+/// decodes other encodings).
+pub(crate) fn read_text(zip: &mut EpubReader, name: &str) -> Result<Option<String>, Error> {
+    match zip.read_string(name) {
+        Ok(t) => Ok(Some(t)),
+        Err(InspectError::MissingFile(_)) => Ok(None),
+        Err(InspectError::Io(e)) if e.kind() == std::io::ErrorKind::InvalidData => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Reads the package files of `zip`: the OPF, the EPUB 3 nav and the NCX. A nav or NCX that is
+/// not UTF-8 is read as missing.
 pub fn read_package(zip: &mut EpubReader) -> Result<Package, Error> {
     let opf_path = zip.opf_path.clone();
     let opf_text = zip.read_string(&opf_path)?;
     let opf = Opf::parse(&opf_text, &opf_path)?;
     let names: BTreeSet<String> = zip.names().into_iter().collect();
-    let opf_dir = zip.opf_dir.clone();
-    let path_of = |href: &str| join(&opf_dir, &unquote(href));
 
     let manifest: Vec<Item> = opf
         .manifest
@@ -1128,12 +1078,16 @@ pub fn read_package(zip: &mut EpubReader) -> Result<Package, Error> {
             })
         })
         .collect();
-    let by_id = |id: &str| manifest.iter().find(|i| i.id == id);
+    // The first item of each id.
+    let mut by_id: BTreeMap<&str, &Item> = BTreeMap::new();
+    for i in &manifest {
+        by_id.entry(i.id.as_str()).or_insert(i);
+    }
     let spine = opf
         .spine
         .iter()
         .filter_map(|r| {
-            let item = by_id(r.idref.as_deref()?)?;
+            let item = by_id.get(r.idref.as_deref()?)?;
             Some(SpineRef {
                 href: item.href.clone(),
                 linear: is_linear(r.linear.as_deref()),
@@ -1150,29 +1104,15 @@ pub fn read_package(zip: &mut EpubReader) -> Result<Package, Error> {
             })
         })
         .collect();
-    // `opf2.py` `OPF.epub3_nav`.
-    let nav = (opf.version >= 3.0)
-        .then(|| {
-            manifest.iter().find(|i| {
-                i.properties.iter().any(|p| p.to_lowercase() == "nav")
-                    && i.media_type.to_lowercase().contains("html")
-                    && !i.id.is_empty()
-                    && names.contains(&path_of(&i.href))
-            })
-        })
-        .flatten()
-        .map(|i| path_of(&i.href));
-    // `reader.py` `_find_ncx`: the spine's `toc` item, else the first item of the NCX type.
-    let ncx = match &opf.spine_toc {
-        Some(id) => by_id(id),
-        None => manifest
-            .iter()
-            .find(|i| i.media_type.to_lowercase() == NCX_MIME),
-    }
-    .map(|i| path_of(&i.href))
-    .filter(|p| names.contains(p));
-    let nav_text = nav.map(|p| zip.read_string(&p)).transpose()?;
-    let ncx_text = ncx.map(|p| zip.read_string(&p)).transpose()?;
+    let files = oeb::package_files(&opf, &zip.opf_dir, &names);
+    let nav_text = match &files.nav_path {
+        Some(p) => read_text(zip, p)?,
+        None => None,
+    };
+    let ncx_text = match &files.ncx_href {
+        Some(h) => read_text(zip, &unquote(h))?,
+        None => None,
+    };
     Ok(Package {
         opf_path,
         opf_text,
@@ -1181,8 +1121,10 @@ pub fn read_package(zip: &mut EpubReader) -> Result<Package, Error> {
         manifest,
         spine,
         guide,
-        metadata: opf.raw,
+        metadata: opf.raw.clone(),
         page_progression_direction: opf.ppds.first().cloned(),
+        opf,
+        files,
     })
 }
 

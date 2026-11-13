@@ -28,9 +28,11 @@ pub struct Package {
     pub opf_path: String,
     /// The OPF's text, byte for byte.
     pub opf_text: String,
-    /// The EPUB 3 navigation document (an EPUB 3 manifest item with the `nav` property).
+    /// The EPUB 3 navigation document (`opf2.py` `OPF.epub3_nav`: an EPUB 3 manifest item
+    /// with the `nav` property).
     pub nav_text: Option<String>,
-    /// The NCX: the spine's `toc` item, or else the first item of the NCX type.
+    /// The NCX as Calibre's reader finds it in its manifest (`reader.py` `_find_ncx`): the
+    /// spine's `toc` item, or else the first item of the NCX type.
     pub ncx_text: Option<String>,
     /// The manifest in OPF order, hrefs as written (relative to the OPF).
     pub manifest: Vec<Item>,
@@ -42,6 +44,10 @@ pub struct Package {
     pub metadata: Metadata,
     /// The spine's `page-progression-direction`, as written.
     pub page_progression_direction: Option<String>,
+    /// The OPF as parsed, for [`oeb_view`].
+    pub(crate) opf: package::Opf,
+    /// Where the nav and the NCX are.
+    pub(crate) files: oeb::PackageFiles,
 }
 
 /// A manifest item.
@@ -111,8 +117,8 @@ pub struct Oeb {
 pub enum Error {
     #[error(transparent)]
     Zip(#[from] InspectError),
-    /// `file` is not XML Deckle will read: refused for its depth or entities, or not
-    /// well-formed where Calibre would stop too (the OPF).
+    /// The OPF is not XML Deckle will read: refused for its depth or entities, or not
+    /// well-formed. Other files that are not are read as having no links.
     #[error("{file}: {source}")]
     Xml { file: String, source: XmlError },
     /// The package is one Calibre refuses: an OPF in a foreign namespace, DTBook content, or
