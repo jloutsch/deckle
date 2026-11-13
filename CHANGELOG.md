@@ -23,14 +23,15 @@
   A picture in a book, a chosen cover or a web photo over 100 megapixels is refused before it
   is decoded. Comic pages keep `image`'s own 512 MiB limit on one decode; fitting a page to a
   screen can briefly take about twice that.
-- **A hostile KFX or KPF is refused instead of filling memory.** A symbol table claiming more
+- **A hostile KFX or KPF is held to limits as it is read.** A symbol table claiming more
   than a million symbols, an entity table whose rows add up to more than the file, and
   positions or page ranges past what the book's text can hold (one a character, one an
   element) are each refused. Pictures and fonts in the book hold no positions, so padding
   them doesn't raise the limit. A book that decodes to more than 5,000,000 values (about
-  2.5 times the largest real book seen; about 1.6 GB of memory) is refused as it is read: a
-  500 KB KPF of repeated tiny values used 4.6 GB. A long name used many times counts a value
-  for every 64 bytes of each copy.
+  2.5 times the largest real book seen; about 1.6 GB of decoded tree) is refused as it is
+  read: a 500 KB KPF of repeated tiny values used 4.6 GB. A long name used many times counts
+  a value for every 64 bytes of each copy. The limit covers what is decoded, not the copies
+  the conversion makes of parts of it afterwards (issue #79).
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in
