@@ -6,6 +6,10 @@
   more than about 200 KB of text and letters outside ASCII (Cyrillic, Greek, accented Latin)
   failed to import; it's now cut into parts between paragraphs as English
   books are.
+- **A send no longer removes a different book from the Kindle.** Two books can get the same
+  Deckle ASIN, and sending one removed the other, with its notes and highlights. Deckle now
+  removes an older copy only when its title and author match too; another book with the same
+  ASIN stays, and the send says so.
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in
