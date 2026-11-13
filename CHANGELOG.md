@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Long older Kindle books in other alphabets import.** A MOBI 6 book with no page breaks,
+  more than about 200 KB of text and letters outside ASCII (Cyrillic, Greek, accented Latin)
+  failed to import; it's now cut into parts between paragraphs as English
+  books are.
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in
