@@ -75,6 +75,14 @@ fn accepted_origins(public: &str) -> Vec<String> {
 /// gets a new token, made whole beside it and linked into place only if still missing, then
 /// read back, so two processes starting together end with the same one.
 pub fn token(dir: &Path) -> std::io::Result<String> {
+    token_with(dir, |from, to| std::fs::hard_link(from, to))
+}
+
+/// [`token`] with the hard-link step passed in, so a test can be a file system without them.
+fn token_with(
+    dir: &Path,
+    link: impl Fn(&Path, &Path) -> std::io::Result<()>,
+) -> std::io::Result<String> {
     let path = dir.join("bookmarklet.token");
     let read = || {
         deckle_core::state_file::read_with(&path, |text| {
@@ -93,27 +101,59 @@ pub fn token(dir: &Path) -> std::io::Result<String> {
         })
     };
     if let Some(t) = read()? {
+        make_private(&path);
         return Ok(t);
     }
     std::fs::create_dir_all(dir)?;
     let t = format!("{:032x}", rand::random::<u128>());
-    let tmp = dir.join(format!(".bookmarklet.token.{}.tmp", std::process::id()));
-    write_private(&tmp, t.as_bytes())?;
-    let linked = std::fs::hard_link(&tmp, &path);
+    // Unique per call, so two threads of one process don't share a temp file.
+    let tmp = dir.join(format!(
+        ".bookmarklet.token.{}.{:016x}.tmp",
+        std::process::id(),
+        rand::random::<u64>()
+    ));
+    write_private(&tmp, t.as_bytes(), false)?;
+    let linked = link(&tmp, &path);
     let _ = std::fs::remove_file(&tmp);
     match linked {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(e) => return Err(e),
+        // No hard links on this file system: make the final name only if it is still missing.
+        // Another process may read it between the create and the write; it then says so.
+        Err(_) => match write_private(&path, t.as_bytes(), true) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e),
+        },
     }
     read()?.ok_or_else(|| std::io::Error::other(format!("{}: not made", path.display())))
 }
 
-/// `bytes` to a new file at `path`, 0600, synced.
-fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+/// An older token readable by others is made owner-only. A failure leaves it as it was.
+fn make_private(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(m) = std::fs::metadata(path)
+            && m.permissions().mode() & 0o077 != 0
+        {
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
+/// `bytes` to `path`, 0600, synced; with `new`, only when `path` doesn't exist yet.
+fn write_private(path: &Path, bytes: &[u8], new: bool) -> std::io::Result<()> {
     use std::io::Write;
     let mut open = std::fs::OpenOptions::new();
-    open.write(true).create(true).truncate(true);
+    open.write(true);
+    if new {
+        open.create_new(true);
+    } else {
+        open.create(true).truncate(true);
+    }
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut open, 0o600);
     let mut f = open.open(path)?;
@@ -715,6 +755,60 @@ mod tests {
             404
         );
         assert_eq!(handle("garbage", "abc", &q, dir.path(), now()).0, 404);
+    }
+
+    /// An older token readable by others is made private when it is read.
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_token_is_made_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarklet.token");
+        std::fs::write(&path, "0123456789abcdef0123456789abcdef\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(
+            token(dir.path()).unwrap(),
+            "0123456789abcdef0123456789abcdef"
+        );
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    /// On a file system without hard links the token is still made, on its final name.
+    #[test]
+    fn a_token_is_made_without_hard_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let no_links = |_: &Path, _: &Path| -> std::io::Result<()> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "no hard links here",
+            ))
+        };
+        let t = token_with(dir.path(), no_links).unwrap();
+        assert_eq!(t.len(), 32);
+        assert_eq!(token(dir.path()).unwrap(), t);
+        let left: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(left, ["bookmarklet.token"], "no temp file left");
+    }
+
+    /// Threads of one process starting together end with one token and no error.
+    #[test]
+    fn threads_starting_together_share_one_token() {
+        for _ in 0..20 {
+            let dir = tempfile::tempdir().unwrap();
+            let tokens: Vec<String> = std::thread::scope(|s| {
+                let handles: Vec<_> = (0..8).map(|_| s.spawn(|| token(dir.path()))).collect();
+                handles
+                    .into_iter()
+                    .map(|h| h.join().unwrap().unwrap())
+                    .collect()
+            });
+            assert!(tokens.iter().all(|t| *t == tokens[0]), "{tokens:?}");
+        }
     }
 
     #[test]
