@@ -4,6 +4,8 @@
 use super::{BVM, Decimal, IonError, Struct, Sym, Timestamp, Value};
 use crate::symtab::SymbolTable;
 
+/// Bytes of symbol text a resolve may copy for each unit of the [`ValueBudget`] it costs.
+const SYMBOL_TEXT_PER_UNIT: u64 = 64;
 const VARIABLE_LEN_FLAG: u8 = 14;
 const NULL_FLAG: u8 = 15;
 
@@ -105,8 +107,9 @@ fn signed_int(data: &[u8]) -> Result<i128, IonError> {
 }
 
 /// How many Ion values may be decoded from one file (one KPF, one KFX container): each value,
-/// and each annotation, counts one before it is made, so a small file that decodes to a huge
-/// tree is refused (size-limits design). Shared by every decode of that file.
+/// and each annotation, counts one before it is made, and every symbol resolved counts one more
+/// for each 64 bytes of its text before that text is copied, so a small file that decodes to a
+/// huge tree is refused (size-limits design). Shared by every decode of that file.
 #[derive(Debug)]
 pub struct ValueBudget {
     limit: u64,
@@ -128,10 +131,16 @@ impl ValueBudget {
     }
 
     fn charge(&self) -> Result<(), IonError> {
-        if self.used.get() >= self.limit {
+        self.charge_n(1)
+    }
+
+    /// Counts `n` more, failing (and counting nothing) past the limit.
+    fn charge_n(&self, n: u64) -> Result<(), IonError> {
+        let used = self.used.get().saturating_add(n);
+        if used > self.limit {
             return Err(IonError::TooManyValues { limit: self.limit });
         }
-        self.used.set(self.used.get() + 1);
+        self.used.set(used);
         Ok(())
     }
 }
@@ -157,7 +166,14 @@ impl<'s> Decoder<'s> {
     fn symbol(&self, id: u64) -> Result<Sym, IonError> {
         let id = u32::try_from(id).map_err(|_| IonError::UnknownSymbolId(u32::MAX))?;
         Ok(match self.symtab.symbol_of(id) {
-            Some(text) => Sym::new(text),
+            Some(text) => {
+                // Each resolve copies the symbol's text: one more unit of the budget for every
+                // 64 bytes of it, before the copy, so a long symbol referenced many times can't
+                // copy more than 64 bytes a unit.
+                self.budget
+                    .charge_n(text.len() as u64 / SYMBOL_TEXT_PER_UNIT)?;
+                Sym::new(text)
+            }
             None => Sym(format!("${id}")),
         })
     }
@@ -430,4 +446,63 @@ pub fn decode_annotated_in(
         }
         _ => Err(IonError::NotAnnotated),
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ion::encode_single;
+
+    /// A table with one local symbol of a megabyte, and that symbol.
+    fn long_symbol() -> (SymbolTable, Sym) {
+        let mut symtab = SymbolTable::yj_default();
+        let sym = symtab.create_local(&"x".repeat(1 << 20));
+        (symtab, sym)
+    }
+
+    #[test]
+    fn copies_of_a_long_symbol_are_charged_for_their_text() {
+        // 200 references to one 1 MB symbol: 600 bytes of Ion that copy 200 MB of text. Each
+        // copy now costs its text in the budget, so a budget of 100,000 stops it at the sixth.
+        let (symtab, sym) = long_symbol();
+        let refs = Value::List(vec![Value::Symbol(sym.clone()); 200]);
+        let data = encode_single(&refs, &symtab).unwrap();
+        let values = ValueBudget::new(100_000);
+        let e = decode_single_in(&data, &symtab, &values).unwrap_err();
+        assert!(matches!(e, IonError::TooManyValues { .. }), "{e}");
+        assert!(values.used() <= 100_000);
+
+        // The same text as struct field names and as annotations.
+        let mut fields = Struct::new();
+        for _ in 0..200 {
+            fields.0.push((sym.clone(), Value::Int(1)));
+        }
+        let data = encode_single(&Value::Struct(fields), &symtab).unwrap();
+        let e = decode_single_in(&data, &symtab, &ValueBudget::new(100_000)).unwrap_err();
+        assert!(matches!(e, IonError::TooManyValues { .. }), "{e}");
+        let annotated = Value::Annotated {
+            annots: vec![sym; 200],
+            value: Box::new(Value::Int(1)),
+        };
+        let data = encode_single(&annotated, &symtab).unwrap();
+        let e = decode_single_in(&data, &symtab, &ValueBudget::new(100_000)).unwrap_err();
+        assert!(matches!(e, IonError::TooManyValues { .. }), "{e}");
+    }
+
+    #[test]
+    fn short_symbols_cost_only_their_value() {
+        let mut symtab = SymbolTable::yj_default();
+        let sym = symtab.create_local(&"y".repeat(63));
+        let refs = Value::List(vec![Value::Symbol(sym); 10]);
+        let data = encode_single(&refs, &symtab).unwrap();
+        let values = ValueBudget::new(1_000);
+        decode_single_in(&data, &symtab, &values).unwrap();
+        assert_eq!(values.used(), 11, "the list and its ten symbols");
+    }
+
+    // The limit holds the largest real books, checked when the tests build: the largest value
+    // counts QA measured in real KFX files are 466,499 in a real library and 1,971,808 in a
+    // generated 17 MB KFX of a long test book.
+    const LARGEST_SEEN: u64 = 1_971_808;
+    const _: () = assert!(deckle_limits::MAX_ION_VALUES >= 2 * LARGEST_SEEN);
 }

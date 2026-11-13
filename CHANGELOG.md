@@ -27,8 +27,10 @@
   than a million symbols, an entity table whose rows add up to more than the file, and
   positions or page ranges past what the book's text can hold (one a character, one an
   element) are each refused. Pictures and fonts in the book hold no positions, so padding
-  them doesn't raise the limit. A book that decodes to more than 1,500,000 values is refused
-  as it is read: a 500 KB KPF of repeated tiny values used 4.6 GB.
+  them doesn't raise the limit. A book that decodes to more than 5,000,000 values (about
+  2.5 times the largest real book seen; about 1.6 GB of memory) is refused as it is read: a
+  500 KB KPF of repeated tiny values used 4.6 GB. A long name used many times counts a value
+  for every 64 bytes of each copy.
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in

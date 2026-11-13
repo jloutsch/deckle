@@ -55,11 +55,11 @@ pub const MAX_PDF_PAGE_POINTS: f32 = 14_400.0;
 pub const MAX_TXT_CHAPTERS: usize = 10_000;
 /// KFX: the symbol table's `max_id`.
 pub const MAX_KFX_SYMBOLS: u32 = 1_000_000;
-/// KFX, KPF: Ion values (and annotations) decoded from one file. A decoded value takes 112 bytes,
-/// about 300 in a struct with the Vec's spare room and its key, so the tree stays under about
-/// 450 MB; the largest fixture decodes 9,645 values, and the mini KPF 4,081 for 79,000
-/// characters of text.
-pub const MAX_ION_VALUES: u64 = 1_500_000;
+/// KFX, KPF: Ion values (and annotations, and a unit for every 64 bytes of symbol text copied)
+/// decoded from one file. About 2.5 times the most seen in a real file: up to 466,499 in a real
+/// library, 1,971,808 in a 17 MB KFX generated from a long test book. A decoded value measured
+/// about 320 bytes in memory, so the tree can reach about 1.6 GB at the limit.
+pub const MAX_ION_VALUES: u64 = 5_000_000;
 /// ODT, FB2, RTF, TXT, MOBI and Markdown: the file (ODT: unpacked), read whole.
 pub const MAX_IMPORT_BYTES: u64 = 50 * MB;
 /// PDF: the file.
