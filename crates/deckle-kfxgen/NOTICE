@@ -21,3 +21,21 @@ kfxgen includes a modified subset of kfxlib, from the KFX Input/Output plugins f
 Parts of this crate follow kfxlib's behaviour as kfxgen uses it: how a decimal is written, the
 approximate locations and pages, and the count of `YJ_symbols` entries. The symbol names in
 src/generate/standard_symbols.rs are kfxgen's own (kfxgen's NOTICE), not kfxlib's.
+
+src/epub ports rules from calibre 9.18.0 (https://github.com/kovidgoyal/calibre, tag v9.18.0),
+how it reads an EPUB into the book view kfxgen is given:
+
+    calibre
+    Copyright (C) 2006-2026 Kovid Goyal and the calibre contributors
+    Licensed under the GNU General Public License v3.
+
+Files the port follows: src/calibre/ebooks/conversion/plugins/epub_input.py,
+src/calibre/ebooks/conversion/plumber.py, src/calibre/ebooks/oeb/base.py,
+src/calibre/ebooks/oeb/reader.py, src/calibre/ebooks/oeb/polish/upgrade.py,
+src/calibre/ebooks/oeb/transforms/flatcss.py, src/calibre/ebooks/oeb/transforms/guide.py,
+src/calibre/ebooks/oeb/transforms/metadata.py, src/calibre/ebooks/oeb/transforms/trimmanifest.py,
+src/calibre/ebooks/metadata/__init__.py, src/calibre/ebooks/metadata/opf2.py,
+src/calibre/ebooks/metadata/opf3.py, src/calibre/utils/date.py,
+src/calibre/utils/localization.py and src/calibre/utils/xml_parse.py. The table of two-letter
+language codes in src/epub/package.rs is calibre's (`iso639['2to3']` in
+resources/localization/iso639.calibre_msgpack, built from the iso-codes package).

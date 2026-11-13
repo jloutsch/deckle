@@ -22,4 +22,5 @@ sha2.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+deckle-kfx = { workspace = true, features = ["testing"] }
 tempfile.workspace = true

@@ -206,3 +206,74 @@ them, and the port keeps its own behaviour:
   and does not read `_by_family`. The converter always derives one from the other.
 - **A tate-chu-yoko run that starts before the paragraph.** Python's slice wraps a negative
   start round to the paragraph's end. The port clamps it to the start.
+
+## The month of a year-only date
+
+The `epub` module reads the book as Calibre 9.18 hands it to kfxgen (`oeb_view`). A `dc:date`
+that gives only a year takes the 15th of the current month in Calibre: `utils/date.py`
+`parse_date` fills what is missing from today's date, with the day set to 15. The port fills
+January 15, so the same book gives the same date whenever it is converted. A year and month
+take the 15th in both. The `cascade/` test compares such a date without its month
+(`package_quirks` was dumped in November 2026).
+
+## Dates in other forms
+
+Calibre reads `dc:date` with `dateutil`, which accepts almost any form ("March 4, 2021",
+"4/3/2021"). The port reads ISO 8601 forms only: a year, a year and month, a full date, then
+an optional time and zone. A date in another form is skipped as one Calibre cannot parse is,
+so the book may have no date where Calibre has one.
+
+## Language codes
+
+Calibre writes a book's languages as ISO 639-3 codes (`canonicalize_lang`). The port maps the
+184 two-letter codes with Calibre's own table and keeps a three-letter code as it is. Calibre
+keeps a three-letter code only when ISO 639-3 has it, and also reads English language names
+(`english` as `eng`); the port drops a name and keeps any three letters.
+
+## A book with no language
+
+With no `dc:language` Calibre gives the book the language of its own interface (`get_lang`),
+which depends on the computer it runs on. The port gives `en`, what Calibre gives on an English
+system.
+
+## An HTML cover with no cover image
+
+When an EPUB 2 book's guide names an HTML cover page that opens the spine, and the book has no
+cover image, Calibre renders that page to `calibre_raster_cover.jpg` and makes it the cover
+(`epub_input.py` `rationalize_cover2`). The port cannot render HTML, so that book has no cover
+image; the page still leaves the spine and becomes the title page, as in Calibre.
+
+## Linked files added to the spine
+
+Calibre adds the documents the spine links to, but does not list, at the end of the spine as
+non-linear (`reader.py` `_spine_add_extra`). It collects them in a Python set, so when there are
+several their order can change from one run to the next. The port adds them in the order it
+finds them: spine order, then document order.
+
+## Spine entries marked neither yes nor no
+
+Calibre keeps a `linear` value other than yes, no, true or false as the string itself, which
+kfxgen reads as true unless it is empty. The port's `linear` is a bool: false for an empty
+value, true for any other.
+
+## Which files stay in the manifest
+
+After flattening the CSS, Calibre drops every manifest file nothing uses (`trimmanifest.py`).
+Two of its inputs differ in the port:
+
+- **Files a stylesheet names.** Calibre keeps what its flattened stylesheet names: the fonts
+  of every `@font-face` rule and the images of the rules that matched an element. The port
+  keeps every file named by a `url()` in the stylesheets and `<style>` elements of the
+  flattened documents, so an image only an unused rule names stays.
+- **Metadata values.** Calibre keeps a file whose href or id equals any metadata value
+  (identifiers and timestamps among them); the port checks the seven fields it reads.
+
+## Calibre steps the book view leaves out
+
+These change the book only in uncommon cases and are not ported:
+
+- Files the documents link to that the manifest does not list are added by Calibre with ids
+  `added`, `added1`… (`reader.py` `_manifest_add_missing`).
+- `data:` URLs become manifest files (`transforms/data_url.py`).
+- With no title, Calibre takes the title sort (`calibre:title_sort` or the title's file-as) as
+  the title before falling back to `Unknown`.
