@@ -6,7 +6,7 @@
 //! made is in the file).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use deckle_kfx::epub_zip::EpubReader;
 use deckle_kfx::fixtures;
@@ -60,14 +60,14 @@ fn paths(dom: &Dom, sel: &Selector) -> Vec<Vec<u32>> {
     run(sel, dom).into_iter().map(|n| dom.path(n)).collect()
 }
 
-/// Runs `f`, failing past 5 s: a debug build, tests run in parallel. (Release-build times are
+/// Runs `f`, failing past `COST_LIMIT`. (Release-build times are
 /// in the phase 2 Task 7 report.)
 fn timed<T>(what: &str, f: impl FnOnce() -> T) -> T {
     let start = Instant::now();
     let out = f();
     let took = start.elapsed();
     eprintln!("{what}: {took:?}");
-    assert!(took < Duration::from_secs(5), "{what} took {took:?}");
+    assert!(took < crate::support::COST_LIMIT, "{what} took {took:?}");
     out
 }
 

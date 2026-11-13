@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use deckle_kfx::epub_zip::{EpubReader, join, percent_decode};
 use deckle_kfx::fixtures;
@@ -791,13 +791,13 @@ fn fifty_thousand_and_one_rules_is_too_large() {
     ));
 }
 
-/// Runs `f`, failing past 5 s: a debug build, tests run in parallel. (Release-build times of
+/// Runs `f`, failing past `COST_LIMIT`. (Release-build times of
 /// these cases are in the phase 2 Task 5 report.)
 fn timed<T>(what: &str, f: impl FnOnce() -> T) -> T {
     let start = Instant::now();
     let out = f();
     let took = start.elapsed();
-    assert!(took < Duration::from_secs(5), "{what} took {took:?}");
+    assert!(took < crate::support::COST_LIMIT, "{what} took {took:?}");
     out
 }
 

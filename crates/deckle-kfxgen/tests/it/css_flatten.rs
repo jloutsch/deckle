@@ -27,13 +27,13 @@ fn read(path: &std::path::Path) -> Value {
     serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
 }
 
-/// Runs `f`, failing past 5 s: a debug build, tests run in parallel.
+/// Runs `f`, failing past `COST_LIMIT`.
 fn timed<T>(what: &str, f: impl FnOnce() -> T) -> T {
     let start = Instant::now();
     let out = f();
     let took = start.elapsed();
     eprintln!("{what}: {took:?}");
-    assert!(took < Duration::from_secs(5), "{what} took {took:?}");
+    assert!(took < crate::support::COST_LIMIT, "{what} took {took:?}");
     out
 }
 

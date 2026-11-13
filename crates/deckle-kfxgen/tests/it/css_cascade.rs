@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use deckle_kfx::fixtures;
 use deckle_kfxgen::css::{
@@ -35,13 +35,13 @@ fn probe() -> Value {
     )
 }
 
-/// Runs `f`, failing past 5 s: a debug build, tests run in parallel.
+/// Runs `f`, failing past `COST_LIMIT`.
 fn timed<T>(what: &str, f: impl FnOnce() -> T) -> T {
     let start = Instant::now();
     let out = f();
     let took = start.elapsed();
     eprintln!("{what}: {took:?}");
-    assert!(took < Duration::from_secs(5), "{what} took {took:?}");
+    assert!(took < crate::support::COST_LIMIT, "{what} took {took:?}");
     out
 }
 
@@ -664,7 +664,7 @@ fn fifty_thousand_rules_on_a_hundred_thousand_elements() {
     );
     eprintln!("50,000 rules, 100,000 elements: {:?}", start.elapsed());
     assert!(got.is_ok());
-    assert!(start.elapsed() < Duration::from_secs(5));
+    assert!(start.elapsed() < crate::support::COST_LIMIT);
 }
 
 #[test]
@@ -708,7 +708,7 @@ fn matching_everything_stops(rule: &str) {
         "{:?}",
         got.map(|_| ())
     );
-    assert!(start.elapsed() < Duration::from_secs(5));
+    assert!(start.elapsed() < crate::support::COST_LIMIT);
 }
 
 /// Release build: `cargo test --release -p deckle-kfxgen --test it -- --ignored css_cascade`.
@@ -879,7 +879,7 @@ fn a_hundred_thousand_large_style_attributes_stop() {
         "{:?}",
         got.map(|_| ())
     );
-    assert!(start.elapsed() < Duration::from_secs(5));
+    assert!(start.elapsed() < crate::support::COST_LIMIT);
 }
 
 #[test]

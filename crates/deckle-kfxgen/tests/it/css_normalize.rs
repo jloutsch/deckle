@@ -4,7 +4,7 @@
 //! Calibre 9.18's `StylizerRules.flatten_style` made of `shorthand.css`.
 
 use std::collections::BTreeMap;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use deckle_kfx::epub_zip::EpubReader;
 use deckle_kfx::fixtures;
@@ -340,7 +340,7 @@ fn a_shorthand_of_100_000_parts_is_linear() {
         &DEFAULT_PROFILE,
     );
     assert!(
-        start.elapsed() < Duration::from_secs(5),
+        start.elapsed() < crate::support::COST_LIMIT,
         "{:?}",
         start.elapsed()
     );

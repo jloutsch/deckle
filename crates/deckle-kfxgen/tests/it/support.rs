@@ -12,6 +12,11 @@ use deckle_kfxgen::dom::{Dom, NodeId};
 use deckle_kfxgen::epub::read_package;
 
 /// Every book under `fixtures/kfxgen/cascade/`.
+/// How long a cost test may take. Debug builds run several times slower and share the machine
+/// with other test threads; 30 s still fails a quadratic loop (the ones found took 19 to 106 s).
+pub const COST_LIMIT: std::time::Duration =
+    std::time::Duration::from_secs(if cfg!(debug_assertions) { 30 } else { 5 });
+
 pub const BOOKS: [&str; 13] = [
     "css_quirks",
     "directions",

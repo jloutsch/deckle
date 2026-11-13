@@ -748,7 +748,7 @@ fn html_that_rebuilds_formatting_at_every_block_stops() {
                 Err(Error::TooLarge(_))
             ));
             assert!(
-                start.elapsed() < std::time::Duration::from_secs(5),
+                start.elapsed() < crate::support::COST_LIMIT,
                 "{:?}",
                 start.elapsed()
             );
