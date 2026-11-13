@@ -142,11 +142,21 @@ fn a_fresh_build_returns_its_notes() {
     )
     .unwrap();
     assert!(artifact.bundle.is_dir());
+    // The note names the owner's own file, not the job's snapshot (deleted with the job), and
+    // no copy in the job's folder.
+    let owner = d
+        .path()
+        .join("protected/puzzles.json")
+        .display()
+        .to_string();
+    let note = notes
+        .iter()
+        .find(|n| n.starts_with("The puzzle left out:"))
+        .unwrap_or_else(|| panic!("{notes:?}"));
+    assert!(note.contains(&owner) && note.contains("damaged"), "{note}");
     assert!(
-        notes
-            .iter()
-            .any(|n| n.starts_with("The puzzle left out:") && n.contains("puzzles.json")),
-        "{notes:?}"
+        !note.contains("inputs") && !note.contains(".damaged-"),
+        "{note}"
     );
 }
 

@@ -181,6 +181,12 @@ pub fn build_fresh_noted(
     snapshot(&cfg.puzzle_store(), &puzzles)?;
     snapshot(&cfg.shelf_store(), &shelf)?;
     snapshot(&cfg.almanac_cache(), &almanac)?;
+    // The snapshot and the owner's file it came from, so a note names the owner's file.
+    let owners = [
+        (puzzles.clone(), cfg.puzzle_store()),
+        (shelf.clone(), cfg.shelf_store()),
+        (almanac.clone(), cfg.almanac_cache()),
+    ];
     isolated.puzzle_path = Some(puzzles);
     isolated.shelf_path = Some(shelf);
     isolated.almanac_path = Some(almanac);
@@ -224,7 +230,28 @@ pub fn build_fresh_noted(
     let gathered =
         crate::gather_with(&isolated, date, context.started_at, net, opts).without_nudges();
     let artifact = render_fresh(cfg, context, &gathered)?;
-    Ok((artifact, gathered.notes))
+    let notes = gathered
+        .notes
+        .iter()
+        .map(|n| owner_note(n, &owners))
+        .collect();
+    Ok((artifact, notes))
+}
+
+/// A note about a snapshot input names the owner's file and says it is damaged: the snapshot
+/// and its copy go with the job's folder, so the log must not point at them. The owner's file
+/// gets its own copy when Deckle next loads it on the owner's side.
+fn owner_note(note: &str, owners: &[(PathBuf, PathBuf)]) -> String {
+    for (snapshot, owner) in owners {
+        if let Some(at) = note.find(&snapshot.display().to_string()) {
+            return format!(
+                "{}{} is damaged, so this fresh paper was built without it.",
+                &note[..at],
+                owner.display()
+            );
+        }
+    }
+    note.to_owned()
 }
 
 fn render_fresh(
