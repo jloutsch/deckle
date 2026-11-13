@@ -7,7 +7,9 @@
   wrote the defaults over your API keys and per-book presets. Deckle now keeps a copy beside it
   (`settings.json.damaged-<time>`), says so at the top of Settings, and saves nothing until the
   file is fixed or removed. Settings are written to a temporary file and renamed into place, and
-  are always private to you (0600), also when an older copy was readable by others.
+  are always private to you (0600), also when an older copy was readable by others. The
+  message names the line and column that didn't read, never what is written there, so a key
+  can't show up in it.
 - **The same for From Your Shelf and the Morgue.** A `shelf.json` (every Kindle's snapshot and
   the highlights already printed) or `morgue.json` (the editions sent again) that doesn't read
   is kept with a copy beside it and not replaced. The paper prints without From Your Shelf and
@@ -26,8 +28,11 @@
   the puzzle page out of the paper with a note. A `bookmarklet.token` that isn't a token is no
   longer replaced by a new one (which broke every installed bookmarklet); the message says that
   deleting it makes a new token and the bookmarklets then need installing again. A new token is
-  private to you (0600). KOReader's sync positions and `wireless.json` are kept the same way
-  (`wireless.json` always 0600), and the wireless server doesn't start, saying why.
+  private to you (0600), and an older one readable by others is made private. KOReader's sync
+  positions and `wireless.json` are kept the same way (`wireless.json` always 0600), and the
+  wireless server doesn't start, saying why. A reMarkable host-key pin that doesn't read stops
+  the SSH connection instead of trusting whatever key answers. A fresh paper built for a reader
+  app logs the sections it left out.
 - **Files Deckle can rebuild start empty, with a line saying so.** The forecast and frost caches,
   the watcher's `daemon.json`, KOReader plugin sources, the shelves Deckle made on a reader, the
   readers seen and the wireless readers list and shelf rules keep a copy of a damaged file and

@@ -60,8 +60,10 @@ renamed into place, so a crash never leaves half of one. If one is cut short any
 hand with a stray comma, Deckle copies it to `<name>.damaged-<time>` beside it and leaves the
 file as it is. For your own data (settings and keys, the shelf snapshots, the Morgue's index,
 the library's files, devices, highlights, readership, interests, puzzles, the bookmarklet token,
-wireless and sync files) the part of Deckle that needs the file stops and says which file and
-where the copy is; nothing is saved over it until you fix the file or remove it. Files Deckle
+the reMarkable host-key pin, wireless and sync files) the part of Deckle that needs the file
+stops and says which file and where the copy is; nothing is saved over it until you fix the file
+or remove it. For a file that holds a key or a password, the message gives only the line and
+column, never what is written there. Files Deckle
 can rebuild (caches, the watcher's schedule state, the list of shelves it made on a reader, the
 wireless readers list) start empty instead, with one line saying so. A file that can't be read
 at all (permissions) is never replaced.
