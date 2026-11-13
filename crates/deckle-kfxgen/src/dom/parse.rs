@@ -342,8 +342,17 @@ static MS_IF: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)</{0,1}!\[(end){0,1}if\]{0,1}>").expect("valid pattern"));
 
 /// Python's `str.isspace`, which `\s` follows in a `str` pattern.
-fn py_space(c: char) -> bool {
+pub(crate) fn py_space(c: char) -> bool {
     c.is_whitespace() || ('\x1c'..='\x1f').contains(&c)
+}
+
+/// `structure.py` `isspace`: empty, or blank once its no-break spaces are taken out, but not
+/// made only of them.
+pub(crate) fn calibre_isspace(s: &str) -> bool {
+    s.is_empty() || {
+        let mut rest = s.chars().filter(|&c| c != '\u{a0}').peekable();
+        rest.peek().is_some() && rest.all(py_space)
+    }
 }
 
 /// `HTMLPreProcessor.__call__` for a book that is not Baen's, Book Designer's or calibre's
@@ -588,6 +597,11 @@ pub(crate) fn from_xml(doc: &Document) -> Dom {
             set(&mut made, n, id);
         } else if let Some(t) = n.text().filter(|_| n.is_text()) {
             dom.append_text(parent, t);
+        } else if n.is_comment() && !calibre_isspace(n.text().unwrap_or(""))
+            || n.pi()
+                .is_some_and(|pi| !calibre_isspace(pi.value.unwrap_or("")))
+        {
+            dom.note_comment(parent);
         }
     }
     dom
@@ -666,8 +680,11 @@ enum Kind {
     },
     Text(String),
     /// A comment or processing instruction: not kept in the tree, but linked, so the parse can
-    /// tell whether `<html>` ends in one.
-    Dropped,
+    /// tell whether `<html>` ends in one, and whether its text is blank
+    /// ([`calibre_isspace`]).
+    Dropped {
+        content: bool,
+    },
 }
 
 struct SinkNode {
@@ -876,7 +893,7 @@ impl Sink {
         dom.root_ends_in_comment = children(html)
             .filter(|&c| !matches!(nodes[c].kind, Kind::Text(_)))
             .last()
-            .is_some_and(|c| matches!(nodes[c].kind, Kind::Dropped));
+            .is_some_and(|c| matches!(nodes[c].kind, Kind::Dropped { .. }));
         let mut stack = vec![(html, r, 0usize)];
         while let Some((s, d, depth)) = stack.pop() {
             for c in children(s) {
@@ -892,7 +909,8 @@ impl Sink {
                         dom.attach(d, id);
                         stack.push((c, id, depth + 1));
                     }
-                    Kind::Document | Kind::Dropped => {}
+                    Kind::Dropped { content: true } => dom.note_comment(d),
+                    Kind::Document | Kind::Dropped { .. } => {}
                 }
             }
         }
@@ -1004,12 +1022,20 @@ impl TreeSink for Sink {
         )
     }
 
-    fn create_comment(&self, _text: StrTendril) -> usize {
-        self.push(QualName::new(None, ns!(), local_name!("")), Kind::Dropped)
+    fn create_comment(&self, text: StrTendril) -> usize {
+        let content = !calibre_isspace(&text);
+        self.push(
+            QualName::new(None, ns!(), local_name!("")),
+            Kind::Dropped { content },
+        )
     }
 
-    fn create_pi(&self, _target: StrTendril, _data: StrTendril) -> usize {
-        self.push(QualName::new(None, ns!(), local_name!("")), Kind::Dropped)
+    fn create_pi(&self, _target: StrTendril, data: StrTendril) -> usize {
+        let content = !calibre_isspace(&data);
+        self.push(
+            QualName::new(None, ns!(), local_name!("")),
+            Kind::Dropped { content },
+        )
     }
 
     fn append(&self, parent: &usize, child: NodeOrText<usize>) {

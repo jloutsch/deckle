@@ -88,7 +88,8 @@ const NOT_YET: &[NotYet] = &[
         removed: &[],
         added: &["id"],
         why: "with no contents file Calibre gives each heading it lists an id calibre_toc_N \
-              (oeb/transforms/structure.py DetectStructure): Task 8",
+              (oeb/transforms/structure.py DetectStructure): dom::generated_toc, after the \
+              parse, compared in css_cascade.rs",
     },
     NotYet {
         book: "no_toc",

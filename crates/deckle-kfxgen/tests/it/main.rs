@@ -2,6 +2,7 @@
 //! All integration tests in one binary: one link instead of one per file.
 
 mod corpus;
+mod css_cascade;
 mod css_normalize;
 mod css_select;
 mod css_sheet;
@@ -20,4 +21,5 @@ mod generate_typography;
 mod generate_writing;
 mod load;
 mod oracle;
+mod support;
 mod whole_book;

@@ -17,28 +17,13 @@ use deckle_kfxgen::css::{
     DEFAULT_PROFILE, Decl, Decls, Error, HTML_CSS, Origin, Sheet, media_ok, parse_sheet,
     parse_style_attr, serialize_value,
 };
-use deckle_kfxgen::dom::{self, Dom, NodeId};
+use deckle_kfxgen::dom;
 use deckle_kfxgen::epub::read_package;
 use deckle_limits::{MAX_STYLE_DECLS, MAX_STYLE_RULES};
 use serde::Deserialize;
 use serde::de::{Deserializer, MapAccess, Visitor};
 
-/// Every book under `fixtures/kfxgen/cascade/`.
-const BOOKS: [&str; 13] = [
-    "css_quirks",
-    "directions",
-    "fake_margins",
-    "fonts",
-    "frames",
-    "lists",
-    "malformed",
-    "navigation",
-    "no_toc",
-    "notes",
-    "package_quirks",
-    "rtl",
-    "vertical",
-];
+use crate::support::{self, BOOKS, dir_of};
 
 /// A JSON object read in its written order (serde_json's `Map` sorts its keys).
 #[derive(Debug, PartialEq)]
@@ -164,20 +149,8 @@ fn first_difference(got: &[Flat], want: &[Flat]) -> String {
     )
 }
 
-fn local(dom: &Dom, n: NodeId) -> String {
-    let tag = dom.tag(n);
-    tag.rsplit(':').next().unwrap_or(tag).to_ascii_lowercase()
-}
-
-/// The directory part of an href from the EPUB root.
-fn dir_of(href: &str) -> &str {
-    href.rsplit_once('/').map_or("", |(d, _)| d)
-}
-
-/// A spine file's stylesheets in Calibre's order (`stylizer.py` `Stylizer.__init__`): each
-/// `<style>` and `<link rel=stylesheet>` in document order, with their imports. A linked
-/// sheet's `@page` rules are dropped (`base.py` `_parse_css`); its URLs and those in a
-/// `<style>` are made book-absolute (`flatcss.py` `CSSFlattener.__call__`, `replaceUrls`).
+/// A spine file's stylesheets in Calibre's order ([`support::file_sheets`]) and their
+/// `@font-face` rules.
 fn spine_file_sheets(
     zip: &mut EpubReader,
     css_items: &[String],
@@ -188,72 +161,8 @@ fn spine_file_sheets(
         .or_else(|_| zip.read_bytes(&percent_decode(href)))
         .unwrap();
     let dom = dom::parse(&bytes).unwrap();
-    let mut read_css = |path: &str| -> Option<String> {
-        if !css_items.iter().any(|c| c == path) {
-            return None;
-        }
-        zip.read_string(path).ok()
-    };
-    let mut sheets = Vec::new();
-    // Calibre's rule index runs on across the file's sheets.
-    let mut next = 0;
-    for n in dom.descendants() {
-        match local(&dom, n).as_str() {
-            "style" => {
-                if dom.attr(n, "type").is_some_and(|t| t != "text/css")
-                    || !media_ok(dom.attr(n, "media").unwrap_or(""))
-                {
-                    continue;
-                }
-                let mut text = dom.text(n).to_owned();
-                for &c in dom.children(n) {
-                    for t in [dom.text(c), dom.tail(c)] {
-                        if !t.is_empty() {
-                            text.push_str("\n\n");
-                            text.push_str(t);
-                        }
-                    }
-                }
-                if text.is_empty() {
-                    continue;
-                }
-                let base = dir_of(href);
-                let mut import = |h: &str| read_css(&join(base, h));
-                let sheet = parse_sheet(&text, Origin::Book, href, next, &mut import).unwrap();
-                next = sheet.next_index;
-                sheets.push(sheet);
-            }
-            "link" => {
-                let Some(link) = dom.attr(n, "href").filter(|h| !h.is_empty()) else {
-                    continue;
-                };
-                if !dom
-                    .attr(n, "rel")
-                    .unwrap_or("stylesheet")
-                    .eq_ignore_ascii_case("stylesheet")
-                    || !dom
-                        .attr(n, "type")
-                        .unwrap_or("text/css")
-                        .eq_ignore_ascii_case("text/css")
-                    || !media_ok(dom.attr(n, "media").unwrap_or(""))
-                {
-                    continue;
-                }
-                let path = join(dir_of(href), &percent_decode(link));
-                let Some(text) = read_css(&path) else {
-                    continue;
-                };
-                let base = dir_of(&path).to_owned();
-                let mut import = |h: &str| read_css(&join(&base, h));
-                let mut sheet = parse_sheet(&text, Origin::Book, &path, next, &mut import).unwrap();
-                sheet.page.clear();
-                next = sheet.next_index;
-                sheets.push(sheet);
-            }
-            _ => {}
-        }
-    }
-    let font_face = sheets.iter().flat_map(|s| s.font_face.clone()).collect();
+    let sheets = support::file_sheets(zip, css_items, href, &dom);
+    let font_face = support::font_faces(&sheets);
     (sheets, font_face)
 }
 

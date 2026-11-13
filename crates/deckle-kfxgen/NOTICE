@@ -47,8 +47,12 @@ src/calibre/ebooks/oeb/parse_utils.py, src/calibre/ebooks/oeb/base.py,
 src/calibre/ebooks/chardet.py, src/calibre/ebooks/conversion/preprocess.py,
 src/calibre/__init__.py, src/calibre/ebooks/html_entities.c and src/calibre/utils/speedup.c.
 
-src/css ports calibre 9.18.0's reading of a book's stylesheets into rules, under the same
-notice: src/calibre/ebooks/oeb/stylizer.py, src/calibre/ebooks/oeb/base.py,
+src/dom/structure.rs ports calibre 9.18.0's chapter marks and generated contents, under the
+same notice: src/calibre/ebooks/oeb/transforms/structure.py, src/calibre/ebooks/oeb/reader.py,
+src/calibre/ebooks/oeb/base.py and src/calibre/ebooks/conversion/plumber.py.
+
+src/css ports calibre 9.18.0's reading of a book's stylesheets into rules and its first
+cascade, under the same notice: src/calibre/ebooks/oeb/stylizer.py, src/calibre/ebooks/oeb/base.py,
 src/calibre/ebooks/oeb/normalize_css.py, src/calibre/ebooks/conversion/preprocess.py,
 src/calibre/ebooks/oeb/transforms/flatcss.py and src/calibre/customize/profiles.py. It also
 ports src/tinycss/media3.py and src/tinycss/fonts3.py, which Kovid Goyal wrote for calibre's

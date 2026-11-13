@@ -16,10 +16,12 @@
 
 mod clean;
 mod parse;
+mod structure;
 mod write;
 
-pub(crate) use parse::from_xml;
 pub use parse::parse;
+pub(crate) use parse::{from_xml, py_space};
+pub use structure::{generated_toc, mark_chapters};
 pub use write::to_xhtml;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -85,7 +87,16 @@ struct Element {
     children: Vec<NodeId>,
     /// Its index in its parent's `children`.
     pos: u32,
+    /// Where a comment or processing instruction with content stood, which the tree does not
+    /// keep: [`IN_TEXT`], [`IN_TAIL`] (read by `structure.rs`).
+    notes: u8,
 }
+
+/// [`Element::notes`]: a comment or processing instruction whose text is not blank
+/// (`structure.py` `isspace`) stood in the element's text, before its first child.
+const IN_TEXT: u8 = 1;
+/// [`Element::notes`]: one stood in the element's tail.
+const IN_TAIL: u8 = 2;
 
 /// An element tree in an arena. Removed elements stay in the arena, detached.
 #[derive(Debug, Clone)]
@@ -156,6 +167,7 @@ impl Dom {
             parent: None,
             children: Vec::new(),
             pos: 0,
+            notes: 0,
         });
         id
     }
@@ -370,9 +382,16 @@ impl Dom {
             };
             let pos = self.el(n).pos as usize;
             let tail = std::mem::take(&mut self.el_mut(n).tail);
+            let note = self.take_tail_note(n);
             match pos.checked_sub(1).map(|i| self.el(p).children[i]) {
-                Some(prev) => self.el_mut(prev).tail.push_str(&tail),
-                None => self.el_mut(p).text.push_str(&tail),
+                Some(prev) => {
+                    self.el_mut(prev).tail.push_str(&tail);
+                    self.el_mut(prev).notes |= note * IN_TAIL;
+                }
+                None => {
+                    self.el_mut(p).text.push_str(&tail);
+                    self.el_mut(p).notes |= note * IN_TEXT;
+                }
             }
             self.el_mut(p).children.remove(pos);
             self.renumber(p, pos);
@@ -400,9 +419,16 @@ impl Dom {
             });
             prev_kept.insert(n, prev);
             let tail = std::mem::take(&mut self.el_mut(n).tail);
+            let note = self.take_tail_note(n);
             match prev {
-                Some(s) => self.el_mut(s).tail.push_str(&tail),
-                None => self.el_mut(p).text.push_str(&tail),
+                Some(s) => {
+                    self.el_mut(s).tail.push_str(&tail);
+                    self.el_mut(s).notes |= note * IN_TAIL;
+                }
+                None => {
+                    self.el_mut(p).text.push_str(&tail);
+                    self.el_mut(p).notes |= note * IN_TEXT;
+                }
             }
         }
         let mut last = None;
@@ -490,7 +516,31 @@ impl Dom {
     /// `remove_elem`).
     fn detach_with_tail(&mut self, n: NodeId) {
         self.el_mut(n).tail.clear();
+        self.el_mut(n).notes &= !IN_TAIL;
         self.remove(n);
+    }
+
+    /// 1 if a comment with content stood in `n`'s tail, which then moves elsewhere; else 0.
+    fn take_tail_note(&mut self, n: NodeId) -> u8 {
+        let e = self.el_mut(n);
+        let note = u8::from(e.notes & IN_TAIL != 0);
+        e.notes &= !IN_TAIL;
+        note
+    }
+
+    /// Records a comment or processing instruction with content where text after `parent`'s
+    /// last child goes ([`Dom::append_text`]).
+    fn note_comment(&mut self, parent: NodeId) {
+        match self.el(parent).children.last() {
+            Some(&last) => self.el_mut(last).notes |= IN_TAIL,
+            None => self.el_mut(parent).notes |= IN_TEXT,
+        }
+    }
+
+    /// The number of elements the arena holds, removed ones included: one more than the
+    /// largest [`NodeId`] index.
+    pub(crate) fn node_count(&self) -> usize {
+        self.nodes.len()
     }
 
     /// Appends `s` where text after `parent`'s last child goes: that child's tail, or

@@ -112,16 +112,34 @@ pub fn select(sel: &Selector, dom: &Dom, index: &DocIndex) -> Result<Vec<NodeId>
     eval::select(&sel.0, dom, index)
 }
 
+/// The specificity of a selector [`parse_selector`] drops, where the reader gets far enough to
+/// tell: css_parser still sorts the rule by it, though `Select` refuses it (a pseudo-element
+/// such as `::marker`). `None` for a selector that does not read.
+pub(crate) fn dropped_specificity(text: &str) -> Option<(u32, u32, u32)> {
+    if text.len() > MAX_SELECTOR_BYTES {
+        return None;
+    }
+    let toks = tokenize(text).ok()?;
+    let mut stream = Stream::new(&toks);
+    let mut reader = Reader { parts: 0 };
+    let selectors = reader.group(&mut stream).ok()?;
+    Some(specificity_of(&selectors))
+}
+
+fn specificity_of(selectors: &[(parse::Complex, Option<parse::PseudoElement>)]) -> Spec {
+    selectors
+        .iter()
+        .map(|(c, pe)| add(spec_complex(c), if pe.is_some() { (0, 0, 1) } else { ZERO }))
+        .max()
+        .unwrap_or(ZERO)
+}
+
 fn read(text: &str) -> Result<(Compiled, Spec), Fail> {
     let toks = tokenize(text)?;
     let mut stream = Stream::new(&toks);
     let mut reader = Reader { parts: 0 };
     let selectors = reader.group(&mut stream)?;
-    let specificity = selectors
-        .iter()
-        .map(|(c, pe)| add(spec_complex(c), if pe.is_some() { (0, 0, 1) } else { ZERO }))
-        .max()
-        .unwrap_or(ZERO);
+    let specificity = specificity_of(&selectors);
     Ok((Builder::compile(text, &selectors)?, specificity))
 }
 

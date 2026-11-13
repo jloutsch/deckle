@@ -348,8 +348,12 @@ name 100 MB. The port refuses a file whose entities would make more than 16 MB
 ## Calibre steps the element tree leaves out
 
 - Comments and processing instructions are dropped and the text around them joined. Calibre
-  keeps them in the tree; no path or style counts them. The one rule that reads one, the
-  lower-casing check on the root's last child, is told whether that child was a comment.
+  keeps them in the tree; no path or style counts them. The two rules that read one are told
+  what they need: the lower-casing check on the root's last child, whether that child was a
+  comment; `DetectStructure`'s `at_start` (`dom::mark_chapters`), where one whose text is not
+  blank stood (in an element's text or tail). Where a later clean-up step moves text from one
+  element to another, that record stays with the element; and a comment made only of dashes
+  counts as text, where Calibre's HTML 4 fallback parser strips the dashes first.
 - `HTMLPreProcessor`'s rule sets for Baen books, Book Designer and calibre's own pdftohtml
   output, and the user's search and replace, are not run.
 - A document whose root is `<ncx>` is kept as parsed; Calibre parses it again as XML
@@ -489,3 +493,29 @@ digits (Python reads `٣` as 3), and divides as f64, which is Python's result wh
 are below 2^53 and can round differently past it. Calibre's `int()` refuses more than 4300
 digits, as the port does. A unicode escape naming a surrogate code point is read as U+FFFD,
 where Python keeps the surrogate.
+
+## Chapter headings in other namespaces
+
+Calibre's default chapter expression tests `name()='h1' or name()='h2'`, the qualified name: an
+element written with a prefix (`<x:h1>`) is not a heading to it. The element tree keeps no
+prefixes, so `dom::mark_chapters` and `dom::generated_toc` take an `h1` or `h2` in any
+namespace as a heading. Calibre's own parse writes XHTML without prefixes, so only an element of
+another namespace given a prefix differs.
+
+## The order of rules Calibre's engine refuses
+
+Calibre sorts every rule by css_parser's specificity, then skips at matching the ones its
+selector engine refuses. A refused rule changes no style, only its place in `Cascaded::rules`.
+The port takes the specificity from its own reading of the selector where it gets that far
+(`li::marker`), and sorts a selector it cannot read at all as (0, 0, 0).
+
+## Declarations one book file's cascade stores
+
+Calibre keeps a dictionary of declarations for every element, however many. The port shares one
+copy among the elements the same rules and `style` attribute reach, and counts what it stores
+(`deckle_limits::MAX_CASCADE_DECLS`): past it `css::cascade` gives `css::Error::Cascade` for that
+file. At the limit the styles take about 500 MB. The 49 files of the cascade fixtures use at most
+385 units, the files of nine Gutenberg books at most 1,009; a file of 40,000 elements each
+given 1,000 declarations of its own passes it. The port also counts
+the CSS rules of all a file's stylesheets together against `deckle_limits::MAX_STYLE_RULES`,
+where `css::parse_sheet` counts each sheet's own.

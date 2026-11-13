@@ -95,6 +95,14 @@ pub const MAX_STYLE_DECLS: usize = 150_000;
 /// file of 20,000 elements take about 12 million.
 pub const MAX_SELECTOR_WORK: u64 = 200_000_000;
 
+/// EPUB to KFX: declarations the first cascade of one book file stores for its elements, in
+/// units: one for each declaration copied into an element's styles, one more for each 64
+/// bytes of it, and one for each set of rules found to match an element. Elements the same
+/// rules match share one copy, so a book's units grow with its distinct styles, not its
+/// elements. A `style` attribute counts its text, a unit for each 64 bytes, before it is read.
+/// At the limit the styles take about 500 MB.
+pub const MAX_CASCADE_DECLS: usize = 5_000_000;
+
 /// Largest reservation made from a size a file declares (rule 1 of the size-limits design):
 /// `Vec::with_capacity(declared.min(MAX_RESERVE))`.
 pub const MAX_RESERVE: usize = 64 * 1024;

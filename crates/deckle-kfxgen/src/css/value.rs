@@ -613,6 +613,16 @@ pub(crate) fn declarations(
 /// `text-underline` or `tab-interval` dropped (`Style.MS_PAT`, which, unlike the stylesheet
 /// preprocessor, is case-sensitive), the rest read as a declaration list.
 pub fn parse_style_attr(text: &str) -> Decls {
+    style_attr(text, None)
+}
+
+/// [`parse_style_attr`], each `url()` made book-absolute from the document at `href`, as
+/// `_apply_style_attr` does with `replaceUrls(style, item.abshref)`.
+pub(crate) fn style_attr_in(text: &str, href: &str) -> Decls {
+    style_attr(text, Some(&|u: &str| abshref(href, u)))
+}
+
+fn style_attr(text: &str, urls: Option<&dyn Fn(&str) -> String>) -> Decls {
     const MS: [&str; 4] = ["mso-", "panose-", "text-underline", "tab-interval"];
     let kept: Vec<&str> = text
         .split(';')
@@ -622,7 +632,7 @@ pub fn parse_style_attr(text: &str) -> Decls {
     let joined = kept.join("; ");
     let mut input = ParserInput::new(&joined);
     let mut p = Parser::new(&mut input);
-    declarations(&mut p, None, None)
+    declarations(&mut p, None, urls)
 }
 
 /// css_parser's view of a declaration list (`CSSStyleDeclaration.__iter__`): each name once,

@@ -12,7 +12,7 @@
 //! function. Where the port differs on purpose, `DIVERGENCES.md` says so.
 
 mod oeb;
-mod package;
+pub(crate) mod package;
 mod toc;
 
 pub use oeb::oeb_view;

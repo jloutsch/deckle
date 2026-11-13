@@ -13,19 +13,23 @@
 //! `ebooks/oeb/normalize_css.py`, `tinycss/media3.py` and `tinycss/fonts3.py`;
 //! css_parser's own behaviour, which is not in Calibre's source, was read from Calibre 9.18 and
 //! is described where it is ported. [`parse_selector`] and [`select`] match a rule's selector as
-//! Calibre's own engine, `css_selectors`, does (Task 7). Where the port differs on purpose,
-//! `DIVERGENCES.md` says so.
+//! Calibre's own engine, `css_selectors`, does (Task 7). [`cascade`] applies a file's rules
+//! and `style` attributes to its elements as the first-pass `Stylizer` does (Task 8). Where the
+//! port differs on purpose, `DIVERGENCES.md` says so.
 //!
 //! Hostile input: every count the input controls is bounded by
 //! [`deckle_limits::MAX_STYLE_RULES`], [`deckle_limits::MAX_STYLE_DECLS`] or a nesting limit,
 //! charged as the text is read; the selectors of a list share one copy of their declarations,
 //! and no work is repeated per declaration or per import. Matching selectors to a document is
-//! bounded by [`deckle_limits::MAX_SELECTOR_WORK`], charged to its [`DocIndex`].
+//! bounded by [`deckle_limits::MAX_SELECTOR_WORK`], charged to its [`DocIndex`]; the
+//! declarations the cascade stores for a document's elements by
+//! [`deckle_limits::MAX_CASCADE_DECLS`].
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 mod budget;
+mod cascade;
 mod defaults;
 mod font_shorthand;
 mod media;
@@ -35,6 +39,7 @@ mod selector;
 mod sheet;
 mod value;
 
+pub use cascade::{Cascaded, cascade};
 pub use defaults::{DEFAULTS, INHERITED};
 pub use media::media_ok;
 pub use normalize::{DEFAULT_PROFILE, Profile, normalize};
@@ -137,4 +142,11 @@ pub enum Error {
     /// [`deckle_limits::MAX_STYLE_DECLS`] declaration units: the limit passed.
     #[error("this book file's stylesheets hold more than {0} CSS rules or declarations")]
     TooLarge(usize),
+    /// Matching the selectors took more than [`deckle_limits::MAX_SELECTOR_WORK`] steps.
+    #[error(transparent)]
+    Selectors(#[from] TooLarge),
+    /// The styles the cascade gives the elements pass [`deckle_limits::MAX_CASCADE_DECLS`]
+    /// units: the limit passed.
+    #[error("the CSS of this book file gives its elements more than {0} declarations")]
+    Cascade(usize),
 }

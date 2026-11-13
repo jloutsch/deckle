@@ -84,6 +84,7 @@ the limit, instead of slowing the computer or crashing. Real books are far insid
 | CSS rules in one book file (a rule for each selector of a list) | 50,000 |
 | CSS declarations in one book file (a shorthand counts once for each declaration it stands for; each 64 bytes of a declaration, selector or stylesheet counts once more) | 150,000 |
 | Matching one book file's CSS selectors to its elements: an element checked against part of a selector counts once (about 2 to 3 seconds of work) | 200 million |
+| CSS declarations given to one book file's elements: counted once for each distinct set of styles, not for each element (each 64 bytes of a declaration or a `style` attribute counts once more) | 5 million |
 | CBZ, CBR: the whole archive, unpacked | 4 GB |
 | CBZ, CBR: one page | 256 MB |
 | DOCX: the whole document, unpacked, pictures included | 50 MB |

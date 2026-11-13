@@ -1,0 +1,882 @@
+// SPDX-License-Identifier: GPL-3.0-only
+//! The first cascade (phase 2 plan Task 8): each spine file's rules sorted and applied as
+//! Calibre 9.18's first-pass `Stylizer` applies them, the chapter marks `DetectStructure` puts
+//! in, and the contents it makes for a book with none, against the dumps under
+//! `fixtures/kfxgen/cascade/` and against `data/css_cascade_probe.json`, read from Calibre with
+//! `calibre-debug` (its `how` says how).
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use deckle_kfx::fixtures;
+use deckle_kfxgen::css::{
+    Cascaded, DEFAULT_PROFILE, Decls, Error, HTML_CSS, Origin, Sheet, cascade, parse_sheet,
+};
+use deckle_kfxgen::dom::{self, Dom, NodeId, generated_toc, mark_chapters};
+use deckle_kfxgen::epub::TocNode;
+use deckle_limits::roxmltree::{Node, ParsingOptions};
+use deckle_limits::{MAX_CASCADE_DECLS, MAX_STYLE_RULES};
+use serde_json::Value;
+
+use crate::support::{BOOKS, Book};
+
+/// The style of the `<div>` Calibre puts before a chapter (`structure.py` `detect_chapters`).
+const MARK: &str = "display: block; page-break-after: always";
+
+fn read(path: &std::path::Path) -> Value {
+    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+}
+
+fn probe() -> Value {
+    read(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/it/data/css_cascade_probe.json"),
+    )
+}
+
+/// Runs `f`, failing past 5 s: a debug build, tests run in parallel.
+fn timed<T>(what: &str, f: impl FnOnce() -> T) -> T {
+    let start = Instant::now();
+    let out = f();
+    let took = start.elapsed();
+    eprintln!("{what}: {took:?}");
+    assert!(took < Duration::from_secs(5), "{what} took {took:?}");
+    out
+}
+
+fn page(body: &str) -> Dom {
+    let src = format!(
+        "<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>T</title></head><body>{body}</body></html>"
+    );
+    dom::parse(src.as_bytes()).unwrap()
+}
+
+fn pairs(decls: &Decls) -> Vec<(String, String)> {
+    decls
+        .iter()
+        .map(|(k, d)| (k.clone(), d.value.clone()))
+        .collect()
+}
+
+fn important(decls: &Decls) -> Vec<String> {
+    let mut names: Vec<String> = decls
+        .iter()
+        .filter(|(_, d)| d.important)
+        .map(|(k, _)| k.clone())
+        .collect();
+    names.sort();
+    names
+}
+
+fn strings(v: &Value) -> Vec<(String, String)> {
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            (
+                p[0].as_str().unwrap().to_owned(),
+                p[1].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+fn path_of(v: &Value) -> Vec<u32> {
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i.as_u64().unwrap() as u32)
+        .collect()
+}
+
+fn find(dom: &Dom, path: &[u32]) -> NodeId {
+    let mut n = dom.root();
+    for &i in path {
+        n = dom.children(n)[i as usize];
+    }
+    n
+}
+
+fn body(dom: &Dom) -> NodeId {
+    dom.children(dom.root())
+        .iter()
+        .copied()
+        .find(|&c| dom.tag(c) == "body")
+        .unwrap()
+}
+
+/// One spine file of a cascade fixture book, with its chapter marks, cascaded. `prepare`
+/// changes the tree first, as Calibre's steps between the marks and the Stylizer do.
+fn cascaded(book: &mut Book, href: &str, prepare: impl FnOnce(&mut Dom)) -> (Dom, Cascaded) {
+    let mut dom = dom::parse(&book.read(href)).unwrap();
+    mark_chapters(&mut dom);
+    prepare(&mut dom);
+    let sheets = book.sheets(href, &dom);
+    let c = cascade(&mut dom, href, sheets, &DEFAULT_PROFILE).unwrap();
+    (dom, c)
+}
+
+/// The probe's first pass of `css_quirks`'s `cascade.xhtml`, and the port's.
+fn cascade_xhtml() -> (Dom, Cascaded, Value) {
+    let probe = probe();
+    let want = probe["cascade"].clone();
+    let mut book = Book::open("css_quirks");
+    let (dom, c) = cascaded(&mut book, "OEBPS/cascade.xhtml", |dom| {
+        // `flatcss.py` `CSSFlattener.stylize_spine` sets <body>'s style before it builds the
+        // Stylizer (Task 9).
+        let b = body(dom);
+        dom.set_attr(b, "style", want["body_style"].as_str());
+    });
+    (dom, c, want)
+}
+
+#[test]
+fn important_and_order_cases() {
+    let (dom, c, want) = cascade_xhtml();
+    let at = |path: &[u32]| c.specified(find(&dom, path));
+    let value = |path: &[u32], name: &str| {
+        at(path)
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, d)| (d.value.clone(), d.important))
+    };
+    // `p.i1 { color: red !important }` then `p.i1 { color: blue }`: the important one stays.
+    assert_eq!(value(&[1, 2], "color"), Some(("red".into(), true)));
+    // `p.i2 { color: green !important }` and `style="color: purple"`.
+    assert_eq!(value(&[1, 3], "color"), Some(("green".into(), true)));
+    // Two rules of equal specificity: the later; then the style attribute over both.
+    assert_eq!(value(&[1, 4], "color"), Some(("navy".into(), false)));
+    assert_eq!(value(&[1, 5], "color"), Some(("purple".into(), false)));
+    // An id over a class, whatever the order.
+    assert_eq!(value(&[1, 6], "color"), Some(("teal".into(), false)));
+    // A link, a <style>, a second link: the last.
+    assert_eq!(value(&[1, 7], "color"), Some(("blue".into(), false)));
+    // html.css gives <hr> a height.
+    assert_eq!(value(&[1, 8], "height"), Some(("2px".into(), false)));
+    // html.css's `float: none !important` loses to the book's `float: right !important`.
+    assert_eq!(value(&[1, 22], "float"), Some(("right".into(), true)));
+
+    // And every element of the file as the probe read Calibre's first pass.
+    let elements = want["elements"].as_array().unwrap();
+    assert_eq!(elements.len(), dom.descendants().count());
+    let mut failed = Vec::new();
+    for e in elements {
+        let path = path_of(&e[0]);
+        let n = find(&dom, &path);
+        let got = (pairs(c.specified(n)), important(c.specified(n)));
+        let mut want_imp: Vec<String> = e[2]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap().to_owned())
+            .collect();
+        want_imp.sort();
+        let want = (strings(&e[1]), want_imp);
+        if got != want {
+            failed.push(format!("{path:?}: got {got:?}\n  want {want:?}"));
+        }
+        let pseudo: Vec<(String, Vec<(String, String)>)> = c
+            .pseudo(n)
+            .iter()
+            .map(|(k, d)| ((*k).to_owned(), pairs(d)))
+            .collect();
+        let want_pseudo: Vec<(String, Vec<(String, String)>)> = e[3]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| (p[0].as_str().unwrap().to_owned(), strings(&p[1])))
+            .collect();
+        if pseudo != want_pseudo {
+            failed.push(format!(
+                "{path:?} pseudo: got {pseudo:?}, want {want_pseudo:?}"
+            ));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+#[test]
+fn img_size_attributes_fold_into_css() {
+    let (dom, c, _) = cascade_xhtml();
+    let img = |i: u32| find(&dom, &[1, i]);
+    let size = |n: NodeId| (dom.attr(n, "width"), dom.attr(n, "height"));
+    let decls = |n: NodeId| {
+        pairs(c.specified(n))
+            .into_iter()
+            .filter(|(k, _)| k == "width" || k == "height")
+            .collect::<Vec<_>>()
+    };
+    let wh = |w: &str, h: &str| vec![("width".into(), w.into()), ("height".into(), h.into())];
+    // width="30" height="40": both become CSS in px, and leave the tree.
+    assert_eq!(size(img(10)), (None, None));
+    assert_eq!(decls(img(10)), wh("30px", "40px"));
+    // width="50%": kept as written; html.css's `height: auto` stays.
+    assert_eq!(size(img(11)), (None, None));
+    assert_eq!(decls(img(11)), wh("50%", "auto"));
+    // CSS sets a width: the attributes stay, and CSS wins.
+    assert_eq!(size(img(12)), (Some("30"), Some("40")));
+    assert_eq!(decls(img(12)), wh("50%", "auto"));
+    // A style attribute sets a height: the same.
+    assert_eq!(size(img(13)), (Some("30"), Some("40")));
+    assert_eq!(decls(img(13)), wh("auto", "2em"));
+
+    // Across every fixture file, the pictures keep exactly the size attributes kfxgen's tree
+    // has (dom/NNN.xhtml).
+    let mut compared = 0;
+    for name in BOOKS {
+        let mut book = Book::open(name);
+        for (href, n) in book.files.clone() {
+            let (dom, _) = cascaded(&mut book, &href, |_| {});
+            let xhtml = std::fs::read_to_string(book.dir.join(format!("dom/{n}.xhtml"))).unwrap();
+            let want = dump_img_sizes(&xhtml);
+            let got: BTreeMap<Vec<u32>, (Option<String>, Option<String>)> = dom
+                .descendants()
+                .filter(|&e| dom.tag(e) == "img")
+                .map(|e| {
+                    let attr = |a: &str| dom.attr(e, a).map(str::to_owned);
+                    (dom.path(e), (attr("width"), attr("height")))
+                })
+                .collect();
+            assert_eq!(got, want, "{name} {href}");
+            compared += got.len();
+        }
+    }
+    assert!(compared > 10, "{compared} pictures");
+}
+
+/// Path → (width, height) of each `<img>` in a `dom/` dump.
+fn dump_img_sizes(xhtml: &str) -> BTreeMap<Vec<u32>, (Option<String>, Option<String>)> {
+    let doc = deckle_limits::parse_xml(xhtml, ParsingOptions::default()).unwrap();
+    let mut out = BTreeMap::new();
+    let mut stack = vec![(doc.root_element(), Vec::new())];
+    while let Some((n, path)) = stack.pop() {
+        if n.tag_name().name() == "img" {
+            let attr = |a: &str| n.attribute(a).map(str::to_owned);
+            out.insert(path.clone(), (attr("width"), attr("height")));
+        }
+        for (i, c) in n.children().filter(Node::is_element).enumerate() {
+            let mut p = path.clone();
+            p.push(i as u32);
+            stack.push((c, p));
+        }
+    }
+    out
+}
+
+/// The paths of the dump's chapter marks: elements whose style is exactly the mark's.
+fn dump_marks(styles: &Value) -> BTreeSet<Vec<u32>> {
+    let table = styles["table"].as_array().unwrap();
+    let mark = serde_json::json!({"display": "block", "page-break-after": "always"});
+    styles["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| table[e[1].as_u64().unwrap() as usize]["specified"] == mark)
+        .map(|e| path_of(&e[0]))
+        .collect()
+}
+
+/// (path, tag, id) of every element of a `dom/` dump, and of the port's tree. Calibre's
+/// flattener, after the marks, renames `<font>` (Task 9).
+fn dump_shape(xhtml: &str) -> Vec<(Vec<u32>, String, Option<String>)> {
+    let doc = deckle_limits::parse_xml(xhtml, ParsingOptions::default()).unwrap();
+    let mut out = Vec::new();
+    let mut stack = vec![(doc.root_element(), Vec::new())];
+    while let Some((n, path)) = stack.pop() {
+        out.push((
+            path.clone(),
+            n.tag_name().name().to_owned(),
+            n.attribute("id").map(str::to_owned),
+        ));
+        let kids: Vec<_> = n.children().filter(Node::is_element).collect();
+        for (i, c) in kids.into_iter().enumerate().rev() {
+            let mut p = path.clone();
+            p.push(i as u32);
+            stack.push((c, p));
+        }
+    }
+    out
+}
+
+fn shape(dom: &Dom) -> Vec<(Vec<u32>, String, Option<String>)> {
+    dom.descendants()
+        .map(|n| {
+            (
+                dom.path(n),
+                dom.tag(n).to_owned(),
+                dom.attr(n, "id").map(str::to_owned),
+            )
+        })
+        .collect()
+}
+
+/// The marks the port put in: the `<div>`s styled as a mark.
+fn marks(dom: &Dom) -> BTreeSet<Vec<u32>> {
+    dom.descendants()
+        .filter(|&n| dom.tag(n) == "div" && dom.attr(n, "style") == Some(MARK))
+        .map(|n| dom.path(n))
+        .collect()
+}
+
+#[test]
+fn chapter_divs_are_inserted_where_calibre_inserts_them() {
+    let mut files = 0;
+    let mut marked = 0;
+    for name in BOOKS {
+        let mut book = Book::open(name);
+        let oeb = read(&book.dir.join("oeb.json"));
+        let mut doms: Vec<(String, String, Dom)> = Vec::new();
+        for (href, n) in book.files.clone() {
+            let mut dom = dom::parse(&book.read(&href)).unwrap();
+            mark_chapters(&mut dom);
+            doms.push((href, n, dom));
+        }
+        if oeb["auto_generated_toc"].as_bool().unwrap() {
+            let spine = spine_order(&oeb, &mut doms);
+            let mut files: Vec<(&str, bool, &mut Dom)> = spine;
+            generated_toc(&mut files);
+        }
+        for (href, n, dom) in &doms {
+            files += 1;
+            let styles = read(&book.dir.join(format!("styles/{n}.json")));
+            let want_marks = dump_marks(&styles);
+            let xhtml = std::fs::read_to_string(book.dir.join(format!("dom/{n}.xhtml"))).unwrap();
+            // <head> gains Calibre's links and meta after the marks: compare <body>.
+            let in_body = |s: &(Vec<u32>, String, Option<String>)| s.0.first() == Some(&1);
+            let want: Vec<_> = dump_shape(&xhtml).into_iter().filter(in_body).collect();
+            let got: Vec<_> = shape(dom).into_iter().filter(in_body).collect();
+            assert_eq!(marks(dom), want_marks, "{name} {href}: marks");
+            marked += want_marks.len();
+            assert_eq!(got.len(), want.len(), "{name} {href}: elements");
+            for (g, w) in got.iter().zip(&want) {
+                let renamed = g.1 == "font" && (w.1 == "span" || w.1 == "div");
+                assert!(
+                    g.0 == w.0 && (g.1 == w.1 || renamed) && g.2 == w.2,
+                    "{name} {href}: got {g:?}, want {w:?}"
+                );
+            }
+        }
+    }
+    assert_eq!(files, 49);
+    assert!(marked >= 3, "{marked} marks");
+}
+
+/// The trees of a book's spine, in `oeb.json`'s spine order, as `generated_toc` takes them.
+fn spine_order<'a>(
+    oeb: &Value,
+    doms: &'a mut [(String, String, Dom)],
+) -> Vec<(&'a str, bool, &'a mut Dom)> {
+    let order: Vec<(String, bool)> = oeb["spine"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            (
+                s["href"].as_str().unwrap().to_owned(),
+                s["linear"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    let mut by_href: BTreeMap<&str, (&'a str, &'a mut Dom)> = doms
+        .iter_mut()
+        .map(|(h, _, d)| (h.as_str(), (h.as_str(), d)))
+        .collect();
+    order
+        .iter()
+        .map(|(h, linear)| {
+            let (href, dom) = by_href.remove(h.as_str()).unwrap();
+            (href, *linear, dom)
+        })
+        .collect()
+}
+
+fn toc_pairs(nodes: &[TocNode]) -> Vec<(String, String)> {
+    nodes
+        .iter()
+        .map(|n| {
+            assert!(n.children.is_empty());
+            (n.title.clone(), n.href.clone())
+        })
+        .collect()
+}
+
+#[test]
+fn generated_contents_match_calibre() {
+    let mut book = Book::open("no_toc");
+    let oeb = read(&book.dir.join("oeb.json"));
+    let mut doms: Vec<(String, String, Dom)> = Vec::new();
+    for (href, n) in book.files.clone() {
+        let mut dom = dom::parse(&book.read(&href)).unwrap();
+        mark_chapters(&mut dom);
+        doms.push((href, n, dom));
+    }
+    let mut files = spine_order(&oeb, &mut doms);
+    let toc = generated_toc(&mut files);
+    let want: Vec<(String, String)> = oeb["toc"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| {
+            (
+                t["title"].as_str().unwrap().to_owned(),
+                t["href"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        want,
+        [
+            (
+                "Chapter One".to_owned(),
+                "OEBPS/one.xhtml#calibre_toc_2".to_owned()
+            ),
+            (
+                "Part Two".to_owned(),
+                "OEBPS/two.xhtml#calibre_toc_3".to_owned()
+            ),
+        ]
+    );
+    assert_eq!(toc_pairs(&toc), want);
+    let (_, _, one) = &doms[0];
+    assert_eq!(one.attr(find(one, &[1, 0]), "id"), Some("calibre_toc_2"));
+}
+
+/// Books made for the probe: chapter expressions, marks near the start, contents from
+/// chapters, from links, and from the spine.
+#[test]
+fn chapter_marks_and_contents_match_probes() {
+    let probe = probe();
+    for case in probe["structure"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let pages: Vec<(String, String)> = strings(&case["pages"]);
+        let mut doms: Vec<(String, Dom)> = pages
+            .iter()
+            .map(|(href, text)| {
+                let mut dom = dom::parse(text.as_bytes()).unwrap();
+                mark_chapters(&mut dom);
+                (href.clone(), dom)
+            })
+            .collect();
+        let linear: BTreeMap<String, bool> = case["spine"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| (s[0].as_str().unwrap().to_owned(), s[1].as_bool().unwrap()))
+            .collect();
+        let mut files: Vec<(&str, bool, &mut Dom)> = doms
+            .iter_mut()
+            .map(|(h, d)| (h.as_str(), linear[h.as_str()], d))
+            .collect();
+        let toc = generated_toc(&mut files);
+        assert_eq!(toc_pairs(&toc), strings(&case["toc"]), "{name}: contents");
+        for (href, dom) in &doms {
+            let want: Vec<(Vec<u32>, String, Option<String>, bool)> = case["elements"]
+                [href.as_str()]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| {
+                (
+                    path_of(&e[0]),
+                    e[1].as_str().unwrap().to_owned(),
+                    e[2].as_str().map(str::to_owned),
+                    e[3].as_bool().unwrap(),
+                )
+            })
+            .collect();
+            let got: Vec<_> = dom
+                .descendants()
+                .filter(|&n| dom.path(n).first() == Some(&1))
+                .map(|n| {
+                    (
+                        dom.path(n),
+                        dom.tag(n).to_owned(),
+                        dom.attr(n, "id").map(str::to_owned),
+                        dom.attr(n, "style") == Some(MARK),
+                    )
+                })
+                .collect();
+            assert_eq!(got, want, "{name} {href}");
+        }
+    }
+}
+
+#[test]
+fn rules_sort_as_calibre_sorts_them() {
+    // (selector, declarations, sorted !important names), in Calibre's cascade order.
+    type Flat = (String, Vec<(String, String)>, Vec<String>);
+    let dumped = |rules: &Value| -> Vec<Flat> {
+        rules
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                let decls = r[2]
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
+                    .collect();
+                let imp = r[3]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|s| s.as_str().unwrap().to_owned())
+                    .collect();
+                (r[1].as_str().unwrap().to_owned(), decls, imp)
+            })
+            .collect()
+    };
+    // serde_json's maps sort their keys: compare declarations as sets of pairs.
+    let ported = |c: &Cascaded, origin: Origin| -> Vec<Flat> {
+        c.rules
+            .iter()
+            .filter(|r| r.origin == origin)
+            .map(|r| {
+                let mut decls = pairs(&r.decls);
+                decls.sort();
+                (r.selector.clone(), decls, important(&r.decls))
+            })
+            .collect()
+    };
+    let ua_want = dumped(&read(&fixtures::kfxgen("cascade/ua_rules.json"))["rules"]);
+    let mut files = 0;
+    let mut rules = 0;
+    for name in BOOKS {
+        let mut book = Book::open(name);
+        for (href, n) in book.files.clone() {
+            let (_, c) = cascaded(&mut book, &href, |_| {});
+            let dump = read(&book.dir.join(format!("rules/{n}.json")));
+            assert_eq!(
+                ported(&c, Origin::UserAgent),
+                ua_want,
+                "{name} {href}: html.css"
+            );
+            let want = dumped(&dump["rules"]);
+            let got = ported(&c, Origin::Book);
+            let i = got.iter().zip(&want).take_while(|(g, w)| g == w).count();
+            assert!(
+                got == want,
+                "{name} {href}: rule {i}: got {:?}, want {:?}",
+                got.get(i),
+                want.get(i)
+            );
+            files += 1;
+            rules += got.len();
+        }
+    }
+    assert_eq!((files, rules), (49, 306));
+}
+
+#[test]
+fn font_face_rules_match_calibre() {
+    let mut files = 0;
+    let mut faces = 0;
+    for name in BOOKS {
+        let mut book = Book::open(name);
+        for (href, n) in book.files.clone() {
+            let (_, c) = cascaded(&mut book, &href, |_| {});
+            let dump = read(&book.dir.join(format!("rules/{n}.json")));
+            let want: Vec<Vec<(String, String)>> = dump["font_face"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| {
+                    let mut p: Vec<(String, String)> = f
+                        .as_object()
+                        .unwrap()
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
+                        .collect();
+                    p.sort();
+                    p
+                })
+                .collect();
+            let got: Vec<Vec<(String, String)>> = c
+                .font_face
+                .iter()
+                .map(|d| {
+                    let mut p = pairs(d);
+                    p.sort();
+                    p
+                })
+                .collect();
+            assert_eq!(got, want, "{name} {href}");
+            files += 1;
+            faces += got.len();
+        }
+    }
+    assert_eq!((files, faces), (49, 3));
+}
+
+// ---------------------------------------------------------------------------------------
+// Hostile input
+// ---------------------------------------------------------------------------------------
+
+/// `n` paragraphs, `p<i % classes>` classed.
+fn paragraphs(n: usize, classes: usize) -> Dom {
+    let mut body = String::with_capacity(n * 24);
+    for i in 0..n {
+        body.push_str(&format!("<p class=\"c{}\">x</p>", i % classes));
+    }
+    page(&body)
+}
+
+fn book_sheet(css: &str) -> Sheet {
+    parse_sheet(css, Origin::Book, "OEBPS/a.xhtml", 0, &mut |_| None).unwrap()
+}
+
+#[test]
+fn many_rules_on_many_elements_use_the_index() {
+    // 10,000 class rules over 20,000 paragraphs of 1,000 classes: each rule looks only at
+    // its class.
+    let mut dom = paragraphs(20_000, 1_000);
+    let css: String = (0..10_000).map(|i| format!(".c{i}{{color:red}}")).collect();
+    let c = timed("10,000 rules, 20,000 elements", || {
+        cascade(
+            &mut dom,
+            "OEBPS/a.xhtml",
+            vec![book_sheet(&css)],
+            &DEFAULT_PROFILE,
+        )
+        .unwrap()
+    });
+    let p = dom.children(body(&dom))[0];
+    assert_eq!(
+        pairs(c.specified(p)).last().unwrap(),
+        &("color".into(), "red".into())
+    );
+}
+
+/// Release build: `cargo test --release -p deckle-kfxgen --test it -- --ignored css_cascade`.
+#[test]
+#[ignore = "about a second in a release build, much longer in a debug one"]
+fn fifty_thousand_rules_on_a_hundred_thousand_elements() {
+    let mut dom = paragraphs(100_000, 1_000);
+    let css: String = (0..50_000).map(|i| format!(".c{i}{{color:red}}")).collect();
+    let start = Instant::now();
+    let got = cascade(
+        &mut dom,
+        "OEBPS/a.xhtml",
+        vec![book_sheet(&css)],
+        &DEFAULT_PROFILE,
+    );
+    eprintln!("50,000 rules, 100,000 elements: {:?}", start.elapsed());
+    assert!(got.is_ok());
+    assert!(start.elapsed() < Duration::from_secs(5));
+}
+
+#[test]
+fn elements_matched_alike_share_their_declarations() {
+    // 300 rules matching every one of 10,000 paragraphs: one set of declarations for all.
+    let mut dom = paragraphs(10_000, 1);
+    let css: String = (0..300).map(|i| format!("p{{x{i}:y}}")).collect();
+    let c = timed("300 rules matching all", || {
+        cascade(
+            &mut dom,
+            "OEBPS/a.xhtml",
+            vec![book_sheet(&css)],
+            &DEFAULT_PROFILE,
+        )
+        .unwrap()
+    });
+    let ps = dom.children(body(&dom)).to_vec();
+    let a = c.specified_arc(ps[0]);
+    assert!(ps.iter().all(|&p| Arc::ptr_eq(c.specified_arc(p), a)));
+    assert!(a.len() > 300, "{}", a.len());
+}
+
+/// Release build: `cargo test --release -p deckle-kfxgen --test it -- --ignored css_cascade`.
+#[test]
+#[ignore = "200 million selector steps: 2 to 3 seconds in a release build"]
+fn a_rule_matching_everything_many_times_stops() {
+    // 50,000 rules matching all of 100,000 paragraphs: the selector work runs out.
+    let mut dom = paragraphs(100_000, 1);
+    let css = "p{color:red}".repeat(50_000);
+    let start = Instant::now();
+    let got = cascade(
+        &mut dom,
+        "OEBPS/a.xhtml",
+        vec![book_sheet(&css)],
+        &DEFAULT_PROFILE,
+    );
+    eprintln!(
+        "50,000 rules matching 100,000 elements: {:?}",
+        start.elapsed()
+    );
+    assert!(
+        matches!(got, Err(Error::Selectors(_))),
+        "{:?}",
+        got.map(|_| ())
+    );
+    assert!(start.elapsed() < Duration::from_secs(5));
+}
+
+/// Release build: `cargo test --release -p deckle-kfxgen --test it -- --ignored css_cascade`.
+#[test]
+#[ignore = "5 million declarations stored before the limit: seconds in a debug build"]
+fn elements_each_styled_their_own_way_stop() {
+    // 40,000 paragraphs of their own id, each given a value of its own by a rule, and 1,000
+    // rules over all of them: 40,000 sets of over 1,000 declarations. The declarations
+    // stored are bounded.
+    let mut body = String::new();
+    for i in 0..40_000 {
+        body.push_str(&format!("<p id=\"p{i}\">x</p>"));
+    }
+    let mut dom = page(&body);
+    let mut css: String = (0..40_000).map(|i| format!("#p{i}{{a{i}:b}}")).collect();
+    for i in 0..1_000 {
+        css.push_str(&format!("p{{z{i}:y}}"));
+    }
+    let got = timed("40,000 distinct elements, 1,000 rules over all", || {
+        cascade(
+            &mut dom,
+            "OEBPS/a.xhtml",
+            vec![book_sheet(&css)],
+            &DEFAULT_PROFILE,
+        )
+    });
+    assert!(
+        matches!(got, Err(Error::Cascade(MAX_CASCADE_DECLS))),
+        "{:?}",
+        got.map(|_| ())
+    );
+}
+
+#[test]
+fn large_style_attributes_finish_or_stop() {
+    // 10,000 paragraphs, each a 1 KB style attribute of its own of 50 declarations.
+    let style: String = (0..50)
+        .map(|i| format!("x{i}: {};", "v".repeat(14)))
+        .collect();
+    let mut src = String::new();
+    for i in 0..10_000 {
+        src.push_str(&format!("<p style=\"{style}y: {i}\">x</p>"));
+    }
+    let mut dom = page(&src);
+    let c = timed("10,000 1 KB style attributes", || {
+        cascade(&mut dom, "OEBPS/a.xhtml", Vec::new(), &DEFAULT_PROFILE).unwrap()
+    });
+    let p = dom.children(body(&dom))[9_999];
+    assert_eq!(
+        pairs(c.specified(p)).last().unwrap(),
+        &("y".into(), "9999".into())
+    );
+    // The same attribute on every paragraph is read once.
+    let mut dom = page(&format!("<p style=\"{style}\">x</p>").repeat(20_000));
+    let c = timed("20,000 1 KB style attributes alike", || {
+        cascade(&mut dom, "OEBPS/a.xhtml", Vec::new(), &DEFAULT_PROFILE).unwrap()
+    });
+    let ps = dom.children(body(&dom)).to_vec();
+    assert!(
+        ps.iter()
+            .all(|&p| Arc::ptr_eq(c.specified_arc(p), c.specified_arc(ps[0])))
+    );
+}
+
+/// Release build: `cargo test --release -p deckle-kfxgen --test it -- --ignored css_cascade`.
+#[test]
+#[ignore = "a 100 MB file: seconds to parse in a debug build"]
+fn a_hundred_thousand_large_style_attributes_stop() {
+    let style: String = (0..50)
+        .map(|i| format!("x{i}: {};", "v".repeat(14)))
+        .collect();
+    let mut src = String::new();
+    for i in 0..100_000 {
+        src.push_str(&format!("<p style=\"{style}y: {i}\">x</p>"));
+    }
+    let mut dom = page(&src);
+    let start = Instant::now();
+    let got = cascade(&mut dom, "OEBPS/a.xhtml", Vec::new(), &DEFAULT_PROFILE);
+    eprintln!("100,000 1 KB style attributes: {:?}", start.elapsed());
+    assert!(
+        matches!(got, Err(Error::Cascade(MAX_CASCADE_DECLS))),
+        "{:?}",
+        got.map(|_| ())
+    );
+    assert!(start.elapsed() < Duration::from_secs(5));
+}
+
+#[test]
+fn many_style_elements_are_too_many_rules() {
+    let styles = "<style>p{color:red}</style>".repeat(100_000);
+    let src = format!(
+        "<html xmlns=\"http://www.w3.org/1999/xhtml\"><head>{styles}</head><body><p>x</p></body></html>"
+    );
+    let mut dom = dom::parse(src.as_bytes()).unwrap();
+    let sheets: Vec<Sheet> = timed("100,000 <style> elements read", || {
+        dom.descendants()
+            .filter(|&n| dom.tag(n) == "style")
+            .map(|n| book_sheet(dom.text(n)))
+            .collect()
+    });
+    let got = timed("100,000 <style> elements cascaded", || {
+        cascade(&mut dom, "OEBPS/a.xhtml", sheets, &DEFAULT_PROFILE)
+    });
+    assert!(
+        matches!(got, Err(Error::TooLarge(MAX_STYLE_RULES))),
+        "{:?}",
+        got.map(|_| ())
+    );
+}
+
+#[test]
+fn a_hundred_thousand_headings_are_marked_and_listed() {
+    let body: String = (0..100_000)
+        .map(|i| format!("<h1>Chapter {i}</h1><p>x</p>"))
+        .collect();
+    let mut dom = page(&body);
+    timed("100,000 chapters marked", || mark_chapters(&mut dom));
+    // All but the first, which is at the start of the file.
+    assert_eq!(marks(&dom).len(), 99_999);
+    let toc = timed("100,000 chapters listed", || {
+        generated_toc(&mut [("OEBPS/a.xhtml", true, &mut dom)])
+    });
+    assert_eq!(toc.len(), 100_000);
+    assert_eq!(toc[99_999].href, "OEBPS/a.xhtml#calibre_toc_100001");
+}
+
+#[test]
+fn nested_headings_are_tested_once_each() {
+    // 250 nested headings around 4 MB of text: each heading's text is the whole 4 MB.
+    let text = "word ".repeat(800_000);
+    let body = format!("{}{text}Chapter{}", "<h1>".repeat(250), "</h1>".repeat(250));
+    let mut dom = std::thread::Builder::new()
+        .stack_size(16 << 20)
+        .spawn(move || page(&body))
+        .unwrap()
+        .join()
+        .unwrap();
+    timed("250 nested headings of 4 MB", || mark_chapters(&mut dom));
+    // "Chapter" ends each heading's text, with no space after it: none matches.
+    assert!(marks(&dom).is_empty());
+    let toc = timed("250 nested headings listed", || {
+        generated_toc(&mut [("OEBPS/a.xhtml", true, &mut dom)])
+    });
+    assert!(toc.is_empty());
+}
+
+#[test]
+fn a_ten_megabyte_heading_is_tested() {
+    let text = "x".repeat(10 << 20);
+    let mut dom = page(&format!("<p>a</p><h2>{text} prologue</h2><h2>{text}</h2>"));
+    timed("10 MB heading", || mark_chapters(&mut dom));
+    assert_eq!(marks(&dom).len(), 1);
+    let toc = timed("10 MB heading listed", || {
+        generated_toc(&mut [("OEBPS/a.xhtml", true, &mut dom)])
+    });
+    assert_eq!(toc.len(), 1);
+    // The title keeps 1,000 characters.
+    assert_eq!(toc[0].title.chars().count(), 1_000);
+}
+
+#[test]
+fn html_css_is_the_first_sheet() {
+    // The port parses html.css itself; a caller passes only the book's sheets.
+    let mut dom = page("<p>x</p>");
+    let c = cascade(&mut dom, "OEBPS/a.xhtml", Vec::new(), &DEFAULT_PROFILE).unwrap();
+    let ua = parse_sheet(HTML_CSS, Origin::UserAgent, "", 0, &mut |_| None).unwrap();
+    assert_eq!(c.rules.len(), ua.rules.len());
+    assert!(c.rules.iter().all(|r| r.origin == Origin::UserAgent));
+}
