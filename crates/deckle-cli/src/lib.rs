@@ -4782,12 +4782,8 @@ const RESENT_DAYS: i64 = 7;
 fn morgue_exempt() -> Vec<String> {
     use deckle_digest::chrono::{DateTime, Utc};
     // A damaged morgue.json is said and exempts nothing: prune keeps its usual count.
-    let state = match deckle_morgue::MorgueState::load(&deckle_morgue::state::state_path()) {
-        Ok(state) => state,
-        Err(e) => {
-            eprintln!("morgue: {e}");
-            return Vec::new();
-        }
+    let Some(state) = morgue_state(&deckle_morgue::state::state_path()) else {
+        return Vec::new();
     };
     let now = Utc::now();
     let outbox = deckle_core::queue::Queue::default_dir();
@@ -4807,18 +4803,31 @@ fn morgue_exempt() -> Vec<String> {
         .collect()
 }
 
+/// `morgue.json` for a step that goes on without it: a damaged one is `None`, said once per
+/// run however many steps load it (prune, a connection, the build's archive).
+fn morgue_state(path: &Path) -> Option<deckle_morgue::MorgueState> {
+    static SAID: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+    match deckle_morgue::MorgueState::load(path) {
+        Ok(state) => Some(state),
+        Err(e) => {
+            let mut said = SAID.lock().unwrap_or_else(|p| p.into_inner());
+            if said.as_deref() != Some(e.as_str()) {
+                eprintln!("morgue: {e}");
+                *said = Some(e);
+            }
+            None
+        }
+    }
+}
+
 /// What a connection taught the Morgue: sent-again editions that arrived, passages highlighted
 /// per edition (from `My Clippings.txt`, when it was read) and which editions are on the
 /// Kindle (from the readership read). Problems are logged; they never fail the sync.
 fn record_morgue(flush: &deckle_core::queue::FlushReport) {
     use deckle_core::yjf::OnDevice;
     let path = deckle_morgue::state::state_path();
-    let mut state = match deckle_morgue::MorgueState::load(&path) {
-        Ok(state) => state,
-        Err(e) => {
-            eprintln!("morgue: {e}");
-            return;
-        }
+    let Some(mut state) = morgue_state(&path) else {
+        return;
     };
     let before = state.clone();
     let now = deckle_digest::chrono::Utc::now().to_rfc3339();
@@ -6141,9 +6150,9 @@ fn archive_to_morgue(
     }
     let state_path = deckle_morgue::state::state_path();
     // A damaged morgue.json skips the first-run import, said; the edition is still kept.
-    match deckle_morgue::MorgueState::load(&state_path) {
-        Err(e) => eprintln!("morgue: {e}"),
-        Ok(mut state) => {
+    match morgue_state(&state_path) {
+        None => {}
+        Some(mut state) => {
             let cache = deckle_core::wordwise::default_cache_dir().join("digest");
             let was_imported = state.imported;
             if !deckle_morgue::import::import_once(&morgue, &cache, &mut state).is_empty() {

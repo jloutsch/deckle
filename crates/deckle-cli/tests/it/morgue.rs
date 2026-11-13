@@ -353,9 +353,21 @@ fn a_damaged_morgue_file_is_never_saved_over() {
     let outbox = cache_dir(home.path()).join("outbox");
     std::fs::create_dir_all(&outbox).unwrap();
     std::fs::write(outbox.join("deckle-daily-2026-10-21.kfx"), b"NEW").unwrap();
-    push(home.path(), &kindle);
+    let o = deckle(home.path())
+        .args(["digest", "push", "--to"])
+        .arg(&kindle)
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(o.status.success(), "{err}");
     assert!(kindle.join("deckle-daily-2026-10-21.kfx").exists());
     assert_eq!(std::fs::read(state_file(home.path())).unwrap(), truncated);
+    // Prune and the connection both load it: said once.
+    assert_eq!(
+        err.matches("morgue.json could not be read").count(),
+        1,
+        "{err}"
+    );
 }
 
 fn push(home: &Path, to: &Path) {
