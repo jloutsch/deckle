@@ -375,9 +375,10 @@ a different half of it.
 
 Calibre follows `@import` chains as deep as Python's recursion allows. The port follows eight
 levels below the sheet it is reading and drops an import further down (`MAX_IMPORT_DEPTH`), so a
-crafted chain cannot make it read the same sheets without end. Each imported address is read
-once however often it is imported, and every import followed counts toward
-`MAX_STYLE_RULES`.
+crafted chain cannot make it read the same sheets without end. Each imported sheet is read once
+however often, and under however many spellings of its address (`p.css`, `./p.css`,
+`a/../p.css`), it is imported; every import read or followed counts toward `MAX_STYLE_RULES`,
+and each sheet's text toward `MAX_STYLE_DECLS`.
 
 ## CSS nested past 32 levels
 
@@ -408,8 +409,20 @@ checked against calibre). It differs on spellings books rarely use:
 - A number with a signed exponent (`1e+3`) is two items to css_parser (`1e +3`) and one to the
   port (`1e+3`). `1e3%` is dropped by css_parser and kept by the port.
 - An escape of a surrogate code point (`\D800`) is kept by Python; the port writes U+FFFD.
-- `!important` followed by more text (`a!important b`) is kept by css_parser as `a`, not
-  important; the port drops the declaration.
+- In `calc()`, css_parser's spacing rules for `*` and `/` are its own: it drops `calc(1px* 2)`,
+  `calc(1px/ 2)`, `calc(1px/2/3)` and `calc(1px*2/3)` but keeps `calc(1px *2)`,
+  `calc(1px/2*3)` and `calc(1px*2/3*4)`. The port keeps all of them, written with a space
+  around each operator. It follows css_parser on `+` and `-` (white space needed on both
+  sides), on what may stand between the operators (numbers and `var()`), and drops brackets
+  and nested functions as css_parser does.
 - An `@import` with a media query other than `all`, of a sheet holding `@font-face`, `@media`
   or `@page` rules, is left unresolved by css_parser's `resolveImports` when the importing sheet
   is linked, so Calibre loses the imported rules; the port imports them when the query applies.
+
+## An escaped parenthesis in url()
+
+css_parser misreads an unquoted address with an escaped closing parenthesis (`url(a\)b.png)`):
+the declaration and the rest of the stylesheet are lost, so Calibre keeps the rules before it
+and the rule holding it, empty. The port reads
+the address as `a)b.png`, written `url("a\)b.png")`, and keeps the rules after it
+(`an_escaped_parenthesis_in_a_url_keeps_the_sheet`).

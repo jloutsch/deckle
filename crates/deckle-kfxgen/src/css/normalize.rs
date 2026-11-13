@@ -3,7 +3,7 @@
 //! `StylizerRules.flatten_style`, with `normalize_css.py`'s normalizers): shorthands expanded,
 //! font-size keywords turned into `rem`, `-epub-` properties copied (phase 2 plan, Task 6).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use cssparser::{Parser, ParserInput, Token};
@@ -47,6 +47,23 @@ pub const DEFAULT_PROFILE: Profile = Profile {
     fnums: [5.0, 9.0, 12.0, 13.5, 17.0, 20.0, 22.0],
 };
 
+/// The most declarations [`normalize`] makes of one declaration of `name`: its parts for a
+/// shorthand, the `-webkit-` and unprefixed copies for an `-epub-` one, else 1.
+pub(crate) fn expanded_len(name: &str) -> usize {
+    match name {
+        "border" => 12,
+        "font" => 7,
+        "margin" | "padding" | "border-style" | "border-width" | "border-color" => 4,
+        "border-top" | "border-right" | "border-bottom" | "border-left" | "list-style" => 3,
+        "-epub-writing-mode"
+        | "-epub-text-emphasis"
+        | "-epub-text-emphasis-color"
+        | "-epub-text-emphasis-position"
+        | "-epub-text-emphasis-style" => 2,
+        _ => 1,
+    }
+}
+
 /// `StylizerRules.flatten_style` applied to declarations [`super::parse_sheet`] or
 /// [`super::parse_style_attr`] read:
 ///
@@ -62,8 +79,18 @@ pub const DEFAULT_PROFILE: Profile = Profile {
 /// - `-epub-writing-mode` and `-epub-text-emphasis*` move to the end as their `-webkit-` and
 ///   unprefixed names, where those are not set (`cleanup_epub_prefixed_properties`).
 ///
-/// A value no rule reads (`margin-left: foo`) is kept as it is.
+/// A value no rule reads (`margin-left: foo`) is kept as it is. `decls` hold each name once,
+/// as [`super::parse_sheet`] and [`super::parse_style_attr`] give them.
 pub fn normalize(decls: Decls, profile: &Profile) -> Decls {
+    debug_assert!(
+        decls
+            .iter()
+            .map(|(k, _)| k)
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            == decls.len(),
+        "normalize takes each name once"
+    );
     let mut style = Style::default();
     for (name, d) in decls {
         match expand(&name, &d.value) {
@@ -90,7 +117,50 @@ pub fn normalize(decls: Decls, profile: &Profile) -> Decls {
     style.v
 }
 
-/// A Python dict of declarations: a name set again keeps its place.
+/// The names a shorthand or an `-epub-` property becomes: the only names [`normalize`] can set
+/// twice, since its input holds each name once.
+static PART_NAMES: LazyLock<HashSet<String>> = LazyLock::new(|| {
+    const EDGES: [&str; 4] = ["top", "right", "bottom", "left"];
+    let mut names = HashSet::new();
+    for edge in EDGES {
+        names.insert(format!("margin-{edge}"));
+        names.insert(format!("padding-{edge}"));
+        for part in ["color", "style", "width"] {
+            names.insert(format!("border-{edge}-{part}"));
+        }
+    }
+    for name in [
+        "list-style-type",
+        "list-style-position",
+        "list-style-image",
+        "font-style",
+        "font-variant",
+        "font-weight",
+        "font-size",
+        "line-height",
+        "font-family",
+        "font-stretch",
+    ] {
+        names.insert(name.to_owned());
+    }
+    for name in EPUB_PREFIXED {
+        names.insert(name.to_owned());
+        names.insert(format!("-webkit-{name}"));
+    }
+    names
+});
+
+/// The properties `cleanup_epub_prefixed_properties` copies from their `-epub-` names.
+const EPUB_PREFIXED: [&str; 5] = [
+    "writing-mode",
+    "text-emphasis",
+    "text-emphasis-color",
+    "text-emphasis-position",
+    "text-emphasis-style",
+];
+
+/// A Python dict of declarations: a name set again keeps its place. Only [`PART_NAMES`] can be
+/// set again, so only they are looked up; any other name is added at the end.
 #[derive(Default)]
 struct Style {
     v: Decls,
@@ -99,6 +169,10 @@ struct Style {
 
 impl Style {
     fn set(&mut self, name: String, value: String, important: bool) {
+        if !PART_NAMES.contains(&name) {
+            self.v.push((name, Decl { value, important }));
+            return;
+        }
         match self.at.get(&name) {
             Some(&i) => {
                 let d = &mut self.v[i].1;
@@ -114,20 +188,13 @@ impl Style {
 
     /// `stylizer.py` `cleanup_epub_prefixed_properties`.
     fn cleanup_epub_prefixed(&mut self) {
-        const PREFIXED: [&str; 5] = [
-            "writing-mode",
-            "text-emphasis",
-            "text-emphasis-color",
-            "text-emphasis-position",
-            "text-emphasis-style",
-        ];
         let found: Vec<String> = self
             .v
             .iter()
             .map(|(k, _)| k)
             .filter(|k| {
                 k.strip_prefix("-epub-")
-                    .is_some_and(|u| PREFIXED.contains(&u))
+                    .is_some_and(|u| EPUB_PREFIXED.contains(&u))
             })
             .cloned()
             .collect();
@@ -140,6 +207,7 @@ impl Style {
                 .v
                 .iter()
                 .enumerate()
+                .filter(|(_, (k, _))| PART_NAMES.contains(k))
                 .map(|(i, (k, _))| (k.clone(), i))
                 .collect();
             let unprefixed = &x["-epub-".len()..];

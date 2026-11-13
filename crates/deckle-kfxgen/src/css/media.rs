@@ -113,14 +113,16 @@ fn mtok(t: &Token<'_>) -> MTok {
 }
 
 /// The query's tokens, as tinycss reads the head of `@media {raw} {}`: up to the first `{`.
-/// `None` when a `;` comes first, which ends that at-rule without a block, so Calibre's
-/// `rules[0]` raises.
+/// `None` when there is no such rule, so Calibre's `rules[0]` raises: a `;` comes first,
+/// which ends the at-rule without a block, or the query leaves a bracket, string or comment
+/// open, which swallows the `{}` (`(`, `screen and (color`).
 fn tokens(query: &str) -> Option<Vec<MTok>> {
-    let mut input = ParserInput::new(query);
+    let text = format!("{query} {{}}");
+    let mut input = ParserInput::new(&text);
     let mut p = Parser::new(&mut input);
     let mut out = Vec::new();
     loop {
-        let Ok(t) = p.next() else { break };
+        let Ok(t) = p.next() else { return None };
         match t {
             Token::CurlyBracketBlock => break,
             Token::Semicolon => return None,

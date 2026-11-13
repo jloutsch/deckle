@@ -47,8 +47,9 @@ fn shorthands_expand_as_calibre() {
     let path = fixtures::kfxgen("sources/css_quirks.epub");
     let mut zip = EpubReader::open(&path).unwrap();
     let css = zip.read_string("OEBPS/shorthand.css").unwrap();
-    let mut sheet = parse_sheet(&css, Origin::Book, &mut |_| None).unwrap();
-    sheet.rebase_urls("OEBPS/shorthand.css");
+    let mut sheet =
+        parse_sheet(&css, Origin::Book, "OEBPS/shorthand.css", 0, &mut |_| None).unwrap();
+    sheet.normalize(&DEFAULT_PROFILE);
     let dump: Value = serde_json::from_slice(
         &std::fs::read(fixtures::kfxgen("cascade/css_quirks/rules/002.json")).unwrap(),
     )
@@ -93,7 +94,7 @@ fn shorthands_expand_as_calibre() {
     assert_eq!(wanted.len(), sheet.rules.len());
     let mut wrong = Vec::new();
     for rule in &sheet.rules {
-        let got = pairs(&normalize(rule.decls.clone(), &DEFAULT_PROFILE));
+        let got = pairs(&rule.decls);
         if Some(&got) != wanted.get(&rule.selector) {
             wrong.push(format!(
                 "{}: got {got:?}, want {:?}",

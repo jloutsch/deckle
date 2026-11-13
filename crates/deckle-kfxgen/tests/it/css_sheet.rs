@@ -8,17 +8,18 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use deckle_kfx::epub_zip::{EpubReader, join, percent_decode};
 use deckle_kfx::fixtures;
 use deckle_kfxgen::css::{
-    DEFAULT_PROFILE, Decl, Decls, Error, HTML_CSS, Origin, Sheet, media_ok, normalize, parse_sheet,
+    DEFAULT_PROFILE, Decl, Decls, Error, HTML_CSS, Origin, Sheet, media_ok, parse_sheet,
     parse_style_attr, serialize_value,
 };
 use deckle_kfxgen::dom::{self, Dom, NodeId};
 use deckle_kfxgen::epub::read_package;
-use deckle_limits::MAX_STYLE_RULES;
+use deckle_limits::{MAX_STYLE_DECLS, MAX_STYLE_RULES};
 use serde::Deserialize;
 use serde::de::{Deserializer, MapAccess, Visitor};
 
@@ -129,29 +130,27 @@ fn dump_in_source_order(rules: &[DumpRule]) -> Vec<Flat> {
         .collect()
 }
 
-/// The port's rules of `sheets` in order, each selector list's rules sorted by text.
-fn port_in_source_order(sheets: &[Sheet], norm: &dyn Fn(&Decls) -> Decls) -> Vec<Flat> {
-    let mut out = Vec::new();
+/// The port's rules of `sheets`, normalized as the dump's are (`flatten_style`, Task 6), in
+/// the order of their index, which runs on across the sheets; each selector list's rules
+/// sorted by text.
+fn port_in_source_order(sheets: &mut [Sheet]) -> Vec<Flat> {
+    let mut by_index: BTreeMap<u32, Vec<Flat>> = BTreeMap::new();
     for sheet in sheets {
-        let mut i = 0;
-        while i < sheet.rules.len() {
-            let index = sheet.rules[i].index;
-            let mut group: Vec<Flat> = sheet.rules[i..]
-                .iter()
-                .take_while(|r| r.index == index)
-                .map(|r| flat(r.origin, &r.selector, &norm(&r.decls)))
-                .collect();
-            i += group.len();
-            group.sort_by(|a, b| a.selector.cmp(&b.selector));
-            out.extend(group);
+        sheet.normalize(&DEFAULT_PROFILE);
+        for r in &sheet.rules {
+            by_index
+                .entry(r.index)
+                .or_default()
+                .push(flat(r.origin, &r.selector, &r.decls));
         }
     }
-    out
-}
-
-/// The declarations as the dump holds them: through `flatten_style` (Task 6).
-fn normalized(decls: &Decls) -> Decls {
-    normalize(decls.clone(), &DEFAULT_PROFILE)
+    by_index
+        .into_values()
+        .flat_map(|mut group| {
+            group.sort_by(|a, b| a.selector.cmp(&b.selector));
+            group
+        })
+        .collect()
 }
 
 fn first_difference(got: &[Flat], want: &[Flat]) -> String {
@@ -196,6 +195,8 @@ fn spine_file_sheets(
         zip.read_string(path).ok()
     };
     let mut sheets = Vec::new();
+    // Calibre's rule index runs on across the file's sheets.
+    let mut next = 0;
     for n in dom.descendants() {
         match local(&dom, n).as_str() {
             "style" => {
@@ -218,8 +219,8 @@ fn spine_file_sheets(
                 }
                 let base = dir_of(href);
                 let mut import = |h: &str| read_css(&join(base, h));
-                let mut sheet = parse_sheet(&text, Origin::Book, &mut import).unwrap();
-                sheet.rebase_urls(href);
+                let sheet = parse_sheet(&text, Origin::Book, href, next, &mut import).unwrap();
+                next = sheet.next_index;
                 sheets.push(sheet);
             }
             "link" => {
@@ -244,9 +245,9 @@ fn spine_file_sheets(
                 };
                 let base = dir_of(&path).to_owned();
                 let mut import = |h: &str| read_css(&join(&base, h));
-                let mut sheet = parse_sheet(&text, Origin::Book, &mut import).unwrap();
+                let mut sheet = parse_sheet(&text, Origin::Book, &path, next, &mut import).unwrap();
                 sheet.page.clear();
-                sheet.rebase_urls(&path);
+                next = sheet.next_index;
                 sheets.push(sheet);
             }
             _ => {}
@@ -261,8 +262,8 @@ fn book_rules_match_calibre_in_text_and_order() {
     let ua_dump: RulesDump =
         serde_json::from_slice(&std::fs::read(fixtures::kfxgen("cascade/ua_rules.json")).unwrap())
             .unwrap();
-    let ua = parse_sheet(HTML_CSS, Origin::UserAgent, &mut |_| None).unwrap();
-    let ua_got = port_in_source_order(std::slice::from_ref(&ua), &normalized);
+    let ua = parse_sheet(HTML_CSS, Origin::UserAgent, "", 0, &mut |_| None).unwrap();
+    let ua_got = port_in_source_order(&mut [ua]);
     let ua_want = dump_in_source_order(&ua_dump.rules);
     assert_eq!(
         ua_got,
@@ -296,8 +297,8 @@ fn book_rules_match_calibre_in_text_and_order() {
                 &std::fs::read(dir.join(format!("rules/{n}.json"))).unwrap(),
             )
             .unwrap();
-            let (sheets, font_face) = spine_file_sheets(&mut zip, &css_items, href);
-            let got = port_in_source_order(&sheets, &normalized);
+            let (mut sheets, font_face) = spine_file_sheets(&mut zip, &css_items, href);
+            let got = port_in_source_order(&mut sheets);
             let want = dump_in_source_order(&dump.rules);
             let got_ff: Vec<Vec<(String, String)>> = font_face
                 .iter()
@@ -492,6 +493,32 @@ fn serialize_value_cases() {
         ("a\\:b", "a\\:b"),
         ("CALC( 100%  -  2em )", "CALC(100% - 2em)"),
         ("calc(1px*2)", "calc(1px * 2)"),
+        // `calc()`: `+` and `-` need white space on both sides; numbers and `var()` only.
+        ("CALC( 1px + 2px )", "CALC(1px + 2px)"),
+        ("calc(1px - -2px)", "calc(1px - -2px)"),
+        ("calc(-2px + 1px)", "calc(-2px + 1px)"),
+        ("calc(1px + +2px)", "calc(1px + +2px)"),
+        ("calc(1px*-2)", "calc(1px * -2)"),
+        ("calc(1px *2)", "calc(1px * 2)"),
+        ("calc(1px\t+\t2px)", "calc(1px + 2px)"),
+        ("calc(VAR(x) + 1px)", "calc(var(x) + 1px)"),
+        ("calc( -1px )", "calc(-1px)"),
+        ("calc(0px + .5em)", "calc(0 + 0.5em)"),
+        // A string's line continuations are dropped after its escapes are resolved: `\\a`
+        // (a backslash, then an escaped line feed) is nothing, `\` and a line feed then `31`
+        // is `31`.
+        ("\"a\\\nb\"", "\"ab\""),
+        ("'a\\\nb'", "\"ab\""),
+        ("\"a\\\r\nb\"", "\"ab\""),
+        ("\"a\\\u{c}b\"", "\"ab\""),
+        ("\"a\\\\\\\nb\"", "\"a\\\\b\""),
+        ("\"\\\\a\"", "\"\""),
+        ("\"\\\n31\"", "\"31\""),
+        // `url(` and more than one item: a function css_parser writes as it is.
+        ("url('a''b')", "url(\"a\" \"b\")"),
+        ("URL('a' b)", "url(\"a\" b)"),
+        ("url('a', 'b')", "url(\"a\", \"b\")"),
+        ("url('a'1px)", "url(\"a\" 1px)"),
         ("F(a)", "f(a)"),
         ("counter(a,upper-roman)", "counter(a, upper-roman)"),
         ("alpha(opacity=50)", "alpha(opacity=50)"),
@@ -514,6 +541,26 @@ fn serialize_value_cases() {
         ("rgb(a, b, c)", ""),
         ("'unterminated", ""),
         ("url(a'b)", ""),
+        ("calc(1px+2px)", ""),
+        ("calc(1px -2px)", ""),
+        ("calc(1px +2px)", ""),
+        ("calc(1px+ 2px)", ""),
+        ("calc(50% -1px)", ""),
+        ("calc(1px 2px)", ""),
+        ("calc(1px +)", ""),
+        ("calc(+ 1px)", ""),
+        ("calc(1px * * 2)", ""),
+        ("calc((1px + 2px) * 2)", ""),
+        ("calc(1px + calc(2px))", ""),
+        ("calc(a + b)", ""),
+        ("calc(\"a\" + 1px)", ""),
+        ("calc(foo(x) + 1px)", ""),
+        ("calc(var(x)+1px)", ""),
+        ("calc(1px, 2px)", ""),
+        ("calc()", ""),
+        ("url('a' + 'b')", ""),
+        ("url('a'/'b')", ""),
+        ("url(\"a\" , )", ""),
     ];
     let mut wrong = Vec::new();
     for (input, want) in cases {
@@ -549,8 +596,33 @@ fn declarations_as_css_parser_lists_them() {
         decls("mso-foo: 1; --x: 1; *zoom: 1; _height: 1px; color: "),
         vec![t("_height", "1px", false)]
     );
-    // A priority other than important is not important.
+    // A priority other than important is not important; the value before the `!` is kept.
     assert_eq!(decls("x: 1 !foo"), vec![t("x", "1", false)]);
+    for junk in [
+        "!important!important",
+        "!important !important",
+        "!",
+        "!1",
+        "!important x",
+        "!foo !important",
+        "!(x)",
+    ] {
+        assert_eq!(
+            decls(&format!("color:red {junk}")),
+            vec![t("color", "red", false)],
+            "{junk}"
+        );
+    }
+    assert_eq!(
+        decls("color:red ! important"),
+        vec![t("color", "red", true)]
+    );
+    assert_eq!(decls("color: !important"), vec![]);
+    // css_parser drops `calc(1px+2px)`, so the first width stays.
+    assert_eq!(
+        decls("width:CALC( 1px + 2px ); width:calc(1px+2px)"),
+        vec![t("width", "CALC(1px + 2px)", false)]
+    );
 }
 
 #[test]
@@ -596,9 +668,13 @@ fn selectors_as_css_parser_writes_them() {
     ];
     let mut wrong = Vec::new();
     for (selector, want) in cases {
-        let sheet = parse_sheet(&format!("{selector} {{ a: 1 }}"), Origin::Book, &mut |_| {
-            None
-        })
+        let sheet = parse_sheet(
+            &format!("{selector} {{ a: 1 }}"),
+            Origin::Book,
+            "",
+            0,
+            &mut |_| None,
+        )
         .unwrap();
         let got: Vec<&str> = sheet.rules.iter().map(|r| r.selector.as_str()).collect();
         if got != *want {
@@ -610,6 +686,8 @@ fn selectors_as_css_parser_writes_them() {
     let sheet = parse_sheet(
         "@namespace epub \"http://www.idpf.org/2007/ops\";\n[epub|type~=footnote] { a: 1 }",
         Origin::Book,
+        "",
+        0,
         &mut |_| None,
     )
     .unwrap();
@@ -639,6 +717,19 @@ fn media_queries() {
     assert!(media_ok("(MIN-WIDTH: 10px)"));
     // A malformed query is read as `not all`.
     assert!(!media_ok("garbage!!"));
+    // A query that leaves a bracket or string open swallows the `{}` Calibre parses it with,
+    // so tinycss finds no rule and `media_ok` returns true.
+    for open in [
+        "(",
+        "screen and (",
+        "all and (color",
+        "[",
+        "f(",
+        "\"",
+        "screen /*",
+    ] {
+        assert!(media_ok(open), "{open}");
+    }
 }
 
 #[test]
@@ -652,7 +743,7 @@ fn media_rules_are_flattened_one_level() {
                @font-face { font-family: a; font-family: b }\n\
                @font-face { src: url(x) !important; font-family: a }\n\
                p.z { a: 8 }";
-    let sheet = parse_sheet(css, Origin::Book, &mut |_| None).unwrap();
+    let sheet = parse_sheet(css, Origin::Book, "", 0, &mut |_| None).unwrap();
     let sel: Vec<&str> = sheet.rules.iter().map(|r| r.selector.as_str()).collect();
     assert_eq!(sel, ["p.sc", "p.np", "p.z"]);
     assert_eq!(sheet.page.len(), 1);
@@ -684,9 +775,8 @@ fn imports_come_first_with_their_urls_rebased() {
     };
     let css = "@import url(sub/a.css);\n@import 'print.css' print;\n@import \"missing.css\";\n\
                p.own { background: url(own.png) }\n@import \"late.css\";";
-    let mut sheet = parse_sheet(css, Origin::Book, &mut import).unwrap();
+    let sheet = parse_sheet(css, Origin::Book, "OEBPS/css/top.css", 0, &mut import).unwrap();
     assert_eq!(asked, ["sub/a.css", "sub/b.css", "missing.css"]);
-    sheet.rebase_urls("OEBPS/css/top.css");
     let got: Vec<(&str, &str)> = sheet
         .rules
         .iter()
@@ -724,13 +814,15 @@ fn import_cycle_ends() {
     let mut import = |h: &str| files.get(h).map(|s| (*s).to_owned());
     // cycle_a.css linked: cycle_b's import of it closes the loop, and cycle_b is lost, as
     // `css_quirks`'s sheet.xhtml shows (rules/001.json: p.ca, no p.cb).
-    let sheet = parse_sheet(files["cycle_a.css"], Origin::Book, &mut import).unwrap();
+    let sheet = parse_sheet(files["cycle_a.css"], Origin::Book, "", 0, &mut import).unwrap();
     let sel: Vec<&str> = sheet.rules.iter().map(|r| r.selector.as_str()).collect();
     assert_eq!(sel, ["p.ca"]);
     // An import whose chain loops is dropped whole; the others stay.
     let sheet = parse_sheet(
         "@import \"ok.css\";\n@import \"cycle_a.css\";\n@import \"self.css\";\np.top { a: 3 }",
         Origin::Book,
+        "",
+        0,
         &mut import,
     )
     .unwrap();
@@ -756,6 +848,8 @@ fn import_chain_ends_past_eight_levels() {
     let sheet = parse_sheet(
         "@import \"l1.css\";\np.top { a: 1 }",
         Origin::Book,
+        "",
+        0,
         &mut import,
     )
     .unwrap();
@@ -771,15 +865,17 @@ fn import_chain_ends_past_eight_levels() {
 #[test]
 fn fifty_thousand_and_one_rules_is_too_large() {
     let at_limit = "p{a:1}\n".repeat(MAX_STYLE_RULES);
-    let sheet = parse_sheet(&at_limit, Origin::Book, &mut |_| None).unwrap();
+    let sheet = parse_sheet(&at_limit, Origin::Book, "", 0, &mut |_| None).unwrap();
     assert_eq!(sheet.rules.len(), MAX_STYLE_RULES);
     let over = format!("{at_limit}p{{a:1}}\n");
     assert!(matches!(
-        parse_sheet(&over, Origin::Book, &mut |_| None),
+        parse_sheet(&over, Origin::Book, "", 0, &mut |_| None),
         Err(Error::TooLarge(_))
     ));
 }
 
+/// Runs `f`, failing past 5 s: a debug build, tests run in parallel. (Release-build times of
+/// these cases are in the phase 2 Task 5 report.)
 fn timed<T>(what: &str, f: impl FnOnce() -> T) -> T {
     let start = Instant::now();
     let out = f();
@@ -789,28 +885,189 @@ fn timed<T>(what: &str, f: impl FnOnce() -> T) -> T {
 }
 
 #[test]
+fn a_sheet_imported_under_many_spellings_is_read_once() {
+    // A 2 MB sheet of `@page` declarations imported under 300 spellings of one address
+    // (`p.css`, `./p.css`, `././p.css`…): read once, and refused as its declarations are
+    // read, though an imported sheet's `@page` rules are dropped.
+    let big: String = (0..200_000).map(|i| format!("a{i}:1;")).collect();
+    let big = format!("@page{{{big}}}");
+    let top: String = (0..300)
+        .map(|k| format!("@import '{}p.css';", "./".repeat(k)))
+        .collect();
+    let mut asked = Vec::new();
+    // Each spelling names the sheet, as a resolver of addresses finds it.
+    let mut import = |h: &str| {
+        asked.push(h.to_owned());
+        h.ends_with("p.css").then(|| big.clone())
+    };
+    let got = timed("a 2 MB sheet under 300 names", || {
+        parse_sheet(&top, Origin::Book, "", 0, &mut import)
+    });
+    assert!(matches!(got, Err(Error::TooLarge(MAX_STYLE_DECLS))));
+    assert_eq!(asked, ["p.css"]);
+
+    // A small sheet under 300 spellings, `a/../` among them: one sheet, asked for once.
+    let top: String = (0..300)
+        .map(|k| format!("@import '{}p.css';@import 'a/../p.css';", "./".repeat(k)))
+        .collect();
+    let mut asked = Vec::new();
+    let mut import = |h: &str| {
+        asked.push(h.to_owned());
+        h.ends_with("p.css")
+            .then(|| "@page{margin:1em} p{a:1}".to_owned())
+    };
+    let sheet = parse_sheet(&top, Origin::Book, "", 0, &mut import).unwrap();
+    assert_eq!(asked, ["p.css"]);
+    assert!(sheet.page.is_empty());
+    assert_eq!(sheet.rules.len(), 600);
+
+    // 300 different 2 MB sheets of comments: each sheet's text is charged as it is loaded,
+    // so the fifth is refused.
+    let comment = format!("/*{}*/", "x".repeat(2 << 20));
+    let top: String = (0..300).map(|k| format!("@import 'x{k}.css';")).collect();
+    let mut asked = 0;
+    let mut import = |_: &str| {
+        asked += 1;
+        Some(comment.clone())
+    };
+    let got = parse_sheet(&top, Origin::Book, "", 0, &mut import);
+    assert!(matches!(got, Err(Error::TooLarge(MAX_STYLE_DECLS))));
+    assert_eq!(asked, 5);
+}
+
+#[test]
+fn declarations_past_the_limit_are_refused() {
+    // 125,000 short declarations and their 1.2 MB of text fit in MAX_STYLE_DECLS; 150,000
+    // do not.
+    let decls = |n: usize| -> String { (0..n).map(|i| format!("a{i}:1;")).collect() };
+    let sheet = parse_sheet(
+        &format!("p{{{}}}", decls(125_000)),
+        Origin::Book,
+        "",
+        0,
+        &mut |_| None,
+    )
+    .unwrap();
+    assert_eq!(sheet.rules[0].decls.len(), 125_000);
+    assert!(matches!(
+        parse_sheet(
+            &format!("p{{{}}}", decls(150_000)),
+            Origin::Book,
+            "",
+            0,
+            &mut |_| None
+        ),
+        Err(Error::TooLarge(MAX_STYLE_DECLS))
+    ));
+    // A shorthand counts once for each declaration it becomes: `border` 12.
+    let border = |n: usize| format!("p{{{}}}", "border:0;".repeat(n));
+    assert!(parse_sheet(&border(12_000), Origin::Book, "", 0, &mut |_| None).is_ok());
+    assert!(matches!(
+        parse_sheet(&border(12_600), Origin::Book, "", 0, &mut |_| None),
+        Err(Error::TooLarge(MAX_STYLE_DECLS))
+    ));
+    // A stylesheet's text counts once for each 64 bytes, read or not.
+    let comment = format!("/*{}*/", "x".repeat((MAX_STYLE_DECLS + 1) * 64));
+    assert!(matches!(
+        parse_sheet(&comment, Origin::Book, "", 0, &mut |_| None),
+        Err(Error::TooLarge(MAX_STYLE_DECLS))
+    ));
+}
+
+#[test]
+fn selectors_of_a_list_share_one_block() {
+    // 50,000 selectors sharing 19 declarations of 60 bytes: one block, normalized once.
+    let list: Vec<String> = (0..50_000).map(|i| format!(".c{i}")).collect();
+    let decls: String = (0..18)
+        .map(|i| format!("x{i}:{};", "v".repeat(58)))
+        .collect();
+    let css = format!("{}{{margin:1px 2px;{decls}}}", list.join(","));
+    let mut sheet = timed("50,000 selectors × 19 declarations", || {
+        parse_sheet(&css, Origin::Book, "", 0, &mut |_| None).unwrap()
+    });
+    assert_eq!(sheet.rules.len(), 50_000);
+    let shared = |sheet: &Sheet| {
+        sheet
+            .rules
+            .iter()
+            .all(|r| Arc::ptr_eq(&r.decls, &sheet.rules[0].decls))
+    };
+    assert!(shared(&sheet));
+    sheet.normalize(&DEFAULT_PROFILE);
+    assert!(shared(&sheet));
+    assert_eq!(sheet.rules[0].decls[0].0, "margin-top");
+    assert_eq!(sheet.rules[49_999].decls.len(), 18 + 4);
+}
+
+#[test]
+fn rule_index_runs_on_across_sheets() {
+    let a = parse_sheet(
+        "p{a:1} q,r{b:2} @font-face{src:url(x);font-family:y}",
+        Origin::Book,
+        "",
+        0,
+        &mut |_| None,
+    )
+    .unwrap();
+    let index = |s: &Sheet| s.rules.iter().map(|r| r.index).collect::<Vec<_>>();
+    assert_eq!(index(&a), [0, 1, 1]);
+    assert_eq!(a.next_index, 3);
+    let b = parse_sheet(
+        "@import 'i.css'; s{c:3}",
+        Origin::Book,
+        "",
+        a.next_index,
+        &mut |_| Some("t{d:4}".to_owned()),
+    )
+    .unwrap();
+    assert_eq!(index(&b), [3, 4]);
+    assert_eq!(b.next_index, 5);
+}
+
+/// `url(a\)b.png)` makes css_parser drop that declaration and the rest of the sheet; the port
+/// reads on
+/// (DIVERGENCES.md, "An escaped parenthesis in url()").
+#[test]
+fn an_escaped_parenthesis_in_a_url_keeps_the_sheet() {
+    let sheet = parse_sheet(
+        "p{background:url(a\\)b.png)} q{color:red}",
+        Origin::Book,
+        "",
+        0,
+        &mut |_| None,
+    )
+    .unwrap();
+    let got: Vec<(&str, &str)> = sheet
+        .rules
+        .iter()
+        .map(|r| (r.selector.as_str(), r.decls[0].1.value.as_str()))
+        .collect();
+    assert_eq!(got, [("p", "url(\"a\\)b.png\")"), ("q", "red")]);
+}
+
+#[test]
 fn hostile_sheets_finish_or_are_refused() {
     // 5 MB of one-declaration rules: far past the rule limit, refused.
     let many = "p.x{color:red}\n".repeat(5 * 1024 * 1024 / 15);
     timed("5 MB of rules", || {
         assert!(matches!(
-            parse_sheet(&many, Origin::Book, &mut |_| None),
+            parse_sheet(&many, Origin::Book, "", 0, &mut |_| None),
             Err(Error::TooLarge(_))
         ));
     });
-    // One rule, 200,000 declarations of one property: the last wins, in linear time.
-    let decls: String = (0..200_000)
+    // One rule, 100,000 declarations of one property: the last wins, in linear time.
+    let decls: String = (0..100_000)
         .map(|i| format!("margin-left:{i}px;"))
         .collect();
-    let sheet = timed("200,000 declarations", || {
-        parse_sheet(&format!("p{{{decls}}}"), Origin::Book, &mut |_| None).unwrap()
+    let sheet = timed("100,000 declarations", || {
+        parse_sheet(&format!("p{{{decls}}}"), Origin::Book, "", 0, &mut |_| None).unwrap()
     });
     assert_eq!(
-        sheet.rules[0].decls,
+        *sheet.rules[0].decls,
         vec![(
             "margin-left".to_owned(),
             Decl {
-                value: "199999px".to_owned(),
+                value: "99999px".to_owned(),
                 important: false
             }
         )]
@@ -819,34 +1076,34 @@ fn hostile_sheets_finish_or_are_refused() {
     let list = vec!["p"; 100_000].join(",");
     timed("100,000 selectors", || {
         assert!(matches!(
-            parse_sheet(&format!("{list}{{a:1}}"), Origin::Book, &mut |_| None),
+            parse_sheet(&format!("{list}{{a:1}}"), Origin::Book, "", 0, &mut |_| {
+                None
+            }),
             Err(Error::TooLarge(_))
         ));
     });
-    // 30,000 selectors sharing 40 declarations: the copies pass the declaration limit.
-    let list = vec!["p"; 30_000].join(",");
-    let decls: String = (0..40).map(|i| format!("x{i}:1;")).collect();
-    timed("30,000 selectors × 40 declarations", || {
-        assert!(matches!(
-            parse_sheet(&format!("{list}{{{decls}}}"), Origin::Book, &mut |_| None),
-            Err(Error::TooLarge(_))
-        ));
-    });
-    // 40,000 selectors sharing one 1 MB value: the copies would be 40 GB; refused.
+    // 40,000 selectors sharing one 1 MB value: one copy, shared.
     let list = vec!["p"; 40_000].join(",");
     let value = "a".repeat(1 << 20);
-    timed("40,000 selectors × a 1 MB value", || {
-        assert!(matches!(
-            parse_sheet(
-                &format!("{list}{{font-family:{value}}}"),
-                Origin::Book,
-                &mut |_| None
-            ),
-            Err(Error::TooLarge(_))
-        ));
+    let sheet = timed("40,000 selectors × a 1 MB value", || {
+        parse_sheet(
+            &format!("{list}{{font-family:{value}}}"),
+            Origin::Book,
+            "",
+            0,
+            &mut |_| None,
+        )
+        .unwrap()
     });
+    assert_eq!(sheet.rules.len(), 40_000);
+    assert!(
+        sheet
+            .rules
+            .iter()
+            .all(|r| Arc::ptr_eq(&r.decls, &sheet.rules[0].decls))
+    );
     // A 500 KB selector in a sheet imported 255 times over (a diamond, as below): 127 MB of
-    // copies, refused (the limit allows about 64 MB of copied text).
+    // copies, refused (each copy is charged again; the limit allows about 9.6 MB of text).
     let long = format!("p.{}", "x".repeat(500_000));
     let mut import = |h: &str| {
         let n: u32 = h
@@ -861,7 +1118,7 @@ fn hostile_sheets_finish_or_are_refused() {
     };
     timed("a long selector imported 255 times", || {
         assert!(matches!(
-            parse_sheet("@import \"d1.css\";", Origin::Book, &mut import),
+            parse_sheet("@import \"d1.css\";", Origin::Book, "", 0, &mut import),
             Err(Error::TooLarge(_))
         ));
     });
@@ -872,7 +1129,7 @@ fn hostile_sheets_finish_or_are_refused() {
         "}".repeat(10_000)
     );
     let sheet = timed("@media 10,000 deep", || {
-        parse_sheet(&nested, Origin::Book, &mut |_| None).unwrap()
+        parse_sheet(&nested, Origin::Book, "", 0, &mut |_| None).unwrap()
     });
     let sel: Vec<&str> = sheet.rules.iter().map(|r| r.selector.as_str()).collect();
     assert_eq!(sel, ["p.after"]);
@@ -883,13 +1140,13 @@ fn hostile_sheets_finish_or_are_refused() {
         ")".repeat(10_000)
     );
     let sheet = timed(":not() 10,000 deep", || {
-        parse_sheet(&deep, Origin::Book, &mut |_| None).unwrap()
+        parse_sheet(&deep, Origin::Book, "", 0, &mut |_| None).unwrap()
     });
     assert_eq!(sheet.rules.len(), 1);
     // A function nested 10,000 deep in a value: the declaration is dropped.
     let deep = format!("p{{a:{}1{};b:2}}", "f(".repeat(10_000), ")".repeat(10_000));
     let sheet = timed("value 10,000 deep", || {
-        parse_sheet(&deep, Origin::Book, &mut |_| None).unwrap()
+        parse_sheet(&deep, Origin::Book, "", 0, &mut |_| None).unwrap()
     });
     let names: Vec<&str> = sheet.rules[0]
         .decls
@@ -900,7 +1157,7 @@ fn hostile_sheets_finish_or_are_refused() {
     // A 1 MB value.
     let long = format!("p{{font-family:{}}}", "a, ".repeat(350_000) + "b");
     let sheet = timed("1 MB value", || {
-        parse_sheet(&long, Origin::Book, &mut |_| None).unwrap()
+        parse_sheet(&long, Origin::Book, "", 0, &mut |_| None).unwrap()
     });
     assert!(sheet.rules[0].decls[0].1.value.len() > 1_000_000);
     // A diamond of imports eight levels deep, each sheet importing the next twice: 2^8 visits
@@ -919,7 +1176,7 @@ fn hostile_sheets_finish_or_are_refused() {
         ))
     };
     let sheet = timed("import diamond", || {
-        parse_sheet("@import \"d1.css\";", Origin::Book, &mut import).unwrap()
+        parse_sheet("@import \"d1.css\";", Origin::Book, "", 0, &mut import).unwrap()
     });
     assert_eq!(reads, 8);
     assert_eq!(sheet.rules.len(), (1 << 8) - 1);
@@ -936,7 +1193,28 @@ fn hostile_sheets_finish_or_are_refused() {
         ))
     };
     let sheet = timed("import ring", || {
-        parse_sheet("@import \"r0.css\";\np.top{a:1}", Origin::Book, &mut import).unwrap()
+        parse_sheet(
+            "@import \"r0.css\";\np.top{a:1}",
+            Origin::Book,
+            "",
+            0,
+            &mut import,
+        )
+        .unwrap()
     });
     assert_eq!(sheet.rules.len(), 1);
+}
+
+/// css_parser's own spacing rules for `*` and `/` in `calc()`, which the port does not follow
+/// (DIVERGENCES.md, "CSS spellings css_parser reads its own way"): css_parser drops these.
+#[test]
+fn calc_spacing_css_parser_drops_is_kept() {
+    for (input, port) in [
+        ("calc(1px* 2)", "calc(1px * 2)"),
+        ("calc(1px/ 2)", "calc(1px / 2)"),
+        ("calc(1px/2/3)", "calc(1px / 2 / 3)"),
+        ("calc(1px*2/3)", "calc(1px * 2 / 3)"),
+    ] {
+        assert_eq!(serialize_value(input), port, "{input}");
+    }
 }

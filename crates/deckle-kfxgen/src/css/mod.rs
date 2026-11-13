@@ -15,9 +15,14 @@
 //! is described where it is ported. Where the port differs on purpose, `DIVERGENCES.md` says so.
 //!
 //! Hostile input: every count the input controls is bounded by
-//! [`deckle_limits::MAX_STYLE_RULES`] or a nesting limit, and no work is repeated per
-//! declaration or per import.
+//! [`deckle_limits::MAX_STYLE_RULES`], [`deckle_limits::MAX_STYLE_DECLS`] or a nesting limit,
+//! charged as the text is read; the selectors of a list share one copy of their declarations,
+//! and no work is repeated per declaration or per import.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
+mod budget;
 mod defaults;
 mod font_shorthand;
 mod media;
@@ -57,10 +62,12 @@ pub struct Rule {
     pub origin: Origin,
     /// The selector as css_parser writes it (`h3 + p`, `:is(p, li)`).
     pub selector: String,
-    pub decls: Decls,
-    /// The position of its CSS rule in the [`Sheet`], imported rules first: the selectors of
-    /// one list share it, and it grows in source order. Calibre counts across all of a file's
-    /// stylesheets; a caller orders rules of different sheets by the sheets' order first.
+    /// The declarations of its CSS rule, shared by the selectors of one list (Calibre's
+    /// `flatten_style` runs once per CSS rule).
+    pub decls: Arc<Decls>,
+    /// The position of its CSS rule among all of a file's stylesheets, imported rules first:
+    /// the selectors of one list share it, and it grows in source order. It starts at the
+    /// `first_index` given to [`parse_sheet`].
     pub index: u32,
 }
 
@@ -76,27 +83,38 @@ pub struct Sheet {
     /// every linked sheet (`base.py` `_parse_css`); a caller reading a linked sheet drops these
     /// too, and keeps them for a `<style>` element.
     pub page: Vec<Decls>,
+    /// The [`Rule::index`] after this sheet's last rule: the `first_index` for the file's next
+    /// sheet.
+    pub next_index: u32,
 }
 
 impl Sheet {
-    /// Makes the sheet's `url()` values relative to the book's root, given the sheet's own
-    /// href from the root: a linked sheet's path, or the document's for a `<style>` element
-    /// (`flatcss.py` `CSSFlattener.__call__`, `stylizer.py` `Stylizer.__init__`, which both
-    /// call `replaceUrls` with `Manifest.Item.abshref`).
-    pub fn rebase_urls(&mut self, sheet_href: &str) {
-        let map = |url: &str| value::abshref(sheet_href, url);
-        let decls = self
-            .rules
-            .iter_mut()
-            .map(|r| &mut r.decls)
-            .chain(self.font_face.iter_mut())
-            .chain(self.page.iter_mut());
-        for decls in decls {
-            for (_, d) in decls.iter_mut() {
-                if d.value.contains("url(") {
-                    d.value = value::map_urls(&d.value, &map);
-                }
+    /// [`normalize`]s the style rules' and `@page` rules' declarations, as `flatten_style`
+    /// does (`@font-face` rules stay as read). Declarations the selectors of a list share are
+    /// normalized once and stay shared.
+    pub fn normalize(&mut self, profile: &Profile) {
+        // Keyed by the address of the shared declarations; the old `Arc` is kept in the map so
+        // the address is not reused while the map is alive.
+        let mut done: HashMap<*const Decls, (Arc<Decls>, Arc<Decls>)> = HashMap::new();
+        for rule in &mut self.rules {
+            // Declarations no other rule holds are normalized where they are.
+            if let Some(decls) = Arc::get_mut(&mut rule.decls) {
+                *decls = normalize(std::mem::take(decls), profile);
+                continue;
             }
+            let key = Arc::as_ptr(&rule.decls);
+            let normalized = match done.get(&key) {
+                Some((_, n)) => Arc::clone(n),
+                None => {
+                    let n = Arc::new(normalize(Decls::clone(&rule.decls), profile));
+                    done.insert(key, (Arc::clone(&rule.decls), Arc::clone(&n)));
+                    n
+                }
+            };
+            rule.decls = normalized;
+        }
+        for page in &mut self.page {
+            *page = normalize(std::mem::take(page), profile);
         }
     }
 }
@@ -108,9 +126,8 @@ pub const HTML_CSS: &str = include_str!("html.css");
 /// Why a stylesheet was not read.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// Its rules, with its imports and selector lists counted out, pass
-    /// [`deckle_limits::MAX_STYLE_RULES`], or the declarations they repeat pass 20 times it
-    /// (a long declaration or selector counting once for each 64 bytes).
+    /// It and its imports pass [`deckle_limits::MAX_STYLE_RULES`] rules or
+    /// [`deckle_limits::MAX_STYLE_DECLS`] declaration units: the limit passed.
     #[error("this book file's stylesheets hold more than {0} CSS rules or declarations")]
     TooLarge(usize),
 }

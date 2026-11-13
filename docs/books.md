@@ -81,7 +81,8 @@ the limit, instead of slowing the computer or crashing. Real books are far insid
 | EPUB, KPF, CBZ: one file inside the archive, unpacked | 256 MB |
 | EPUB, KPF: the whole archive, unpacked | 1 GB |
 | Text produced by a file's own entities | 16 MB |
-| CSS rules in one book file (a rule for each selector of a list), and the declarations they hold | 50,000 rules, 1,000,000 declarations (a long declaration or selector counts once for each 64 bytes) |
+| CSS rules in one book file (a rule for each selector of a list) | 50,000 |
+| CSS declarations in one book file (a shorthand counts once for each declaration it stands for; each 64 bytes of a declaration, selector or stylesheet counts once more) | 150,000 |
 | CBZ, CBR: the whole archive, unpacked | 4 GB |
 | CBZ, CBR: one page | 256 MB |
 | DOCX: the whole document, unpacked, pictures included | 50 MB |

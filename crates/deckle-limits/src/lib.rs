@@ -76,10 +76,16 @@ pub const MAX_PLUGIN_BYTES: u64 = 20 * MB;
 pub const MAX_ENTITY_TEXT: u64 = 16 * MB;
 
 /// EPUB to KFX: CSS rules for one book file, counting a rule for each selector of a list, each
-/// `@font-face` and `@page`, and each `@import` followed. A selector list repeats its
-/// declarations for each selector, so the copies are capped too, at 20 times this, a long
-/// declaration or selector counting once for each 64 bytes.
+/// `@font-face` and `@page` read, and each `@import` read or followed.
 pub const MAX_STYLE_RULES: usize = 50_000;
+
+/// EPUB to KFX: what the CSS of one book file may hold besides its rules ([`MAX_STYLE_RULES`]),
+/// in units: one for each declaration read (each declaration a shorthand becomes, so `border`
+/// counts 12 and `margin` 4), one more for each 64 bytes of a declaration (times the
+/// declarations it becomes) or of a selector, and one for each 64 bytes of each stylesheet's
+/// text. Units are charged as the text is read, so a stylesheet is refused when it reaches
+/// the limit, before the rest of it is held in memory.
+pub const MAX_STYLE_DECLS: usize = 150_000;
 
 /// Largest reservation made from a size a file declares (rule 1 of the size-limits design):
 /// `Vec::with_capacity(declared.min(MAX_RESERVE))`.

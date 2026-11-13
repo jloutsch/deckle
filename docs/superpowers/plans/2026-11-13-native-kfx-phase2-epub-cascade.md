@@ -190,6 +190,12 @@
 - `book_rules_match_calibre_in_text_and_order` sorts the dump's rules by `key`'s last item (source index) before comparing with `parse_sheet`'s source order, and checks `Decl.important` against `important`.
 - Follow the dump where it differs from the bullet list above: `panose-1` is kept in stylesheets, and an `@import` cycle can drop whole import chains (`css_quirks` shows which).
 
+**Amended after the Tasks 5–6 review (these win over the interface above; Task 8 reads them):**
+- `pub struct Rule { pub origin: Origin, pub selector: String, pub decls: Arc<Decls>, pub index: u32 }`: the selectors of one list share their declarations.
+- `pub struct Sheet { pub rules: Vec<Rule>, pub font_face: Vec<Decls>, pub page: Vec<Decls>, pub next_index: u32 }` and `impl Sheet { pub fn normalize(&mut self, profile: &Profile) }`, which normalizes each shared block once (style rules and `@page`; `@font-face` stays as read).
+- `pub fn parse_sheet(text: &str, origin: Origin, href: &str, first_index: u32, import: &mut dyn FnMut(&str) -> Option<String>) -> Result<Sheet, Error>;`: `href` is the sheet's address from the book's root (the document's for a `<style>`), and `url()`s come out book-absolute in one pass; `first_index` is the previous sheet's `next_index` (0 for a file's first sheet), so `Rule.index` runs on across a file's sheets as Calibre's does.
+- Limits: `MAX_STYLE_RULES` (50,000) and `MAX_STYLE_DECLS` (150,000 units: one per declaration, a shorthand counting once per declaration it becomes, and one more per 64 bytes of a declaration, selector or stylesheet), charged as the text is read.
+
 - [ ] **Step 1: Write the failing tests** in `tests/it/css_sheet.rs`, each with its expected strings taken from `css_quirks`'s `rules/NNN.json`:
   - `book_rules_match_calibre_in_text_and_order`: for every cascade fixture file, the port's `(origin, selector, decls)` list equals `rules/NNN.json`. The dump's declarations are already normalized (shorthands expanded), so the test is written here with `#[ignore = "needs Task 6"]` and passes after Task 6.
   - `serialize_value_cases`: the pairs listed above.

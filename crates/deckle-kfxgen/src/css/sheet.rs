@@ -4,41 +4,26 @@
 //! book's sheets (`base.py` `_parse_css`, css_parser's `resolveImports`).
 
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use cssparser::{
     AtRuleParser, CowRcStr, ParseError, Parser, ParserInput, ParserState, QualifiedRuleParser,
     RuleBodyItemParser, RuleBodyParser, StyleSheetParser, Token,
 };
-use deckle_limits::MAX_STYLE_RULES;
 use regex::{Captures, Regex};
 
+use super::budget::{Budget, TEXT_UNIT, decl_units};
 use super::media::{media_list_valid, media_ok};
 use super::selector::parse_list;
-use super::value::{declarations, map_urls, rel_join};
+use super::value::{abshref, declarations, import_key, rel_join};
 use super::{Decls, Error, Origin, Rule, Sheet};
 
 /// How deep imports are followed: an `@import` in the eighth imported sheet down is dropped
 /// (DIVERGENCES.md, "Imports more than 8 deep").
 const MAX_IMPORT_DEPTH: usize = 8;
-
-/// Declarations the rules may hold in all, counting each selector's copy of its list's, and a
-/// declaration or selector once for each [`TEXT_UNIT`] bytes of it: copies of one long value
-/// or selector are what make the output outgrow the input.
-const MAX_STYLE_DECLS: usize = MAX_STYLE_RULES * 20;
-
-/// Bytes of a declaration or selector that count as one more declaration.
-const TEXT_UNIT: usize = 64;
-
-/// What a copy of these declarations counts toward [`MAX_STYLE_DECLS`].
-fn decl_cost(decls: &Decls) -> usize {
-    decls
-        .iter()
-        .map(|(k, d)| 1 + (k.len() + d.value.len()) / TEXT_UNIT)
-        .fold(0, usize::saturating_add)
-}
 
 /// `preprocess.py` `CSSPreProcessor.MS_PAT`: a declaration of Microsoft Office's (`mso-`,
 /// `panose-`, `text-underline`, `tab-interval`) after the start of a line, a `;` or a `{`.
@@ -64,67 +49,114 @@ fn preprocess(text: &str) -> Cow<'_, str> {
 /// Reads `text` into a [`Sheet`].
 ///
 /// `origin` is [`Origin::UserAgent`] for [`super::HTML_CSS`], which Calibre reads without its
-/// preprocessor, and [`Origin::Book`] for a book's sheet. `import` returns the text of the
-/// sheet an `@import` names, given its address relative to this sheet (nested imports are
-/// resolved against the importing sheet and passed relative to this one), or `None` when the
-/// book has no such stylesheet. Each address is asked for once.
+/// preprocessor and whose addresses it leaves alone, and [`Origin::Book`] for a book's sheet.
+/// `href` is the sheet's address from the book's root: a linked sheet's own, or the
+/// document's for a `<style>` element; each `url()` is made book-absolute from it as it is
+/// read (`flatcss.py` `CSSFlattener.__call__` and `Stylizer.__init__` call `replaceUrls` with
+/// `Manifest.Item.abshref`). `first_index` is the [`Rule::index`] of the sheet's first rule:
+/// Calibre counts one index across all of a file's sheets, so a caller passes the previous
+/// sheet's [`Sheet::next_index`] (0 for the first).
+///
+/// `import` returns the text of the sheet an `@import` names, given its address relative to
+/// this sheet (nested imports are resolved against the importing sheet and passed relative
+/// to this one, `./` and `..` resolved), or `None` when the book has no such stylesheet. Each
+/// address is asked for once.
 ///
 /// Imported rules come before the sheet's own, nested ones first. An import whose media query
 /// Calibre rejects is skipped, an import more than [`MAX_IMPORT_DEPTH`] levels down is
 /// dropped, and an import whose chain comes back to a sheet already on it is dropped whole
-/// (DIVERGENCES.md, "Import cycles"). `url()`s in imported sheets are made relative to this
-/// one; [`Sheet::rebase_urls`] makes them book-absolute.
+/// (DIVERGENCES.md, "Import cycles").
 ///
-/// [`Error::TooLarge`] past [`MAX_STYLE_RULES`] rules (selectors of a list, `@font-face`,
-/// `@page` and imports followed, counted one each) or 20 times as many declarations (each
-/// selector's copy counted, and a long declaration or selector once for each 64 bytes).
+/// [`Error::TooLarge`] past [`deckle_limits::MAX_STYLE_RULES`] rules or
+/// [`deckle_limits::MAX_STYLE_DECLS`] declaration units, charged as they are read: this text
+/// and each imported one, every rule, `@font-face`, `@page` and `@import` read (kept or not),
+/// and every declaration.
 pub fn parse_sheet(
     text: &str,
     origin: Origin,
+    href: &str,
+    first_index: u32,
     import: &mut dyn FnMut(&str) -> Option<String>,
 ) -> Result<Sheet, Error> {
+    let budget = Budget::default();
+    if !budget.text(text.len()) {
+        return Err(budget.error());
+    }
     let text = match origin {
         Origin::Book => preprocess(text),
         Origin::UserAgent => Cow::Borrowed(text),
     };
-    let own = parse_text(&text, None);
+    let urls = match origin {
+        Origin::Book => Urls::Book { href, base: None },
+        Origin::UserAgent => Urls::Keep,
+    };
+    let own = parse_text(&text, urls, &budget);
+    drop(text);
+    if budget.over() {
+        return Err(budget.error());
+    }
     let mut r = Resolver {
         import,
         cache: HashMap::new(),
+        budget: &budget,
         origin,
+        href,
         out: Sheet::default(),
-        rules: 0,
-        decls: 0,
-        index: 0,
+        index: first_index,
     };
-    if own.over {
-        return Err(r.too_large());
-    }
-    for href in &own.imports {
+    for key in &own.imports {
         let mark = (r.out.rules.len(), r.out.font_face.len());
         let mut path = Vec::new();
-        if r.visit(href, 1, &mut path)? == Visit::Cycle {
+        if r.visit(key, 1, &mut path)? == Visit::Cycle {
             r.out.rules.truncate(mark.0);
             r.out.font_face.truncate(mark.1);
         }
     }
-    r.emit(&own, true)?;
+    r.emit(own.items.into_iter().map(Cow::Owned), false, true)?;
+    r.out.next_index = r.index;
     Ok(r.out)
+}
+
+/// How a sheet's `url()`s are written: as they are ([`super::HTML_CSS`]), or book-absolute
+/// from the top sheet's `href`, an imported sheet's first made relative to the top sheet
+/// from its address `base` (css_parser's `resolveImports`).
+#[derive(Clone, Copy)]
+enum Urls<'a> {
+    Keep,
+    Book {
+        href: &'a str,
+        base: Option<&'a str>,
+    },
+}
+
+impl Urls<'_> {
+    fn map(self, url: &str) -> String {
+        match self {
+            Urls::Keep => url.to_owned(),
+            Urls::Book { href, base: None } => abshref(href, url),
+            Urls::Book {
+                href,
+                base: Some(base),
+            } => abshref(href, &rel_join(base, url)),
+        }
+    }
 }
 
 /// What a sheet holds before its imports are inlined.
 #[derive(Default)]
 struct Parsed {
-    /// The addresses of its imports that apply, relative to the top sheet.
+    /// The addresses of its imports that apply, relative to the top sheet ([`import_key`]).
     imports: Vec<String>,
     items: Vec<Item>,
-    /// It holds more than [`MAX_STYLE_RULES`] rules; reading stopped there.
-    over: bool,
+    /// Its items are in the output once already: another copy is charged again.
+    emitted: Cell<bool>,
 }
 
+#[derive(Clone)]
 enum Item {
-    /// A style rule: its selectors, as css_parser writes them, and its declarations.
-    Style(Vec<String>, Decls),
+    /// A style rule: its selectors, as css_parser writes them, and the declarations they
+    /// share.
+    Style(Vec<String>, Arc<Decls>),
     FontFace(Decls),
     Page(Decls),
 }
@@ -138,50 +170,38 @@ enum Visit {
 
 struct Resolver<'a> {
     import: &'a mut dyn FnMut(&str) -> Option<String>,
-    /// Each imported address read once: `None` when the book has no such sheet.
+    /// Each imported sheet read once, by its [`import_key`]: `None` when the book has none.
     cache: HashMap<String, Option<Rc<Parsed>>>,
+    budget: &'a Budget,
     origin: Origin,
+    /// The top sheet's address from the book's root.
+    href: &'a str,
     out: Sheet,
-    /// Rules and imports counted so far, kept or not.
-    rules: usize,
-    decls: usize,
     index: u32,
 }
 
 impl Resolver<'_> {
-    fn too_large(&self) -> Error {
-        Error::TooLarge(if self.decls > MAX_STYLE_DECLS {
-            MAX_STYLE_DECLS
+    fn charge(&self, rules: usize, decls: usize) -> Result<(), Error> {
+        if self.budget.charge(rules, decls) {
+            Ok(())
         } else {
-            MAX_STYLE_RULES
-        })
-    }
-
-    fn charge(&mut self, rules: usize, decls: usize) -> Result<(), Error> {
-        self.rules = self.rules.saturating_add(rules);
-        self.decls = self.decls.saturating_add(decls);
-        if self.rules > MAX_STYLE_RULES || self.decls > MAX_STYLE_DECLS {
-            return Err(self.too_large());
+            Err(self.budget.error())
         }
-        Ok(())
     }
 
-    /// Follows the import of `href`, `depth` levels down, with `path` the sheets above it.
-    fn visit(&mut self, href: &str, depth: usize, path: &mut Vec<String>) -> Result<Visit, Error> {
+    /// Follows the import of `key`, `depth` levels down, with `path` the sheets above it.
+    fn visit(&mut self, key: &str, depth: usize, path: &mut Vec<String>) -> Result<Visit, Error> {
         self.charge(1, 0)?;
-        if path.iter().any(|p| p == href) {
+        if path.iter().any(|p| p == key) {
             return Ok(Visit::Cycle);
         }
         if depth > MAX_IMPORT_DEPTH {
             return Ok(Visit::Missing);
         }
-        let Some(parsed) = self.load(href) else {
+        let Some(parsed) = self.load(key)? else {
             return Ok(Visit::Missing);
         };
-        if parsed.over {
-            return Err(self.too_large());
-        }
-        path.push(href.to_owned());
+        path.push(key.to_owned());
         for next in &parsed.imports {
             if self.visit(next, depth + 1, path)? == Visit::Cycle {
                 path.pop();
@@ -189,48 +209,80 @@ impl Resolver<'_> {
             }
         }
         path.pop();
-        self.emit(&parsed, false)?;
+        let again = parsed.emitted.replace(true);
+        self.emit(parsed.items.iter().map(Cow::Borrowed), again, false)?;
         Ok(Visit::Done)
     }
 
-    fn load(&mut self, href: &str) -> Option<Rc<Parsed>> {
-        if let Some(cached) = self.cache.get(href) {
-            return cached.clone();
+    fn load(&mut self, key: &str) -> Result<Option<Rc<Parsed>>, Error> {
+        if let Some(cached) = self.cache.get(key) {
+            return Ok(cached.clone());
         }
-        // An imported sheet is a linked one: Calibre reads it through the preprocessor.
-        let parsed =
-            (self.import)(href).map(|text| Rc::new(parse_text(&preprocess(&text), Some(href))));
-        self.cache.insert(href.to_owned(), parsed.clone());
-        parsed
+        let parsed = match (self.import)(key) {
+            Some(text) => {
+                self.charge(0, text.len() / TEXT_UNIT)?;
+                let urls = match self.origin {
+                    Origin::Book => Urls::Book {
+                        href: self.href,
+                        base: Some(key),
+                    },
+                    Origin::UserAgent => Urls::Keep,
+                };
+                // An imported sheet is a linked one: Calibre reads it through the
+                // preprocessor.
+                let parsed = parse_text(&preprocess(&text), urls, self.budget);
+                if self.budget.over() {
+                    return Err(self.budget.error());
+                }
+                Some(Rc::new(parsed))
+            }
+            None => None,
+        };
+        self.cache.insert(key.to_owned(), parsed.clone());
+        Ok(parsed)
     }
 
-    /// Adds a sheet's own items to the output. `own` is the top sheet, the one whose `@page`
-    /// rules are kept.
-    fn emit(&mut self, parsed: &Parsed, own: bool) -> Result<(), Error> {
-        for item in &parsed.items {
-            match item {
+    /// Adds a sheet's items to the output: the top sheet's moved (`own`, the sheet whose
+    /// `@page` rules are kept), an imported one's copied. Items were charged when read; a
+    /// sheet imported `again` is charged again for its selectors and `@font-face` rules (the
+    /// declarations of a style rule are shared, not copied).
+    fn emit<'p>(
+        &mut self,
+        items: impl Iterator<Item = Cow<'p, Item>>,
+        again: bool,
+        own: bool,
+    ) -> Result<(), Error> {
+        for item in items {
+            match &*item {
+                Item::Style(selectors, _) if again => {
+                    self.charge(selectors.len(), selector_units(selectors))?;
+                }
+                Item::FontFace(decls) if again => {
+                    let units = decls
+                        .iter()
+                        .map(|(k, d)| decl_units(k, d.value.len()))
+                        .fold(0, usize::saturating_add);
+                    self.charge(1, units)?;
+                }
+                Item::Page(_) if !own => {
+                    self.index = self.index.saturating_add(1);
+                    continue;
+                }
+                _ => {}
+            }
+            match item.into_owned() {
                 Item::Style(selectors, decls) => {
-                    let cost = decl_cost(decls);
                     for selector in selectors {
-                        self.charge(1, cost.saturating_add(selector.len() / TEXT_UNIT))?;
                         self.out.rules.push(Rule {
                             origin: self.origin,
-                            selector: selector.clone(),
-                            decls: decls.clone(),
+                            selector,
+                            decls: Arc::clone(&decls),
                             index: self.index,
                         });
                     }
                 }
-                Item::FontFace(decls) => {
-                    self.charge(1, decl_cost(decls))?;
-                    self.out.font_face.push(decls.clone());
-                }
-                Item::Page(decls) => {
-                    if own {
-                        self.charge(1, decl_cost(decls))?;
-                        self.out.page.push(decls.clone());
-                    }
-                }
+                Item::FontFace(decls) => self.out.font_face.push(decls),
+                Item::Page(decls) => self.out.page.push(decls),
             }
             self.index = self.index.saturating_add(1);
         }
@@ -238,21 +290,30 @@ impl Resolver<'_> {
     }
 }
 
-/// Reads one sheet's text. `base` is its address relative to the top sheet, for an imported
-/// one: its imports and `url()`s are made relative to the top sheet with it.
-fn parse_text(text: &str, base: Option<&str>) -> Parsed {
+/// What a list of selectors counts toward the declaration units: one for each
+/// [`TEXT_UNIT`] bytes of each.
+fn selector_units(selectors: &[String]) -> usize {
+    selectors
+        .iter()
+        .map(|s| s.len() / TEXT_UNIT)
+        .fold(0, usize::saturating_add)
+}
+
+/// Reads one sheet's text, charging what it reads to `budget` and stopping when that runs
+/// out.
+fn parse_text(text: &str, urls: Urls<'_>, budget: &Budget) -> Parsed {
     let mut input = ParserInput::new(text);
     let mut p = Parser::new(&mut input);
     let mut top = TopParser {
         namespaces: BTreeSet::new(),
         phase: Phase::Imports,
-        base,
+        urls,
+        budget,
         parsed: Parsed::default(),
-        count: 0,
     };
     let mut rules = StyleSheetParser::new(&mut p, &mut top);
     while rules.next().is_some() {
-        if rules.parser.parsed.over {
+        if budget.over() {
             break;
         }
     }
@@ -271,45 +332,52 @@ enum Phase {
 struct TopParser<'a> {
     namespaces: BTreeSet<String>,
     phase: Phase,
-    base: Option<&'a str>,
+    urls: Urls<'a>,
+    budget: &'a Budget,
     parsed: Parsed,
-    /// Rules read so far.
-    count: usize,
 }
 
 impl TopParser<'_> {
-    fn add(&mut self, item: Item) {
-        let n = match &item {
-            Item::Style(s, _) => s.len(),
-            _ => 1,
-        };
-        self.count = self.count.saturating_add(n);
-        if self.count > MAX_STYLE_RULES {
-            self.parsed.over = true;
+    /// A style rule's selectors, charged as they are read.
+    fn selectors<'i>(&self, input: &mut Parser<'i, '_>) -> Result<Vec<String>, ParseError<'i, ()>> {
+        let selectors =
+            parse_list(input, &self.namespaces).map_err(|()| input.new_custom_error(()))?;
+        if !self
+            .budget
+            .charge(selectors.len(), selector_units(&selectors))
+        {
+            return Err(input.new_custom_error(()));
         }
-        let item = match (self.base, item) {
-            (Some(base), Item::Style(s, d)) => Item::Style(s, rebase(d, base)),
-            (Some(base), Item::FontFace(d)) => Item::FontFace(rebase(d, base)),
-            (_, item) => item,
-        };
-        self.parsed.items.push(item);
+        Ok(selectors)
+    }
+
+    /// A block's declarations, each charged as it is read.
+    fn declarations(&self, input: &mut Parser<'_, '_>) -> Decls {
+        let urls = self.urls;
+        match urls {
+            Urls::Keep => declarations(input, Some(self.budget), None),
+            Urls::Book { .. } => declarations(input, Some(self.budget), Some(&|u| urls.map(u))),
+        }
+    }
+
+    /// An `@font-face` or `@page` rule, kept or not, counts as a rule.
+    fn at_rule(&mut self, item: Option<Item>) {
+        if self.budget.charge(1, 0)
+            && let Some(item) = item
+        {
+            self.parsed.items.push(item);
+        }
     }
 
     /// A style rule's block.
     fn style_block(&mut self, selectors: Vec<String>, input: &mut Parser<'_, '_>) {
-        let decls = declarations(input);
-        self.add(Item::Style(selectors, decls));
-    }
-}
-
-/// An imported sheet's `url()`s, made relative to the top sheet.
-fn rebase(mut decls: Decls, base: &str) -> Decls {
-    for (_, d) in &mut decls {
-        if d.value.contains("url(") {
-            d.value = map_urls(&d.value, &|u| rel_join(base, u));
+        let decls = self.declarations(input);
+        if !self.budget.over() {
+            self.parsed
+                .items
+                .push(Item::Style(selectors, Arc::new(decls)));
         }
     }
-    decls
 }
 
 /// The prelude of an at-rule Calibre reads.
@@ -403,16 +471,14 @@ impl<'i> AtRuleParser<'i> for TopParser<'_> {
     fn rule_without_block(&mut self, prelude: Prelude, _start: &ParserState) -> Result<(), ()> {
         match prelude {
             Prelude::Import(href, media) => {
-                self.count = self.count.saturating_add(1);
-                if self.count > MAX_STYLE_RULES {
-                    self.parsed.over = true;
-                }
-                if import_media_ok(&media) {
-                    let href = match self.base {
-                        Some(base) => rel_join(base, &href),
-                        None => href,
+                if self.budget.charge(1, 0) && import_media_ok(&media) {
+                    let href = match self.urls {
+                        Urls::Book {
+                            base: Some(base), ..
+                        } => rel_join(base, &href),
+                        _ => href,
                     };
-                    self.parsed.imports.push(href);
+                    self.parsed.imports.push(import_key(&href));
                 }
                 Ok(())
             }
@@ -436,7 +502,7 @@ impl<'i> AtRuleParser<'i> for TopParser<'_> {
                 let mut inner = MediaParser { top: self };
                 let mut rules = RuleBodyParser::new(input, &mut inner);
                 while rules.next().is_some() {
-                    if rules.parser.top.parsed.over {
+                    if rules.parser.top.budget.over() {
                         break;
                     }
                 }
@@ -445,17 +511,15 @@ impl<'i> AtRuleParser<'i> for TopParser<'_> {
             // The rules of a query Calibre rejects are not read.
             Prelude::Media(false) => Ok(()),
             Prelude::FontFace => {
-                let decls = declarations(input);
+                let decls = self.declarations(input);
                 // `flatten_rule`: an `@font-face` of one property (MS Word writes them with
                 // only `font-family`) is ignored.
-                if decls.len() > 1 {
-                    self.add(Item::FontFace(decls));
-                }
+                self.at_rule((decls.len() > 1).then_some(Item::FontFace(decls)));
                 Ok(())
             }
             Prelude::Page => {
-                let decls = declarations(input);
-                self.add(Item::Page(decls));
+                let decls = self.declarations(input);
+                self.at_rule(Some(Item::Page(decls)));
                 Ok(())
             }
             Prelude::Import(..) | Prelude::Namespace(_) => Err(input.new_custom_error(())),
@@ -473,7 +537,7 @@ impl<'i> QualifiedRuleParser<'i> for TopParser<'_> {
         input: &mut Parser<'i, 't>,
     ) -> Result<Vec<String>, ParseError<'i, ()>> {
         self.phase = Phase::Body;
-        parse_list(input, &self.namespaces).map_err(|()| input.new_custom_error(()))
+        self.selectors(input)
     }
 
     fn parse_block<'t>(
@@ -518,8 +582,8 @@ impl<'i> AtRuleParser<'i> for MediaParser<'_, '_> {
         _start: &ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<(), ParseError<'i, ()>> {
-        let decls = declarations(input);
-        self.top.add(Item::Page(decls));
+        let decls = self.top.declarations(input);
+        self.top.at_rule(Some(Item::Page(decls)));
         Ok(())
     }
 }
@@ -533,7 +597,7 @@ impl<'i> QualifiedRuleParser<'i> for MediaParser<'_, '_> {
         &mut self,
         input: &mut Parser<'i, 't>,
     ) -> Result<Vec<String>, ParseError<'i, ()>> {
-        parse_list(input, &self.top.namespaces).map_err(|()| input.new_custom_error(()))
+        self.top.selectors(input)
     }
 
     fn parse_block<'t>(

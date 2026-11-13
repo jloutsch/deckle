@@ -7,13 +7,14 @@
 //! `, ` after a comma and nothing around a `/`; a declaration whose value css_parser cannot
 //! read (a lone `#`, a block, an operator outside `calc()`, a custom property) is dropped.
 
-use std::collections::HashMap;
+use std::borrow::Cow;
 
 use cssparser::{
     AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserInput, ParserState,
     QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, Token,
 };
 
+use super::budget::{Budget, decl_units};
 use super::{Decl, Decls};
 
 /// How deep functions may nest in a value (`f(g(h()))`). css_parser has no limit of its own
@@ -36,7 +37,7 @@ pub fn serialize_value(tokens: &str) -> String {
 
 /// [`serialize_value`], with each `url()` passed through `urls` on the way. `None` when
 /// css_parser would drop it.
-fn write_value(text: &str, urls: Option<&dyn Fn(&str) -> String>) -> Option<String> {
+pub(crate) fn write_value(text: &str, urls: Option<&dyn Fn(&str) -> String>) -> Option<String> {
     let mut input = ParserInput::new(text);
     let mut p = Parser::new(&mut input);
     let mut out = String::new();
@@ -45,20 +46,18 @@ fn write_value(text: &str, urls: Option<&dyn Fn(&str) -> String>) -> Option<Stri
     Some(out)
 }
 
-/// `value` with each `url()` replaced by `map` of its address. A value css_parser wrote is
-/// read back as written.
-pub(crate) fn map_urls(value: &str, map: &dyn Fn(&str) -> String) -> String {
-    write_value(value, Some(map)).unwrap_or_else(|| value.to_owned())
-}
-
 /// Where an item list is: what separators and operators it allows.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Ctx {
     Top,
     /// Arguments of a function css_parser has no rule for: items and commas.
     Function,
-    /// `calc()`: `+ - * /` as items of their own, written with spaces around them.
+    /// `calc()`: numbers and `var()` between `+ - * /`, written with spaces around them;
+    /// `+` and `-` need white space on both sides.
     Calc,
+    /// A `url(` holding more than one string (`url('a' 'b')`): items and commas, as
+    /// [`Ctx::Function`] but without `/`.
+    Url,
     /// `rgb() rgba() hsl() hsla()`: numbers and percentages.
     Color,
     /// `alpha(opacity=50)`, Internet Explorer's filter, the one place css_parser reads `=`.
@@ -80,14 +79,34 @@ impl Writer<'_> {
     ) -> Result<(), ()> {
         let mut first = true;
         let mut joiner: Option<&str> = None;
+        // In `calc()`: whether the next item must be a number (not an operator).
+        let mut want_operand = true;
         loop {
+            let before_space = p.position();
             p.skip_whitespace();
+            let space_before = p.position() != before_space;
             let start = p.state();
             let Ok(tok) = p.next_including_whitespace() else {
                 break;
             };
             let tok = tok.clone();
             let raw = p.slice_from(start.position());
+            if ctx == Ctx::Calc {
+                let operator = matches!(tok, Token::Delim('+' | '-' | '*' | '/'));
+                if operator == want_operand || matches!(tok, Token::Comma) {
+                    return Err(());
+                }
+                if matches!(tok, Token::Delim('+' | '-')) {
+                    let space_after = self
+                        .src
+                        .get(p.position().byte_index()..)
+                        .is_some_and(|rest| rest.starts_with(is_css_space));
+                    if !space_before || !space_after {
+                        return Err(());
+                    }
+                }
+                want_operand = operator;
+            }
             let joins = match (&tok, ctx) {
                 (Token::Comma, _) => Some(", "),
                 (Token::Delim('/'), Ctx::Top | Ctx::Function) => Some("/"),
@@ -109,7 +128,7 @@ impl Writer<'_> {
             first = false;
             joiner = None;
         }
-        if joiner.is_some() {
+        if joiner.is_some() || (ctx == Ctx::Calc && want_operand) {
             return Err(());
         }
         Ok(())
@@ -125,6 +144,15 @@ impl Writer<'_> {
         depth: usize,
     ) -> Result<String, ()> {
         if ctx == Ctx::Color && !matches!(tok, Token::Number { .. } | Token::Percentage { .. }) {
+            return Err(());
+        }
+        let calc_item = match tok {
+            Token::Number { .. } | Token::Dimension { .. } | Token::Percentage { .. } => true,
+            Token::Delim('+' | '-' | '*' | '/') => true,
+            Token::Function(name) => name.eq_ignore_ascii_case("var"),
+            _ => false,
+        };
+        if ctx == Ctx::Calc && !calc_item {
             return Err(());
         }
         match tok {
@@ -158,21 +186,30 @@ impl Writer<'_> {
                 }
                 let lower = name.to_ascii_lowercase();
                 if lower == "url" {
+                    // `url(` then a quote: one string is an address; more items are a
+                    // function css_parser writes as it is (`url("a" "b")`), its strings not
+                    // addresses.
                     let content = p
                         .parse_nested_block(|p| {
+                            let at_start = p.state();
                             p.skip_whitespace();
                             let s = p.state();
-                            let ok = matches!(p.next(), Ok(Token::QuotedString(_)));
+                            let one = matches!(p.next(), Ok(Token::QuotedString(_)));
                             let raw = p.slice_from(s.position());
                             p.skip_whitespace();
-                            match (ok, p.is_exhausted()) {
-                                (true, true) => string_content(raw).ok_or(()),
-                                _ => Err(()),
+                            if one && p.is_exhausted() {
+                                return string_content(raw)
+                                    .map(|c| self.url(&c))
+                                    .ok_or_else(|| p.new_custom_error::<(), ()>(()));
                             }
-                            .map_err(|()| p.new_custom_error::<(), ()>(()))
+                            p.reset(&at_start);
+                            let mut inner = String::new();
+                            self.items(p, &mut inner, Ctx::Url, depth + 1)
+                                .map_err(|()| p.new_custom_error::<(), ()>(()))?;
+                            Ok(format!("url({inner})"))
                         })
                         .map_err(|_| ())?;
-                    return Ok(self.url(&content));
+                    return Ok(content);
                 }
                 let (written, inner_ctx) = match lower.as_str() {
                     // css_parser's calc keeps the name as written (`CALC(`).
@@ -388,8 +425,10 @@ pub(crate) fn decode_escapes(s: &str) -> String {
 }
 
 /// The text of a quoted string token as css_parser keeps it (`helper.stringvalue`): escapes
-/// resolved as [`decode_escapes`] does, the quote it was written with unescaped, other
-/// escapes as written. `None` for a string with no closing quote, which css_parser drops.
+/// resolved as [`decode_escapes`] does, then a backslash before a line break dropped with it
+/// (so `"\\a"`, a backslash and an escaped line feed, is empty), the quote it was written
+/// with unescaped, other escapes as written. `None` for a string with no closing quote, which
+/// css_parser drops.
 pub(crate) fn string_content(raw: &str) -> Option<String> {
     let q = raw.chars().next().filter(|&c| c == '"' || c == '\'')?;
     let body = raw.get(1..)?;
@@ -398,8 +437,35 @@ pub(crate) fn string_content(raw: &str) -> Option<String> {
     if escapes % 2 == 1 {
         return None;
     }
-    let inner = decode_escapes(inner);
+    let decoded = decode_escapes(inner);
+    let inner = drop_line_continuations(&decoded);
     Some(inner.replace(&format!("\\{q}"), &q.to_string()))
+}
+
+/// A string's text without its line continuations: each backslash before `\r\n`, `\n`, `\r`
+/// or a form feed dropped with the break, in one pass from the left.
+fn drop_line_continuations(s: &str) -> Cow<'_, str> {
+    if !s.contains('\\') {
+        return Cow::Borrowed(s);
+    }
+    let b = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let (mut i, mut kept) = (0, 0);
+    while i < b.len() {
+        let len = match (b[i], b.get(i + 1), b.get(i + 2)) {
+            (b'\\', Some(b'\r'), Some(b'\n')) => 3,
+            (b'\\', Some(b'\n' | b'\r' | 0x0c), _) => 2,
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        out.push_str(&s[kept..i]);
+        i += len;
+        kept = i;
+    }
+    out.push_str(&s[kept..]);
+    Cow::Owned(out)
 }
 
 /// A string as css_parser writes it (`helper.string`): in double quotes, `"` escaped and a
@@ -507,11 +573,38 @@ pub(crate) fn rel_join(base: &str, href: &str) -> String {
     normpath(&format!("{dir}/{href}"))
 }
 
-/// A declaration list (a rule's block, a `style` attribute) read into css_parser's form.
-pub(crate) fn declarations(input: &mut Parser<'_, '_>) -> Decls {
+/// An `@import`'s address relative to the top sheet, written one way: `./p.css`, `a/../p.css`
+/// and `p.css` are the same sheet (css_parser resolves each against the importing sheet's
+/// URL). An address with a scheme is kept as written.
+pub(crate) fn import_key(href: &str) -> String {
+    if has_scheme(href) {
+        href.to_owned()
+    } else {
+        normpath(href)
+    }
+}
+
+/// A declaration list (a rule's block, a `style` attribute) read into css_parser's form, each
+/// `url()` passed through `urls`. With a `budget`, each declaration is charged as it is read
+/// and reading stops when the budget runs out (the caller then refuses the sheet).
+pub(crate) fn declarations(
+    input: &mut Parser<'_, '_>,
+    budget: Option<&Budget>,
+    urls: Option<&dyn Fn(&str) -> String>,
+) -> Decls {
     let mut list = Vec::new();
-    let mut collector = Collector { out: &mut list };
-    for _ in RuleBodyParser::new(input, &mut collector) {}
+    let mut collector = Collector {
+        out: &mut list,
+        budget,
+        urls,
+    };
+    let mut items = RuleBodyParser::new(input, &mut collector);
+    while items.next().is_some() {
+        if budget.is_some_and(Budget::over) {
+            // The sheet is refused: what was read is not needed.
+            return Decls::new();
+        }
+    }
     dedupe(list)
 }
 
@@ -529,35 +622,51 @@ pub fn parse_style_attr(text: &str) -> Decls {
     let joined = kept.join("; ");
     let mut input = ParserInput::new(&joined);
     let mut p = Parser::new(&mut input);
-    declarations(&mut p)
+    declarations(&mut p, None, None)
 }
 
 /// css_parser's view of a declaration list (`CSSStyleDeclaration.__iter__`): each name once,
 /// in the order of its last declaration, with its last `!important` value, else its last
-/// value. One pass from the end.
-fn dedupe(list: Vec<(String, String, bool)>) -> Decls {
-    let mut at: HashMap<String, usize> = HashMap::new();
-    let mut out: Vec<(String, Decl)> = Vec::new();
-    for (name, value, important) in list.into_iter().rev() {
-        match at.get(&name) {
-            Some(&i) => {
-                if important && !out[i].1.important {
-                    out[i].1 = Decl { value, important };
-                }
-            }
-            None => {
-                at.insert(name.clone(), out.len());
-                out.push((name, Decl { value, important }));
-            }
-        }
+/// value. In place, names not copied: the positions sorted by name (stably) give each
+/// name's declarations in order.
+fn dedupe(mut list: Decls) -> Decls {
+    if list.len() < 2 {
+        return list;
     }
-    out.reverse();
-    out
+    let mut order: Vec<usize> = (0..list.len()).collect();
+    order.sort_by(|&a, &b| list[a].0.cmp(&list[b].0));
+    let mut keep = vec![false; list.len()];
+    // (an earlier `!important` declaration, the last of its name) where the first wins.
+    let mut moves = Vec::new();
+    for group in order.chunk_by(|&a, &b| list[a].0 == list[b].0) {
+        let last = group[group.len() - 1];
+        if let Some(&from) = group.iter().rev().find(|&&i| list[i].1.important)
+            && from != last
+        {
+            moves.push((from, last));
+        }
+        keep[last] = true;
+    }
+    for (from, last) in moves {
+        let value = std::mem::take(&mut list[from].1.value);
+        list[last].1 = Decl {
+            value,
+            important: true,
+        };
+    }
+    let mut i = 0;
+    list.retain(|_| {
+        i += 1;
+        keep[i - 1]
+    });
+    list
 }
 
-/// Gathers `(name, value, important)` from a declaration list.
+/// Gathers the declarations of a declaration list, in order, repeats included.
 struct Collector<'a> {
-    out: &'a mut Vec<(String, String, bool)>,
+    out: &'a mut Decls,
+    budget: Option<&'a Budget>,
+    urls: Option<&'a dyn Fn(&str) -> String>,
 }
 
 impl<'i> DeclarationParser<'i> for Collector<'_> {
@@ -576,12 +685,11 @@ impl<'i> DeclarationParser<'i> for Collector<'_> {
             return Err(input.new_custom_error(()));
         }
         let start = input.position();
-        let end;
+        let mut end = None;
         let mut important = false;
         loop {
             let before = input.position();
             let Ok(tok) = input.next_including_whitespace() else {
-                end = before;
                 break;
             };
             let opens_block = matches!(
@@ -598,22 +706,35 @@ impl<'i> DeclarationParser<'i> for Collector<'_> {
                 continue;
             }
             if matches!(tok, Token::Delim('!')) {
-                // `!important`, any case and spacing; another word after `!` is a priority
-                // css_parser keeps but Calibre does not read as important.
-                input.skip_whitespace();
-                let priority = input.expect_ident_cloned().map_err(ParseError::from)?;
-                input.skip_whitespace();
-                input.expect_exhausted().map_err(ParseError::from)?;
-                important = priority.eq_ignore_ascii_case("important");
-                end = before;
+                // The value ends at the first `!`. It is important when `important` (any
+                // case, after any spacing) is all that follows; anything else there
+                // (`!foo`, `!important!important`, a lone `!`) leaves the value kept and not
+                // important.
+                end = Some(before);
+                important = input
+                    .try_parse(|i| {
+                        i.skip_whitespace();
+                        let word = i.expect_ident_cloned()?;
+                        i.expect_exhausted()?;
+                        Ok::<_, ParseError<'i, ()>>(word.eq_ignore_ascii_case("important"))
+                    })
+                    .unwrap_or(false);
+                while input.next().is_ok() {}
                 break;
             }
         }
-        let value = serialize_value(input.slice(start..end));
+        let end = end.unwrap_or_else(|| input.position());
+        let raw = input.slice(start..end);
+        if let Some(budget) = self.budget
+            && !budget.charge(0, decl_units(&name, raw.len()))
+        {
+            return Err(input.new_custom_error(()));
+        }
+        let value = write_value(raw, self.urls).unwrap_or_default();
         if value.is_empty() {
             return Err(input.new_custom_error(()));
         }
-        self.out.push((name, value, important));
+        self.out.push((name, Decl { value, important }));
         Ok(())
     }
 }
