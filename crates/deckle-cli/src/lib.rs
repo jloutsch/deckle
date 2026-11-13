@@ -1705,7 +1705,7 @@ fn highlights_cmd(
             if let Some(e) = &parsed.error {
                 eprintln!("warning: My Clippings.txt line {}: {}", e.line, e.message);
             }
-            let state = deckle_highlights::State::load(&state_path);
+            let state = deckle_highlights::State::load(&state_path)?;
             let books = deckle_highlights::group(parsed.entries);
             let rows: Vec<_> = deckle_highlights::pending(&books, state.folder.as_deref(), &state)
                 .into_iter()
@@ -2095,7 +2095,12 @@ fn kindle(json: bool, to: &str, action: cli::KindleCommand) -> Result<ExitCode, 
 /// The originals on this computer (Books and Kindle design §4); a calibre library that won't
 /// open is a warning.
 fn originals() -> deckle_library::sources::Sources {
-    let cfg = deckle_library::LibraryConfig::load(&deckle_library::config::default_path());
+    // A library.json that can't be read is a warning: the originals are looked for without it.
+    let cfg = deckle_library::LibraryConfig::load(&deckle_library::config::default_path())
+        .unwrap_or_else(|e| {
+            eprintln!("warning: {e}");
+            Default::default()
+        });
     let found =
         deckle_library::sources::Sources::gather(&cfg, deckle_library::sources::home().as_deref());
     for w in &found.warnings {
@@ -2254,7 +2259,11 @@ fn kindle_upgrade(
     }
     // Highlights first, when there's a folder for them (design §6). The old .sdr is kept too.
     let state = highlights::state_path();
-    if deckle_highlights::State::load(&state).folder.is_some() {
+    // A damaged highlights.json is tried too: the export says why it stopped.
+    if deckle_highlights::State::load(&state)
+        .map(|s| s.folder.is_some())
+        .unwrap_or(true)
+    {
         let read =
             deckle_core::clippings::read_on(&mut Conn::new(target)).map_err(|e| e.to_string());
         match read.map(|b| b.map(|b| deckle_highlights::export_clippings(&b, &state, None))) {
@@ -2530,7 +2539,7 @@ fn library(json: bool, action: cli::LibraryCommand) -> Result<ExitCode, String> 
         LibraryConfig {
             root: Some(root.clone()),
             auto_add: !no_auto_add,
-            ..LibraryConfig::load(&config)
+            ..LibraryConfig::load(&config)?
         }
         .save(&config)?;
         println!("library: {}", root.display());
@@ -2911,7 +2920,7 @@ fn digest_interests(
     };
     match action {
         None => {
-            let learning = Learning::load(&learning_path);
+            let learning = Learning::load(&learning_path)?;
             let noticed = learn::suggest(&learning, &cfg, today);
             #[derive(serde::Serialize)]
             struct Out<'a> {
@@ -2958,7 +2967,7 @@ fn digest_interests(
             Ok(ExitCode::SUCCESS)
         }
         Some(cli::InterestsCommand::Accept { phrase }) => {
-            let mut learning = Learning::load(&learning_path);
+            let mut learning = Learning::load(&learning_path)?;
             let key = find_key(&learning, &phrase)
                 .ok_or_else(|| format!("no suggestion \"{phrase}\""))?;
             let entry = learn::accept(&mut learning, &mut cfg, &key, today)?;
@@ -2968,7 +2977,7 @@ fn digest_interests(
             Ok(ExitCode::SUCCESS)
         }
         Some(cli::InterestsCommand::Dismiss { phrase }) => {
-            let mut learning = Learning::load(&learning_path);
+            let mut learning = Learning::load(&learning_path)?;
             let key = find_key(&learning, &phrase)
                 .ok_or_else(|| format!("no suggestion \"{phrase}\""))?;
             learn::dismiss(&mut learning, &key, today)?;
@@ -2979,7 +2988,7 @@ fn digest_interests(
             Ok(ExitCode::SUCCESS)
         }
         Some(cli::InterestsCommand::Why { name }) => {
-            let learning = Learning::load(&learning_path);
+            let learning = Learning::load(&learning_path)?;
             let key = find_key(&learning, &name)
                 .ok_or_else(|| format!("nothing noticed about \"{name}\""))?;
             let c = &learning.candidates[&key];
@@ -4874,7 +4883,10 @@ const RESENT_DAYS: i64 = 7;
 /// last week.
 fn morgue_exempt() -> Vec<String> {
     use deckle_digest::chrono::{DateTime, Utc};
-    let state = deckle_morgue::MorgueState::load(&deckle_morgue::state::state_path());
+    // A damaged morgue.json is said and exempts nothing: prune keeps its usual count.
+    let Some(state) = morgue_state(&deckle_morgue::state::state_path()) else {
+        return Vec::new();
+    };
     let now = Utc::now();
     let outbox = deckle_core::queue::Queue::default_dir();
     state
@@ -4893,13 +4905,32 @@ fn morgue_exempt() -> Vec<String> {
         .collect()
 }
 
+/// `morgue.json` for a step that goes on without it: a damaged one is `None`, said once per
+/// run however many steps load it (prune, a connection, the build's archive).
+fn morgue_state(path: &Path) -> Option<deckle_morgue::MorgueState> {
+    static SAID: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+    match deckle_morgue::MorgueState::load(path) {
+        Ok(state) => Some(state),
+        Err(e) => {
+            let mut said = SAID.lock().unwrap_or_else(|p| p.into_inner());
+            if said.as_deref() != Some(e.as_str()) {
+                eprintln!("morgue: {e}");
+                *said = Some(e);
+            }
+            None
+        }
+    }
+}
+
 /// What a connection taught the Morgue: sent-again editions that arrived, passages highlighted
 /// per edition (from `My Clippings.txt`, when it was read) and which editions are on the
 /// Kindle (from the readership read). Problems are logged; they never fail the sync.
 fn record_morgue(flush: &deckle_core::queue::FlushReport) {
     use deckle_core::yjf::OnDevice;
     let path = deckle_morgue::state::state_path();
-    let mut state = deckle_morgue::MorgueState::load(&path);
+    let Some(mut state) = morgue_state(&path) else {
+        return;
+    };
     let before = state.clone();
     let now = deckle_digest::chrono::Utc::now().to_rfc3339();
     for delivered in &flush.delivered {
@@ -5265,20 +5296,25 @@ fn reader_sync(
     reader_server::remember(flush.delivered.iter());
     if plan.clippings && puzzle_on(cfg) && flush.clippings_error.is_none() {
         let path = cfg.puzzle_store();
-        let mut store = deckle_digest::puzzle::store::Store::load(&path);
-        use deckle_digest::puzzle::check::Notes;
-        let notes = match flush.clippings.as_deref() {
-            Some(b) => Notes::Read(b),
-            None => Notes::NoFile,
-        };
-        deckle_digest::puzzle::check::record(
-            &mut store,
-            notes,
-            deckle_digest::chrono::Local::now().date_naive(),
-            deckle_digest::puzzle::words::Words::embedded(),
-        );
-        if let Err(e) = store.save(&path) {
-            eprintln!("puzzle: {}: {e}", path.display());
+        let store = deckle_digest::puzzle::store::Store::load(&path);
+        if let Err(e) = &store {
+            eprintln!("puzzle: {e}");
+        }
+        if let Ok(mut store) = store {
+            use deckle_digest::puzzle::check::Notes;
+            let notes = match flush.clippings.as_deref() {
+                Some(b) => Notes::Read(b),
+                None => Notes::NoFile,
+            };
+            deckle_digest::puzzle::check::record(
+                &mut store,
+                notes,
+                deckle_digest::chrono::Local::now().date_naive(),
+                deckle_digest::puzzle::words::Words::embedded(),
+            );
+            if let Err(e) = store.save(&path) {
+                eprintln!("puzzle: {}: {e}", path.display());
+            }
         }
     }
     let export = cfg.sync.for_device(&id).clippings;
@@ -5296,10 +5332,14 @@ fn reader_sync(
     shelves::on_sync(reader);
     let shelf = flush.kobo_books.clone().and_then(|books| {
         let path = cfg.shelf_store();
-        let previous = deckle_digest::shelf::store::Shelf::load(&path)
-            .kindles
-            .get(&id)
-            .cloned();
+        // A damaged shelf.json skips the shelf, said; the books were delivered all the same.
+        let previous = match deckle_digest::shelf::store::Shelf::load(&path) {
+            Ok(shelf) => shelf.kindles.get(&id).cloned(),
+            Err(e) => {
+                eprintln!("shelf: {e}");
+                return None;
+            }
+        };
         let name = cfg.sync.device_name(&id).unwrap_or_else(|| reader.name());
         let snap = deckle_shelf::kobo_snapshot(
             books,
@@ -5340,7 +5380,13 @@ pub(crate) fn record_koreader(
     device: &str,
     found: &[deckle_core::koreader::Position],
 ) -> usize {
-    let mut state = deckle_readership::State::load(path);
+    let mut state = match deckle_readership::State::load(path) {
+        Ok(state) => state,
+        Err(e) => {
+            eprintln!("readership: {e}");
+            return 0;
+        }
+    };
     let mut n = 0;
     for p in found {
         let Some(date) = deckle_readership::koreader::edition_of(&state, &p.book) else {
@@ -5666,9 +5712,19 @@ fn gather_options_for(
     date: deckle_digest::chrono::NaiveDate,
 ) -> deckle_digest::GatherOptions {
     let mut opts = gather_options();
+    // A damaged interests.json leaves the naming and the nudges out of this edition, said once.
+    let learning = || {
+        deckle_readership::Learning::load(&deckle_readership::Learning::path_for(cfg))
+            .unwrap_or_default()
+    };
+    if (cfg.llm.enabled || cfg.learning.enabled && cfg.learning.nudges)
+        && let Err(e) =
+            deckle_readership::Learning::load(&deckle_readership::Learning::path_for(cfg))
+    {
+        eprintln!("learning: {e}");
+    }
     if cfg.llm.enabled {
-        let learning =
-            deckle_readership::Learning::load(&deckle_readership::Learning::path_for(cfg));
+        let learning = learning();
         opts.naming = deckle_readership::learn::naming_candidates(&learning, cfg, date)
             .into_iter()
             .map(|(key, phrase, headlines)| deckle_digest::NamingCandidate {
@@ -5679,8 +5735,7 @@ fn gather_options_for(
             .collect();
     }
     if cfg.learning.enabled && cfg.learning.nudges {
-        let learning =
-            deckle_readership::Learning::load(&deckle_readership::Learning::path_for(cfg));
+        let learning = learning();
         opts.nudges = deckle_readership::learn::nudges_for(&learning, cfg, date)
             .into_iter()
             .map(|(key, name, why)| deckle_digest::Nudge { key, name, why })
@@ -5697,7 +5752,10 @@ fn accept_tapped_nudges(
     state: &deckle_readership::State,
 ) {
     let path = deckle_readership::Learning::path_for(paper);
-    let mut learning = deckle_readership::Learning::load(&path);
+    let mut learning = match deckle_readership::Learning::load(&path) {
+        Ok(l) => l,
+        Err(e) => return eprintln!("learning: {e}"),
+    };
     // the file as it is now, not as it was when the connection began: the app may have saved
     let mut cfg = match deckle_digest::papers::load_one(main, paper.slug()) {
         Ok(c) => c,
@@ -5726,7 +5784,10 @@ fn record_naming(cfg: &deckle_digest::Config, gathered: &deckle_digest::Gathered
         return;
     }
     let path = deckle_readership::Learning::path_for(cfg);
-    let mut learning = deckle_readership::Learning::load(&path);
+    let mut learning = match deckle_readership::Learning::load(&path) {
+        Ok(l) => l,
+        Err(e) => return eprintln!("learning: {e}"),
+    };
     let names: Vec<(String, String, String)> = gathered
         .names
         .iter()
@@ -5758,7 +5819,11 @@ fn sync_to(
     // Prepared books are finished for this Kindle: its class from the connection, the owner's
     // choices for it from the app's devices.json (device-aware build §4.3).
     let registry =
-        deckle_core::devices::DeviceRegistry::load(&deckle_core::devices::default_registry_file());
+        deckle_core::devices::DeviceRegistry::load(&deckle_core::devices::default_registry_file())
+            .unwrap_or_else(|e| {
+                eprintln!("devices: {e}");
+                Default::default()
+            });
     let finishing = deckle_core::queue::Finishing {
         profile: deckle_core::devices::profile_for(target, &registry),
         paper_pdf: cfg.sync.for_device(&id).paper == deckle_digest::config::PaperFormat::Pdf,
@@ -5770,7 +5835,11 @@ fn sync_to(
         .iter()
         .map(|p| {
             let path = readership_path(p);
-            let state = deckle_readership::State::load(&path);
+            // A damaged file is said and records nothing: its save would be refused.
+            let state = deckle_readership::State::load(&path).unwrap_or_else(|e| {
+                eprintln!("readership: {e}");
+                Default::default()
+            });
             (path, state)
         })
         .collect();
@@ -5798,22 +5867,27 @@ fn sync_to(
         .clippings;
     if plan.clippings && puzzle_on(cfg) && flush.clippings_error.is_none() {
         let path = cfg.puzzle_store();
-        let mut store = deckle_digest::puzzle::store::Store::load(&path);
-        let today = deckle_digest::chrono::Local::now().date_naive();
-        use deckle_digest::puzzle::check::Notes;
-        let notes = match flush.clippings.as_deref() {
-            Some(b) => Notes::Read(b),
-            None if deckle_core::clippings::notes_unreachable(target) => Notes::Unreachable,
-            None => Notes::NoFile,
-        };
-        deckle_digest::puzzle::check::record(
-            &mut store,
-            notes,
-            today,
-            deckle_digest::puzzle::words::Words::embedded(),
-        );
-        if let Err(e) = store.save(&path) {
-            eprintln!("puzzle: {}: {e}", path.display());
+        let store = deckle_digest::puzzle::store::Store::load(&path);
+        if let Err(e) = &store {
+            eprintln!("puzzle: {e}");
+        }
+        if let Ok(mut store) = store {
+            let today = deckle_digest::chrono::Local::now().date_naive();
+            use deckle_digest::puzzle::check::Notes;
+            let notes = match flush.clippings.as_deref() {
+                Some(b) => Notes::Read(b),
+                None if deckle_core::clippings::notes_unreachable(target) => Notes::Unreachable,
+                None => Notes::NoFile,
+            };
+            deckle_digest::puzzle::check::record(
+                &mut store,
+                notes,
+                today,
+                deckle_digest::puzzle::words::Words::embedded(),
+            );
+            if let Err(e) = store.save(&path) {
+                eprintln!("puzzle: {}: {e}", path.display());
+            }
         }
     }
     let highlights = match flush.clippings.as_deref().filter(|_| export) {
@@ -5857,12 +5931,15 @@ fn sync_to(
     // What this connection teaches each paper (interests design §5): taps from the reads just
     // recorded, highlights from the clippings, authors from the shelf just stored.
     for (paper, (_, state)) in papers.iter().zip(&states) {
-        let store = deckle_digest::shelf::store::Shelf::load(&paper.shelf_store());
+        // A damaged shelf.json is said, and the authors on it are left out of this lesson.
+        let store = deckle_digest::shelf::store::Shelf::load(&paper.shelf_store())
+            .inspect_err(|e| eprintln!("learning: {e}"))
+            .ok();
         if let Err(e) = deckle_readership::learn::on_connection(
             paper,
             state,
             flush.clippings.as_deref(),
-            Some(&store),
+            store.as_ref(),
             deckle_digest::chrono::Utc::now(),
         ) {
             eprintln!("learning: {e}");
@@ -5902,11 +5979,15 @@ fn record_shelf(
     let device = deckle_library::device_ref(target);
     let id = deckle_core::sync::device_id(target);
     let path = cfg.shelf_store();
-    // A read that failed (not "no file") must not blank what the last plug-in found.
-    let previous = deckle_digest::shelf::store::Shelf::load(&path)
-        .kindles
-        .get(&id)
-        .cloned();
+    // A read that failed (not "no file") must not blank what the last plug-in found, and a
+    // damaged shelf.json is said and left as it is.
+    let previous = match deckle_digest::shelf::store::Shelf::load(&path) {
+        Ok(shelf) => shelf.kindles.get(&id).cloned(),
+        Err(e) => {
+            eprintln!("shelf: {e}");
+            return None;
+        }
+    };
     let library = deckle_library::Library::configured(&deckle_library::config::default_path())
         .map(|(lib, _)| lib);
     let (snap, errors) = deckle_shelf::snapshot(
@@ -5999,13 +6080,14 @@ fn record_layout(
                 Ok(e) => l.epub = Some(e),
                 Err(e) => eprintln!("readership: EPUB spine: {e}"),
             }
-            let mut state = deckle_readership::State::load(&path);
-            state.record_layout(with_items(l, built));
-            state.save(&path)
+            deckle_readership::State::load(&path).and_then(|mut state| {
+                state.record_layout(with_items(l, built));
+                state.save(&path)
+            })
         }
         None => epub.and_then(|e| {
             let l = layout::layout_from_epub(e, date, &built.title, stem);
-            let mut state = deckle_readership::State::load(&path);
+            let mut state = deckle_readership::State::load(&path)?;
             match state.record_epub_layout(with_items(l, built)) {
                 true => state.save(&path),
                 false => Ok(()),
@@ -6047,7 +6129,7 @@ fn digest_puzzle(json: bool, cfg: &deckle_digest::Config) -> Result<ExitCode, St
     use deckle_digest::puzzle;
     let date = deckle_digest::chrono::Local::now().date_naive();
     let store_path = cfg.puzzle_store();
-    let mut store = puzzle::store::Store::load(&store_path);
+    let mut store = puzzle::store::Store::load(&store_path)?;
     let fresh = !store.days.contains_key(&date);
     let p = puzzle::today(
         date,
@@ -6169,18 +6251,23 @@ fn archive_to_morgue(
             .map(|e| format!("Morgue: couldn't save the edition ({e})"));
     }
     let state_path = deckle_morgue::state::state_path();
-    let mut state = deckle_morgue::MorgueState::load(&state_path);
-    let cache = deckle_core::wordwise::default_cache_dir().join("digest");
-    let was_imported = state.imported;
-    if !deckle_morgue::import::import_once(&morgue, &cache, &mut state).is_empty() {
-        eprintln!("morgue: imported the editions in {}", cache.display());
-    }
-    // Only a first import changes the state; saving on every build widens the window in which
-    // another writer's update is lost.
-    if state.imported != was_imported
-        && let Err(e) = state.save(&state_path)
-    {
-        eprintln!("morgue: {}: {e}", state_path.display());
+    // A damaged morgue.json skips the first-run import, said; the edition is still kept.
+    match morgue_state(&state_path) {
+        None => {}
+        Some(mut state) => {
+            let cache = deckle_core::wordwise::default_cache_dir().join("digest");
+            let was_imported = state.imported;
+            if !deckle_morgue::import::import_once(&morgue, &cache, &mut state).is_empty() {
+                eprintln!("morgue: imported the editions in {}", cache.display());
+            }
+            // Only a first import changes the state; saving on every build widens the window
+            // in which another writer's update is lost.
+            if state.imported != was_imported
+                && let Err(e) = state.save(&state_path)
+            {
+                eprintln!("morgue: {}: {e}", state_path.display());
+            }
+        }
     }
     morgue
         .archive_edition(epub, &deckle_morgue::from_gathered(gathered))
@@ -6240,7 +6327,7 @@ fn morgue_send(
     // Recorded first: a plug-in between the two steps must already know to leave it alone (it
     // is only exempt while it is in the outbox, so this costs nothing if the add fails).
     let path = deckle_morgue::state::state_path();
-    let mut state = deckle_morgue::MorgueState::load(&path);
+    let mut state = deckle_morgue::MorgueState::load(&path)?;
     let before = state.resent.get(&date).cloned();
     state.resent.insert(
         date,
@@ -6342,8 +6429,8 @@ fn digest_morgue(json: bool, path: &Path, action: cli::MorgueCommand) -> Result<
         }
         cli::MorgueCommand::Show { date } => {
             let date = day(&date)?;
-            let reads = deckle_readership::State::load(&deckle_readership::state_path());
-            let state = deckle_morgue::MorgueState::load(&deckle_morgue::state::state_path());
+            let reads = deckle_readership::State::load(&deckle_readership::state_path())?;
+            let state = deckle_morgue::MorgueState::load(&deckle_morgue::state::state_path())?;
             let detail = deckle_morgue::detail::detail(&morgue, date, &reads, &state)
                 .ok_or_else(|| format!("no edition kept for {date}"))?;
             emit(json, &detail, || {
@@ -6411,7 +6498,7 @@ fn digest_shelf(json: bool, path: &Path, forget: bool) -> Result<ExitCode, Strin
         println!("Forgot the shelf snapshot.");
         return Ok(ExitCode::SUCCESS);
     }
-    let shelf = Shelf::load(&store);
+    let shelf = Shelf::load(&store)?;
     let date = deckle_digest::chrono::Local::now().date_naive();
     let tz = deckle_digest::tz::local_tz();
     let out = ShelfOut {
@@ -6525,7 +6612,7 @@ fn digest_readership(
 ) -> Result<ExitCode, String> {
     let mut cfg = paper_config(path, paper)?;
     let state_path = readership_path(&cfg);
-    let mut state = deckle_readership::State::load(&state_path);
+    let mut state = deckle_readership::State::load(&state_path)?;
     let report = deckle_readership::report(&state, &cfg);
     let Some(action) = action else {
         emit(json, &report, || {

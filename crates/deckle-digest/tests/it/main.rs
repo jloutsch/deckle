@@ -31,6 +31,7 @@ mod reading;
 mod seasons;
 mod sections;
 mod shelf;
+mod state_files;
 mod sun;
 mod template_photos;
 mod watcher_refresh;

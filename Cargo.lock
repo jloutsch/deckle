@@ -1537,6 +1537,7 @@ dependencies = [
 name = "deckle-highlights"
 version = "0.13.0"
 dependencies = [
+ "deckle-limits",
  "serde",
  "serde_json",
  "sha1 0.11.0",
@@ -1646,6 +1647,7 @@ name = "deckle-morgue"
 version = "0.13.0"
 dependencies = [
  "chrono",
+ "deckle-core",
  "deckle-digest",
  "deckle-limits",
  "deckle-readership",
@@ -1714,6 +1716,7 @@ name = "deckle-readership"
 version = "0.13.0"
 dependencies = [
  "chrono",
+ "deckle-core",
  "deckle-digest",
  "deckle-highlights",
  "deckle-kfx",

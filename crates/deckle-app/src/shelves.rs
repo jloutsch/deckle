@@ -26,7 +26,10 @@ fn reader() -> Option<deckle_core::reader::Reader> {
 }
 
 fn view(apply: bool) -> ShelvesView {
-    let config = Config::load(&shelves::config_path(&library_json()));
+    let (config, damaged) = match Config::load(&shelves::config_path(&library_json())) {
+        Ok(c) => (c, None),
+        Err(e) => (Config::default(), Some(e)),
+    };
     let mut v = ShelvesView {
         config,
         reader: None,
@@ -34,6 +37,10 @@ fn view(apply: bool) -> ShelvesView {
         sets: Vec::new(),
         error: None,
     };
+    if damaged.is_some() {
+        v.error = damaged;
+        return v;
+    }
     let sets = match shelves::sets(&library_json(), deckle_library::sources::home().as_deref()) {
         Ok(s) => s,
         Err(e) => {
@@ -76,7 +83,7 @@ pub fn shelves_set(config: Config) -> Result<ShelvesView, String> {
         }
     }
     let path = shelves::config_path(&library_json());
-    let mut saved = Config::load(&path);
+    let mut saved = Config::load(&path)?;
     saved.rules = config.rules;
     saved.auto = config.auto;
     saved.save(&path).map_err(|e| e.to_string())?;
@@ -86,7 +93,7 @@ pub fn shelves_set(config: Config) -> Result<ShelvesView, String> {
 /// Lets Deckle write shelves on Kobo `key`, then makes them.
 pub fn shelves_kobo_ok(key: String) -> Result<ShelvesView, String> {
     let path = shelves::config_path(&library_json());
-    let mut c = Config::load(&path);
+    let mut c = Config::load(&path)?;
     if !c.kobo_ok.contains(&key) {
         c.kobo_ok.push(key);
     }

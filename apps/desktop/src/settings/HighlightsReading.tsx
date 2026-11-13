@@ -35,6 +35,7 @@ function HighlightsSettings() {
       <Row label="Update these files every time this Kindle connects" note="Runs with the morning schedule (deckle digest watch).">
         <Switch label="Update highlights on connect" checked={status?.clippings ?? false} disabled={!status?.folder} onChange={(on) => set(null, on)} />
       </Row>
+      {status?.damaged && <p className="set-note warn">{status.damaged}</p>}
       {error && <p className="set-note warn">{error}</p>}
     </section>
   );

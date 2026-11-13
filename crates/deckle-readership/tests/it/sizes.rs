@@ -130,6 +130,6 @@ fn old_json_still_loads() {
         "sections":[{"key":"front","name":"Front page","start":0}]}},"reads":{},"dismissed":{}}"#,
     )
     .unwrap();
-    let s = State::load(&path);
+    let s = State::load(&path).unwrap();
     assert_eq!(s.editions[&d("2026-10-20")].sections[0].items, None);
 }

@@ -138,18 +138,17 @@ impl Upgrades {
         config.with_file_name("upgrades.json")
     }
 
-    pub fn load(config: &Path) -> Upgrades {
-        std::fs::read(Self::path(config))
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+    /// The upgrades beside `config`; an error naming the file when it is there but does not
+    /// parse or cannot be read (it is how a Put back finds the old copy).
+    pub fn load(config: &Path) -> Result<Upgrades, String> {
+        Ok(deckle_core::state_file::read(&Self::path(config))?.unwrap_or_default())
     }
 
     pub fn save(&self, config: &Path) -> Result<(), String> {
         let mut out = self.clone();
         out.version = 1;
         let json = serde_json::to_vec_pretty(&out).map_err(|e| e.to_string())?;
-        crate::write_atomic(&Self::path(config), &json)
+        deckle_core::state_file::save_owner::<Upgrades>(&Self::path(config), &json, false)
     }
 
     /// The device's upgrades, newest first.
@@ -222,7 +221,7 @@ pub struct PutBack {
 /// the kept `.sdr` goes in. Whatever fails, the record and the kept copy stay for a retry.
 pub fn put_back(conn: &mut Conn<'_>, config: &Path, old_file: &str) -> Result<PutBack, String> {
     let device = crate::device_ref(conn.target).key;
-    let mut all = Upgrades::load(config);
+    let mut all = Upgrades::load(config)?;
     let i = all
         .upgrades
         .iter()
@@ -331,7 +330,7 @@ pub fn record(
         let _ = std::fs::remove_dir_all(kept);
         return Ok(false);
     }
-    let mut all = Upgrades::load(config);
+    let mut all = Upgrades::load(config)?;
     all.upgrades.push(UpgradeRecord {
         device: device.to_owned(),
         old_file: old_file.to_owned(),
@@ -502,7 +501,7 @@ mod tests {
             b"NEW"
         );
         assert!(kindle.join("Austen, Jane - Emma.sdr/new.yjf").is_file());
-        assert_eq!(Upgrades::load(&config).upgrades.len(), 1);
+        assert_eq!(Upgrades::load(&config).unwrap().upgrades.len(), 1);
     }
 
     #[test]
@@ -520,7 +519,7 @@ mod tests {
             firmware: None,
             serial: Some("G000TEST".into()),
         });
-        let mut all = Upgrades::load(&config);
+        let mut all = Upgrades::load(&config).unwrap();
         all.upgrades[0].device = crate::device_ref(&target).key;
         all.save(&config).unwrap();
         let e = put_back(&mut Conn::new(&target), &config, "Emma.azw3").unwrap_err();
@@ -530,7 +529,7 @@ mod tests {
             .map(|e| e.path())
             .collect();
         assert!(left.is_empty(), "{e}: {left:?}");
-        assert_eq!(Upgrades::load(&config).upgrades.len(), 1);
+        assert_eq!(Upgrades::load(&config).unwrap().upgrades.len(), 1);
     }
 
     #[test]
@@ -543,7 +542,7 @@ mod tests {
         let e = put_back(&mut Conn::new(&target), &config, "Emma.azw3").unwrap_err();
         assert!(e.contains("reading position"), "{e}");
         assert_eq!(std::fs::read(kindle.join("Emma.azw3")).unwrap(), b"OLD");
-        assert_eq!(Upgrades::load(&config).upgrades.len(), 1);
+        assert_eq!(Upgrades::load(&config).unwrap().upgrades.len(), 1);
         assert!(tmp.path().join("kept/Emma.azw3").is_file());
     }
 
@@ -561,7 +560,7 @@ mod tests {
             b"OLD POSITION"
         );
         assert!(out.removed.contains(&"documents/Emma.kfx".to_owned()));
-        assert!(Upgrades::load(&config).upgrades.is_empty());
+        assert!(Upgrades::load(&config).unwrap().upgrades.is_empty());
     }
 
     #[test]
@@ -593,7 +592,7 @@ mod tests {
             at: "2026-10-23T21:40:00Z".into(),
         });
         all.save(&config).unwrap();
-        let back = Upgrades::load(&config);
+        let back = Upgrades::load(&config).unwrap();
         assert_eq!(back.version, 1);
         assert_eq!(back.upgrades, all.upgrades);
         assert_eq!(back.for_device("ms:Kindle Scribe").count(), 1);

@@ -67,19 +67,123 @@ fn accepted_origins(public: &str) -> Vec<String> {
     v
 }
 
-/// The token in `bookmarklet.token` in `dir`, created on first use: 32 hex characters.
+/// The token in `bookmarklet.token` in `dir`, created on first use: 32 hex characters, private
+/// to the owner (0600).
+///
+/// A file that is there but isn't a token, or can't be read, is an error naming it and is
+/// never replaced: a new token would break every installed bookmarklet. Only a missing file
+/// gets a new token, made whole beside it and linked into place only if still missing, then
+/// read back, so two processes starting together end with the same one.
 pub fn token(dir: &Path) -> std::io::Result<String> {
+    token_with(dir, |from, to| std::fs::hard_link(from, to))
+}
+
+/// [`token`] with the hard-link step passed in, so a test can be a file system without them.
+fn token_with(
+    dir: &Path,
+    link: impl Fn(&Path, &Path) -> std::io::Result<()>,
+) -> std::io::Result<String> {
     let path = dir.join("bookmarklet.token");
-    if let Ok(t) = std::fs::read_to_string(&path) {
-        let t = t.trim().to_owned();
-        if t.len() == 32 && t.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Ok(t);
+    let read = || {
+        // Another process may have made the file and not written it yet (the create-new step
+        // below): an empty file is read again for up to 200 ms before it counts as damaged.
+        for _ in 0..10 {
+            match std::fs::metadata(&path) {
+                Ok(m) if m.len() == 0 => std::thread::sleep(std::time::Duration::from_millis(20)),
+                _ => break,
+            }
+        }
+        deckle_core::state_file::read_with(&path, |text| {
+            let t = text.trim();
+            if t.len() == 32 && t.chars().all(|c| c.is_ascii_hexdigit()) {
+                Ok(t.to_owned())
+            } else {
+                Err("not 32 hex characters".to_owned())
+            }
+        })
+        .map_err(|e| {
+            std::io::Error::other(format!(
+                "{e} Deleting it makes a new token; every bookmarklet already installed must \
+                 then be installed again."
+            ))
+        })
+    };
+    if let Some(t) = read()? {
+        make_private(&path);
+        return Ok(t);
+    }
+    std::fs::create_dir_all(dir)?;
+    let t = format!("{:032x}", rand::random::<u128>());
+    // Unique per call, so two threads of one process don't share a temp file.
+    let tmp = dir.join(format!(
+        ".bookmarklet.token.{}.{:016x}.tmp",
+        std::process::id(),
+        rand::random::<u64>()
+    ));
+    write_private(&tmp, t.as_bytes(), false)?;
+    let linked = link(&tmp, &path);
+    let _ = std::fs::remove_file(&tmp);
+    match linked {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        // No hard links on this file system: make the final name only if it is still missing.
+        // Another process may read it between the create and the write; it then says so.
+        Err(_) => match write_private(&path, t.as_bytes(), true) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e),
+        },
+    }
+    read()?.ok_or_else(|| std::io::Error::other(format!("{}: not made", path.display())))
+}
+
+/// An older token readable by others is made owner-only. A failure leaves it as it was.
+fn make_private(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(m) = std::fs::metadata(path)
+            && m.permissions().mode() & 0o077 != 0
+        {
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
         }
     }
-    let t = format!("{:032x}", rand::random::<u128>());
-    std::fs::create_dir_all(dir)?;
-    std::fs::write(&path, &t)?;
-    Ok(t)
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
+/// `bytes` to `path`, 0600, synced; with `new`, only when `path` doesn't exist yet.
+fn write_private(path: &Path, bytes: &[u8], new: bool) -> std::io::Result<()> {
+    use std::io::Write;
+    write_private_with(path, new, |f| {
+        f.write_all(bytes)?;
+        f.sync_all()
+    })
+}
+
+/// [`write_private`] with the write passed in, so a test can make it fail.
+fn write_private_with(
+    path: &Path,
+    new: bool,
+    write: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let mut open = std::fs::OpenOptions::new();
+    open.write(true);
+    if new {
+        open.create_new(true);
+    } else {
+        open.create(true).truncate(true);
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut open, 0o600);
+    let mut f = open.open(path)?;
+    let written = write(&mut f);
+    // A file this call made and couldn't fill is removed, so no empty token is left behind.
+    if new && written.is_err() {
+        drop(f);
+        let _ = std::fs::remove_file(path);
+    }
+    written
 }
 
 /// The popup script; `kind` is an extra query parameter (with its leading `&`), or empty.
@@ -676,6 +780,108 @@ mod tests {
             404
         );
         assert_eq!(handle("garbage", "abc", &q, dir.path(), now()).0, 404);
+    }
+
+    /// An older token readable by others is made private when it is read.
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_token_is_made_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarklet.token");
+        std::fs::write(&path, "0123456789abcdef0123456789abcdef\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(
+            token(dir.path()).unwrap(),
+            "0123456789abcdef0123456789abcdef"
+        );
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    /// On a file system without hard links the token is still made, on its final name.
+    #[test]
+    fn a_token_is_made_without_hard_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let no_links = |_: &Path, _: &Path| -> std::io::Result<()> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "no hard links here",
+            ))
+        };
+        let t = token_with(dir.path(), no_links).unwrap();
+        assert_eq!(t.len(), 32);
+        assert_eq!(token(dir.path()).unwrap(), t);
+        let left: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(left, ["bookmarklet.token"], "no temp file left");
+    }
+
+    /// A new file whose write fails is removed: an empty token file would block every start
+    /// until someone deleted it.
+    #[test]
+    fn a_new_token_file_whose_write_fails_is_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarklet.token");
+        let e = write_private_with(&path, true, |_| Err(std::io::Error::other("disk full")));
+        assert!(e.is_err());
+        assert!(!path.exists());
+    }
+
+    /// Another process has made the file but not written it yet: the read waits a little
+    /// instead of calling it damaged.
+    #[test]
+    fn a_token_still_being_written_is_waited_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarklet.token");
+        std::fs::write(&path, b"").unwrap();
+        let writer = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(60));
+                std::fs::write(&path, "0123456789abcdef0123456789abcdef").unwrap();
+            })
+        };
+        assert_eq!(
+            token(dir.path()).unwrap(),
+            "0123456789abcdef0123456789abcdef"
+        );
+        writer.join().unwrap();
+        let copies = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().contains(".damaged-"))
+            .count();
+        assert_eq!(copies, 0);
+    }
+
+    /// An empty file that stays empty is still damaged, and kept.
+    #[test]
+    fn an_empty_token_that_stays_empty_is_damaged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bookmarklet.token");
+        std::fs::write(&path, b"").unwrap();
+        assert!(token(dir.path()).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"");
+    }
+
+    /// Threads of one process starting together end with one token and no error.
+    #[test]
+    fn threads_starting_together_share_one_token() {
+        for _ in 0..20 {
+            let dir = tempfile::tempdir().unwrap();
+            let tokens: Vec<String> = std::thread::scope(|s| {
+                let handles: Vec<_> = (0..8).map(|_| s.spawn(|| token(dir.path()))).collect();
+                handles
+                    .into_iter()
+                    .map(|h| h.join().unwrap().unwrap())
+                    .collect()
+            });
+            assert!(tokens.iter().all(|t| *t == tokens[0]), "{tokens:?}");
+        }
     }
 
     #[test]

@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-deckle-limits = { workspace = true, features = ["xml"] }
+deckle-limits = { workspace = true, features = ["xml", "state"] }
 language-tags = "0.3"
 fs4 = "0.13"
 deckle-kfx.workspace = true

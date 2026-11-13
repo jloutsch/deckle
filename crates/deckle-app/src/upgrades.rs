@@ -91,7 +91,8 @@ fn class_key(c: Class) -> String {
 }
 
 pub fn sources_status_at(config: &Path) -> SourcesStatus {
-    let cfg = LibraryConfig::load(config);
+    // Only shown; the Library page says when library.json is damaged.
+    let cfg = LibraryConfig::load(config).unwrap_or_default();
     SourcesStatus {
         find_in_calibre: cfg.find_in_calibre,
         calibre: calibre_root(&cfg, home().as_deref()).map(|p| p.to_string_lossy().into_owned()),
@@ -118,7 +119,7 @@ pub fn sources_set_at(
             .filter(|f| !f.trim().is_empty())
             .map(Into::into)
             .collect(),
-        ..LibraryConfig::load(config)
+        ..LibraryConfig::load(config)?
     }
     .save(config)?;
     Ok(sources_status_at(config))
@@ -139,7 +140,7 @@ pub fn upgrades_on(
     let library = Library::configured(config).map(|(l, _)| l);
     let current = deckle_library::freshness::Current::now(&Default::default());
     let shelf = deckle_library::shelf::shelve(inv.books, library.as_ref(), &device.key, &current);
-    let cfg = LibraryConfig::load(config);
+    let cfg = LibraryConfig::load(config)?;
     let sources = Sources::gather(&cfg, home);
     let sorted = sort(shelf, &sources, |b| {
         deckle_readership::parse_yjf(b)
@@ -179,7 +180,7 @@ pub fn upgrades_on(
         })
         .collect();
     rows.sort_by_cached_key(|r| r.title.to_lowercase());
-    let history = Upgrades::load(config)
+    let history = Upgrades::load(config)?
         .for_device(&device.key)
         .map(|u| HistoryRow {
             old_file: u.old_file.clone(),
@@ -325,7 +326,7 @@ pub fn edit_source_on(
         out.library_dir = Some(book.dir.to_string_lossy().into_owned());
         return Ok(out);
     }
-    let sources = Sources::gather(&LibraryConfig::load(config), home);
+    let sources = Sources::gather(&LibraryConfig::load(config)?, home);
     let source = sources.find(&shelved.book).cloned();
     let class = deckle_library::upgrade::classify(&shelved, source.as_ref());
     if let Some(src) = source.filter(|_| class != Class::AmazonOwn) {

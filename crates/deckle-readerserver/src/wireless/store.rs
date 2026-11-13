@@ -221,24 +221,23 @@ impl Store {
                 _ => Ok(()),
             };
         }
-        std::fs::create_dir_all(&self.dir)?;
-        let tmp = self.shelves_path().with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec(sets)?)?;
-        std::fs::rename(tmp, self.shelves_path())
+        deckle_core::state_file::save_rebuildable::<Vec<deckle_core::shelves::RuleSet>>(
+            &self.shelves_path(),
+            &serde_json::to_vec(sets)?,
+        )
+        .map_err(std::io::Error::other)
     }
 
+    /// The rules the watcher wrote. Rebuildable (written again every minute), so a file that
+    /// does not parse is no rules, said in one line, with a copy kept.
     pub fn shelves(&self) -> Vec<deckle_core::shelves::RuleSet> {
-        std::fs::read(self.shelves_path())
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+        deckle_core::state_file::rebuildable(&self.shelves_path()).value
     }
 
+    /// The readers as last seen and the log. Rebuildable (a reader fills its entry again when it
+    /// connects), so a file that does not parse starts empty, said in one line, with a copy kept.
     pub fn readers(&self) -> Readers {
-        std::fs::read(self.readers_path())
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+        deckle_core::state_file::rebuildable(&self.readers_path()).value
     }
 
     /// Changes `readers.json` (the server is its only writer).
@@ -262,11 +261,8 @@ impl Store {
     }
 }
 
+/// Refused when the file on disk can't be read, or no copy of a damaged one was kept.
 fn write(path: &Path, r: &Readers) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(r)?)?;
-    std::fs::rename(tmp, path)
+    deckle_core::state_file::save_rebuildable::<Readers>(path, &serde_json::to_vec_pretty(r)?)
+        .map_err(std::io::Error::other)
 }

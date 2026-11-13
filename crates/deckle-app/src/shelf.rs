@@ -23,6 +23,9 @@ pub struct ShelfStatus {
     pub email_on: bool,
     /// `[sync] shelf`: the page reads the Kindle at all.
     pub enabled: bool,
+    /// `shelf.json` is there but could not be read: why, and where its copy is (#93). Nothing
+    /// is recorded until the owner fixes or removes it.
+    pub damaged: Option<String>,
 }
 
 fn load_config(digest: &Path) -> Result<deckle_digest::Config, String> {
@@ -34,7 +37,10 @@ fn load_config(digest: &Path) -> Result<deckle_digest::Config, String> {
 
 pub fn status_at(shelf: &Path, digest: &Path, now: DateTime<Utc>) -> ShelfStatus {
     let cfg = load_config(digest).unwrap_or_default();
-    let shelf = Shelf::load(shelf);
+    let (shelf, damaged) = match Shelf::load(shelf) {
+        Ok(shelf) => (shelf, None),
+        Err(e) => (Shelf::default(), Some(e)),
+    };
     let newest = shelf.kindles.values().max_by(|a, b| a.seen.cmp(&b.seen));
     ShelfStatus {
         kindle: newest.map(|k| k.name.clone()),
@@ -44,6 +50,7 @@ pub fn status_at(shelf: &Path, digest: &Path, now: DateTime<Utc>) -> ShelfStatus
         words_shared: newest.is_some_and(|k| k.words_shared),
         email_on: cfg.email.enabled,
         enabled: cfg.sync.shelf,
+        damaged,
     }
 }
 
@@ -128,6 +135,17 @@ mod tests {
     }
 
     #[test]
+    fn a_damaged_shelf_file_is_said_on_the_card() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (shelf, digest) = setup(tmp.path(), scribe());
+        std::fs::write(&shelf, b"{\"kindles\": {").unwrap();
+        let st = status_at(&shelf, &digest, now());
+        assert_eq!(st.kindle, None);
+        let note = st.damaged.expect("said");
+        assert!(note.contains("shelf.json.damaged-"), "{note}");
+    }
+
+    #[test]
     fn status_says_what_the_kindle_shares() {
         let tmp = tempfile::tempdir().unwrap();
         let (shelf, digest) = setup(tmp.path(), scribe());
@@ -175,7 +193,7 @@ mod tests {
     fn the_newest_kindle_speaks() {
         let tmp = tempfile::tempdir().unwrap();
         let (shelf, digest) = setup(tmp.path(), scribe());
-        let mut s = Shelf::load(&shelf);
+        let mut s = Shelf::load(&shelf).unwrap();
         s.put(
             "P",
             KindleSnapshot {

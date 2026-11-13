@@ -35,15 +35,13 @@ pub struct Logged {
 }
 
 impl ReadLog {
-    pub fn load(path: &Path) -> ReadLog {
-        std::fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+    /// The log; an error naming the file when it is there but does not parse or cannot be read.
+    pub fn load(path: &Path) -> Result<ReadLog, String> {
+        Ok(deckle_core::state_file::read(path)?.unwrap_or_default())
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        write_json(path, self)
+        write_json::<ReadLog>(path, self)
     }
 
     /// Takes `records` from `reader`, keeping an older record where the new one is older.
@@ -128,15 +126,14 @@ pub struct Writeback {
 }
 
 impl Writeback {
-    pub fn load(path: &Path) -> Writeback {
-        std::fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+    /// The settings and what was written; an error naming the file when it is there but does
+    /// not parse or cannot be read.
+    pub fn load(path: &Path) -> Result<Writeback, String> {
+        Ok(deckle_core::state_file::read(path)?.unwrap_or_default())
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        write_json(path, self)
+        write_json::<Writeback>(path, self)
     }
 }
 
@@ -163,13 +160,13 @@ pub fn log_path(config: &Path) -> PathBuf {
     config.with_file_name("reading-log.json")
 }
 
-fn write_json(path: &Path, v: &impl Serialize) -> std::io::Result<()> {
-    if let Some(d) = path.parent() {
-        std::fs::create_dir_all(d)?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(v)?)?;
-    std::fs::rename(tmp, path)
+/// Saves `v` as JSON, refused while the file on disk is not a readable `T`.
+fn write_json<T: serde::de::DeserializeOwned>(
+    path: &Path,
+    v: &impl Serialize,
+) -> std::io::Result<()> {
+    let bytes = serde_json::to_vec_pretty(v)?;
+    deckle_core::state_file::save_owner::<T>(path, &bytes, false).map_err(std::io::Error::other)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -891,14 +888,21 @@ impl Paths {
         Paths {
             config: config_path(library_json),
             log: log_path(library_json),
-            library: library_root(&crate::LibraryConfig::load(library_json), home),
+            // A damaged library.json reads as no library here; the Library page says why.
+            library: library_root(
+                &crate::LibraryConfig::load(library_json).unwrap_or_default(),
+                home,
+            ),
         }
     }
 }
 
 /// The page's state, the next batch planned (nothing written).
 pub fn status(p: &Paths) -> Status {
-    let wb = Writeback::load(&p.config);
+    let (wb, damaged) = match Writeback::load(&p.config) {
+        Ok(wb) => (wb, None),
+        Err(e) => (Writeback::default(), Some(e)),
+    };
     let calibredb = find_calibredb(wb.calibredb.as_deref());
     let mut out = Status {
         library: p.library.clone(),
@@ -912,6 +916,10 @@ pub fn status(p: &Paths) -> Status {
     if let Some(exe) = &out.calibredb {
         out.annotations_supported = supports_annotations(exe, &mut system_runner);
     }
+    if damaged.is_some() {
+        out.error = damaged;
+        return out;
+    }
     let Some(lib) = &p.library else {
         out.error = Some("no calibre library found: name it in Settings → Books".into());
         return out;
@@ -920,7 +928,7 @@ pub fn status(p: &Paths) -> Status {
         Ok(cols) => out.choices = choices(&cols),
         Err(e) => out.error = Some(e),
     }
-    match plan(&ReadLog::load(&p.log), lib, &out.writeback) {
+    match ReadLog::load(&p.log).and_then(|log| plan(&log, lib, &out.writeback)) {
         Ok(pl) => out.plan = Some(pl),
         Err(e) => out.error = Some(e),
     }
@@ -933,11 +941,11 @@ pub fn write_now(
     password: Option<&str>,
     runner: &mut Runner<'_>,
 ) -> Result<Option<Report>, String> {
-    let mut wb = Writeback::load(&p.config);
+    let mut wb = Writeback::load(&p.config)?;
     let lib = p.library.as_deref().ok_or("no calibre library found")?;
     let exe = find_calibredb(wb.calibredb.as_deref())
         .ok_or("calibredb wasn't found: install calibre, or say where calibredb is")?;
-    let mut pl = plan(&ReadLog::load(&p.log), lib, &wb)?;
+    let mut pl = plan(&ReadLog::load(&p.log)?, lib, &wb)?;
     if !pl.annotations.is_empty() && !supports_annotations(&exe, runner) {
         pl.annotations.clear();
     }

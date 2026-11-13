@@ -257,7 +257,7 @@ pub fn previewer_status(state: State<'_, AppState>) -> PreviewerStatus {
 }
 
 #[tauri::command]
-pub fn get_settings(state: State<'_, AppState>) -> Settings {
+pub fn get_settings(state: State<'_, AppState>) -> deckle_app::commands::ShownSettings {
     deckle_app::commands::get_settings(&state)
 }
 

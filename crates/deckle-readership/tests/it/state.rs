@@ -8,16 +8,17 @@ fn stem(date: &str) -> String {
 }
 
 #[test]
-fn missing_or_corrupt_file_starts_empty() {
+fn a_missing_file_starts_empty_and_a_corrupt_one_is_an_error() {
     let tmp = tempfile::tempdir().unwrap();
     assert!(
         State::load(&tmp.path().join("none.json"))
+            .unwrap()
             .editions
             .is_empty()
     );
     let bad = tmp.path().join("bad.json");
     std::fs::write(&bad, "{").unwrap();
-    assert!(State::load(&bad).editions.is_empty());
+    assert!(State::load(&bad).unwrap_err().contains("bad.json.damaged-"));
 }
 
 #[test]
@@ -32,7 +33,7 @@ fn save_then_load_round_trips() {
         NOW,
     );
     s.save(&path).unwrap();
-    let back = State::load(&path);
+    let back = State::load(&path).unwrap();
     assert_eq!(back.editions, s.editions);
     let r = &back.reads[&d("2026-10-21")]["K"];
     assert!(r.opened);

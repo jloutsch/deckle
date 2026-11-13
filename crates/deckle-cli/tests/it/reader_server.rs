@@ -43,6 +43,33 @@ fn a_password_is_kept_as_its_md5_and_status_says_so() {
     assert!(!text.contains("hunter2"));
 }
 
+/// A damaged wireless.json is said with its line and column only: serde's own text, which can
+/// quote what the file holds, never reaches the output.
+#[test]
+fn a_damaged_wireless_json_is_said_without_its_content() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    deckle(home).args(["digest", "init"]).assert().success();
+    let digest = walk(home, "digest.toml").expect("digest.toml");
+    let secrets = digest.with_file_name("wireless.json");
+    let body = "{\n  \"password\": \"made-up-pass-0002\",\n  \"library_uuid\": true\n}";
+    std::fs::write(&secrets, body).unwrap();
+    let o = deckle(home).args(["wireless", "status"]).output().unwrap();
+    let out = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(!o.status.success(), "{out}");
+    assert!(
+        out.contains("wireless.json") && out.contains("line 3"),
+        "{out}"
+    );
+    assert!(!out.contains("made-up-pass-0002"), "{out}");
+    assert!(!out.contains("invalid type"), "serde's text: {out}");
+    assert_eq!(std::fs::read_to_string(&secrets).unwrap(), body);
+}
+
 fn walk(dir: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
     for e in std::fs::read_dir(dir).ok()?.flatten() {
         let p = e.path();

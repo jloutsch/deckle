@@ -127,6 +127,39 @@ fn context(work: &Path, at: DateTime<Utc>, books: bool) -> FreshBuildContext {
         books,
     }
 }
+/// A fresh paper built with a damaged puzzles.json leaves the puzzle out; the build's notes
+/// come back with the artifact so the worker can log why.
+#[test]
+fn a_fresh_build_returns_its_notes() {
+    let d = tempfile::tempdir().unwrap();
+    let c = config(&d.path().join("protected"));
+    put(&d.path().join("protected"), "puzzles.json", b"{\"days\": {");
+    let (artifact, notes) = deckle_digest::press::build_fresh_noted(
+        &c,
+        &context(&d.path().join("a"), now(), false),
+        &net,
+        &GatherOptions::default(),
+    )
+    .unwrap();
+    assert!(artifact.bundle.is_dir());
+    // The note names the owner's own file, not the job's snapshot (deleted with the job), and
+    // no copy in the job's folder.
+    let owner = d
+        .path()
+        .join("protected/puzzles.json")
+        .display()
+        .to_string();
+    let note = notes
+        .iter()
+        .find(|n| n.starts_with("The puzzle left out:"))
+        .unwrap_or_else(|| panic!("{notes:?}"));
+    assert!(note.contains(&owner) && note.contains("damaged"), "{note}");
+    assert!(
+        !note.contains("inputs") && !note.contains(".damaged-"),
+        "{note}"
+    );
+}
+
 fn manifest(bundle: &Path) -> serde_json::Value {
     serde_json::from_slice(&std::fs::read(bundle.join("edition.json")).unwrap()).unwrap()
 }

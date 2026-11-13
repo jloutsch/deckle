@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 deckle-limits = { workspace = true, features = ["xml"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+deckle-core.workspace = true
 deckle-digest.workspace = true
 deckle-highlights.workspace = true
 deckle-kfx.workspace = true

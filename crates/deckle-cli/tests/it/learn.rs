@@ -123,7 +123,7 @@ fn a_push_records_taps_and_paper_highlights_into_interests_json() {
         String::from_utf8_lossy(&out.stderr)
     );
     let file = config_dir(&home).join("interests.json");
-    let l = deckle_readership::Learning::load(&file);
+    let l = deckle_readership::Learning::load(&file).unwrap();
     assert!(file.is_file(), "interests.json written");
     let young = l
         .candidates
@@ -164,7 +164,7 @@ fn with_readership_off_highlights_still_count_but_taps_do_not() {
     )
     .unwrap();
     push(&home, &mount).assert().success();
-    let l = deckle_readership::Learning::load(&dir.join("interests.json"));
+    let l = deckle_readership::Learning::load(&dir.join("interests.json")).unwrap();
     let young = l
         .candidates
         .get("bryce young")
@@ -240,7 +240,7 @@ fn a_tap_on_a_nudge_page_makes_it_an_interest_at_the_next_push() {
     // the recorded edition carried a nudge page for "bryce young" at 150 000 and its
     // confirmation page at 150 400; the reader tapped the nudge (a jump from 150 100) and
     // then Done (a jump from 150 450)
-    let mut state = deckle_readership::State::load(&dir.join("readership.json"));
+    let mut state = deckle_readership::State::load(&dir.join("readership.json")).unwrap();
     let layout = state.editions.values_mut().next().unwrap();
     layout.sections.push(SectionStart {
         key: "nudge:bryce young".into(),
@@ -294,6 +294,6 @@ fn a_tap_on_a_nudge_page_makes_it_an_interest_at_the_next_push() {
         cfg.contains("name = \"Bryce Young\"") && cfg.contains("interests"),
         "{cfg}"
     );
-    let l = deckle_readership::Learning::load(&dir.join("interests.json"));
+    let l = deckle_readership::Learning::load(&dir.join("interests.json")).unwrap();
     assert!(l.accepted.contains_key("bryce young"));
 }

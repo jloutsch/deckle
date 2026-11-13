@@ -87,24 +87,17 @@ pub struct Shelf {
 }
 
 impl Shelf {
-    /// The store at `path`; a missing or unreadable file is an empty store.
-    pub fn load(path: &Path) -> Shelf {
-        std::fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+    /// The store at `path`; a missing file is an empty store. A file that does not parse or
+    /// cannot be read is an error naming it (#93): it holds every Kindle's snapshot and the
+    /// shown-highlights history, so nothing may be saved over it.
+    pub fn load(path: &Path) -> Result<Shelf, String> {
+        Ok(deckle_core::state_file::read(path)?.unwrap_or_default())
     }
 
-    /// Writes through a temp file and a rename, so a crash never leaves half a file.
+    /// Writes through a synced temp file and a rename, so a crash never leaves half a file.
     pub fn save(&self, path: &Path) -> Result<(), String> {
-        let io = |e: std::io::Error| format!("{}: {e}", path.display());
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(io)?;
-        }
-        let tmp = path.with_extension("json.tmp");
         let json = serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?;
-        std::fs::write(&tmp, json).map_err(io)?;
-        std::fs::rename(&tmp, path).map_err(io)
+        deckle_core::state_file::save_owner::<Shelf>(path, &json, false)
     }
 
     /// Removes the file; one that isn't there is fine.

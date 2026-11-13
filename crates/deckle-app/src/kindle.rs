@@ -27,6 +27,10 @@ pub struct LibraryStatus {
     pub root: Option<String>,
     pub auto_add: bool,
     pub books: usize,
+    /// `library.json` is there but could not be read: why, and where its copy is. Nothing is
+    /// saved over it until the owner fixes or removes it.
+    #[serde(default)]
+    pub damaged: Option<String>,
 }
 
 /// One book on the Kindle, as the tab shows it.
@@ -92,6 +96,9 @@ pub struct HighlightsStatus {
     pub folder: Option<String>,
     /// `[sync] clippings` in `digest.toml`: `digest watch` exports on plug-in.
     pub clippings: bool,
+    /// `highlights.json` is there but could not be read: why, and where its copy is.
+    #[serde(default)]
+    pub damaged: Option<String>,
 }
 
 /// `highlights.json` beside the library's `library.json`.
@@ -114,7 +121,10 @@ pub fn data_url(bytes: &[u8]) -> String {
 }
 
 pub fn library_status_at(config: &Path) -> LibraryStatus {
-    let cfg = LibraryConfig::load(config);
+    let (cfg, damaged) = match LibraryConfig::load(config) {
+        Ok(cfg) => (cfg, None),
+        Err(e) => (LibraryConfig::default(), Some(e)),
+    };
     LibraryStatus {
         books: cfg
             .root
@@ -123,6 +133,7 @@ pub fn library_status_at(config: &Path) -> LibraryStatus {
             .unwrap_or(0),
         root: cfg.root.map(|r| r.to_string_lossy().into_owned()),
         auto_add: cfg.auto_add,
+        damaged,
     }
 }
 
@@ -138,7 +149,7 @@ pub fn library_set_at(
     LibraryConfig {
         root,
         auto_add,
-        ..LibraryConfig::load(config)
+        ..LibraryConfig::load(config)?
     }
     .save(config)?;
     Ok(library_status_at(config))
@@ -279,7 +290,10 @@ pub fn shelf_on(
             space,
         )
     });
-    let sources = Sources::gather(&LibraryConfig::load(config), home().as_deref());
+    let sources = Sources::gather(
+        &LibraryConfig::load(config).unwrap_or_default(),
+        home().as_deref(),
+    );
     let mut books: Vec<DeviceBookRow> = sort(shelved, &sources, |b| {
         deckle_readership::parse_yjf(b)
             .ok()
@@ -320,25 +334,43 @@ pub fn shelf_on(
     // the shelf it draws on are stored.
     let _config_write = crate::config_write()?;
     if let Ok(cfg) = deckle_digest::Config::load(&digest) {
-        let state = deckle_readership::State::load(&config.with_file_name("readership.json"));
-        let shelf = deckle_digest::shelf::store::Shelf::load(&config.with_file_name("shelf.json"));
+        // A damaged readership.json is said and teaches nothing; nothing is saved over it.
+        let state = deckle_readership::State::load(&config.with_file_name("readership.json"))
+            .unwrap_or_else(|e| {
+                eprintln!("readership: {e}");
+                Default::default()
+            });
+        // A damaged shelf.json is said, and the authors on it are left out of this lesson.
+        let shelf = deckle_digest::shelf::store::Shelf::load(&config.with_file_name("shelf.json"))
+            .inspect_err(|e| eprintln!("learning: {e}"))
+            .ok();
         let bytes = clippings.as_ref().ok().and_then(|c| c.as_deref());
         if let Err(e) = deckle_readership::learn::on_connection_at(
             &cfg,
             &config.with_file_name("interests.json"),
             &state,
             bytes,
-            Some(&shelf),
+            shelf.as_ref(),
             deckle_digest::chrono::Utc::now(),
         ) {
             eprintln!("learning: {e}");
         }
         // a nudge tapped on the Kindle is an accept (interests design §7)
         let learning_path = config.with_file_name("interests.json");
-        let mut learning = deckle_readership::Learning::load(&learning_path);
+        // A damaged interests.json takes no nudges: the paper's interests and their acceptance
+        // are saved together or not at all.
+        let learned = deckle_readership::Learning::load(&learning_path)
+            .inspect_err(|e| eprintln!("learning: {e}"));
         let mut cfg = cfg;
         let today = deckle_digest::chrono::Local::now().date_naive();
-        let added = deckle_readership::learn::accept_nudges(&mut learning, &mut cfg, &state, today);
+        let (learning, added) = match learned {
+            Ok(mut learning) => {
+                let added =
+                    deckle_readership::learn::accept_nudges(&mut learning, &mut cfg, &state, today);
+                (learning, added)
+            }
+            Err(_) => Default::default(),
+        };
         if !added.is_empty() {
             match deckle_digest::config::save(&digest, &cfg) {
                 Ok(()) => {
@@ -389,10 +421,13 @@ fn record_shelf(
         .ok()
         .and_then(|c| c.sync.device_name(&id));
     let store = config.with_file_name("shelf.json");
-    let previous = deckle_digest::shelf::store::Shelf::load(&store)
-        .kindles
-        .get(&id)
-        .cloned();
+    let previous = match deckle_digest::shelf::store::Shelf::load(&store) {
+        Ok(shelf) => shelf.kindles.get(&id).cloned(),
+        Err(e) => {
+            eprintln!("shelf: {e}");
+            return;
+        }
+    };
     let (snap, errors) = deckle_shelf::snapshot(
         deckle_shelf::Read {
             books,
@@ -435,7 +470,10 @@ fn puzzle_on(clippings: &ClippingsRead, unreachable: bool, digest: &Path, store_
         None if unreachable => Notes::Unreachable,
         None => Notes::NoFile,
     };
-    let mut store = deckle_digest::puzzle::store::Store::load(store_path);
+    let mut store = match deckle_digest::puzzle::store::Store::load(store_path) {
+        Ok(store) => store,
+        Err(e) => return eprintln!("puzzle: {e}"),
+    };
     let today = deckle_digest::chrono::Local::now().date_naive();
     deckle_digest::puzzle::check::record(
         &mut store,
@@ -456,7 +494,10 @@ fn highlights_from(clippings: &ClippingsRead, state: &Path) -> (Vec<Pending>, Op
         Err(e) => return (Vec::new(), Some(e.to_string())),
     };
     let parsed = deckle_highlights::parse(bytes);
-    let state = State::load(state);
+    let state = match State::load(state) {
+        Ok(state) => state,
+        Err(e) => return (Vec::new(), Some(e)),
+    };
     let rows = deckle_highlights::pending(
         &deckle_highlights::group(parsed.entries),
         state.folder.as_deref(),
@@ -469,11 +510,14 @@ fn highlights_from(clippings: &ClippingsRead, state: &Path) -> (Vec<Pending>, Op
 }
 
 pub fn highlights_status_at(state: &Path, digest: &Path) -> HighlightsStatus {
+    let (st, damaged) = match State::load(state) {
+        Ok(st) => (st, None),
+        Err(e) => (State::default(), Some(e)),
+    };
     HighlightsStatus {
-        folder: State::load(state)
-            .folder
-            .map(|f| f.to_string_lossy().into_owned()),
+        folder: st.folder.map(|f| f.to_string_lossy().into_owned()),
         clippings: deckle_digest::Config::load(digest).is_ok_and(|c| c.sync.clippings),
+        damaged,
     }
 }
 
@@ -485,7 +529,7 @@ pub fn highlights_set_at(
     folder: Option<String>,
     clippings: bool,
 ) -> Result<HighlightsStatus, String> {
-    let mut st = State::load(state);
+    let mut st = State::load(state)?;
     if let Some(folder) = folder {
         let folder = PathBuf::from(folder);
         std::fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
@@ -514,7 +558,7 @@ pub fn write_highlights_on(conn: &mut Conn<'_>, state: &Path) -> Result<Outcome,
         .map_err(|e| e.to_string())?
         .ok_or("No highlights on this Kindle yet.")?;
     deckle_highlights::export_clippings(&bytes, state, None).map_err(|e| {
-        if State::load(state).folder.is_none() {
+        if State::load(state).is_ok_and(|s| s.folder.is_none()) {
             "Choose a folder for your highlights first.".to_owned()
         } else {
             e
@@ -527,7 +571,7 @@ pub fn write_highlights_on(conn: &mut Conn<'_>, state: &Path) -> Result<Outcome,
 /// `.sdr` is kept either way.
 pub fn highlights_first(target: &Target, config: &Path) {
     let state = highlights_state(config);
-    if State::load(&state).folder.is_none() {
+    if State::load(&state).is_ok_and(|s| s.folder.is_none()) {
         return;
     }
     if let Err(e) = write_highlights_on(&mut Conn::new(target), &state) {
@@ -911,11 +955,11 @@ mod tests {
         // no puzzle in the paper: left alone
         std::fs::write(tmp.path().join("digest.toml"), "sections = [\"weather\"]\n").unwrap();
         shelf_on(&mut Conn::new(&target), &config, None).unwrap();
-        assert_eq!(Store::load(&store_path), store);
+        assert_eq!(Store::load(&store_path).unwrap(), store);
 
         std::fs::write(tmp.path().join("digest.toml"), "sections = [\"puzzle\"]\n").unwrap();
         shelf_on(&mut Conn::new(&target), &config, None).unwrap();
-        let after = Store::load(&store_path);
+        let after = Store::load(&store_path).unwrap();
         assert_eq!(
             after.days[&yesterday].solve.as_ref().map(|s| s.solved),
             Some(1)
@@ -925,7 +969,7 @@ mod tests {
         // a Kindle with no file yet (no highlights) keeps the hint
         std::fs::remove_file(out.join("My Clippings.txt")).unwrap();
         shelf_on(&mut Conn::new(&target), &config, None).unwrap();
-        assert_eq!(Store::load(&store_path).notes_readable, Some(true));
+        assert_eq!(Store::load(&store_path).unwrap().notes_readable, Some(true));
     }
 
     #[test]
@@ -996,7 +1040,7 @@ mod tests {
             listed.books.iter().any(|b| b.file == "Walden.kfx"),
             "the tab still lists the books"
         );
-        let snap = Shelf::load(&store);
+        let snap = Shelf::load(&store).unwrap();
         let k = snap.kindles.values().next().expect("a snapshot");
         assert_eq!(k.books.len(), 1);
         assert_eq!(k.books[0].title, "Walden");
@@ -1023,7 +1067,8 @@ mod tests {
             highlights_status_at(&state, &digest),
             HighlightsStatus {
                 folder: None,
-                clippings: false
+                clippings: false,
+                damaged: None
             }
         );
         let notes = tmp.path().join("notes");

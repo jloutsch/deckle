@@ -124,22 +124,16 @@ pub struct DeviceRegistry {
 }
 
 impl DeviceRegistry {
-    pub fn load(file: &Path) -> Self {
-        std::fs::read(file)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+    /// The registry; empty when there is no file yet. A file that is there but does not parse
+    /// or cannot be read is an error naming it: it holds the owner's per-Kindle choices.
+    pub fn load(file: &Path) -> Result<Self, String> {
+        Ok(crate::state_file::read(file)?.unwrap_or_default())
     }
 
+    /// Saves through a temp file, refused while the file on disk does not parse or cannot be read.
     pub fn save(&self, file: &Path) -> Result<(), String> {
-        if let Some(p) = file.parent() {
-            std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
-        }
-        std::fs::write(
-            file,
-            serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())
+        let bytes = serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?;
+        crate::state_file::save_owner::<Self>(file, &bytes, false)
     }
 
     /// Records a sighting: refreshes the live facts, keeps the owner's choices.

@@ -18,7 +18,7 @@ fn seen_mass(root: &str, hint: &str, thumbs: bool) -> Seen {
 fn registry_remembers_devices_and_keeps_user_overrides() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("devices.json");
-    let mut reg = DeviceRegistry::load(&file);
+    let mut reg = DeviceRegistry::load(&file).unwrap();
     assert!(reg.profiles.is_empty());
     let p = reg.remember(&seen_mass("/Volumes/Kindle", "Kindle 5.16.2.1.1", true));
     assert_eq!(p.key, "ms:Kindle 5.16.2.1.1");
@@ -28,7 +28,7 @@ fn registry_remembers_devices_and_keeps_user_overrides() {
     reg.set_override(&p.key, Some("pdoc"));
     reg.set_verified_real_asin(&p.key, true);
     reg.save(&file).unwrap();
-    let mut again = DeviceRegistry::load(&file);
+    let mut again = DeviceRegistry::load(&file).unwrap();
     let p2 = again.remember(&seen_mass("/Volumes/Kindle", "Kindle 5.16.2.1.1", false));
     assert_eq!(
         p2.cde_override.as_deref(),
@@ -91,7 +91,7 @@ fn firmware_round_trips_and_an_mtp_sighting_keeps_the_recorded_one() {
     reg.remember(&mtp);
     reg.set_firmware("mtp:G0X1", "5.18.1.0.1");
     reg.save(&file).unwrap();
-    let mut again = DeviceRegistry::load(&file);
+    let mut again = DeviceRegistry::load(&file).unwrap();
     assert_eq!(
         again
             .get("ms:Kindle 5.16.2.1.1")
@@ -120,7 +120,7 @@ fn a_devices_json_from_before_firmware_still_loads() {
         "cde_override":"ebok","verified_real_asin":true}]}"#,
     )
     .unwrap();
-    let reg = DeviceRegistry::load(&file);
+    let reg = DeviceRegistry::load(&file).unwrap();
     let p = reg.get("mtp:G0X1").expect("old profile loads");
     assert_eq!(p.firmware, None);
     assert!(p.verified_real_asin);

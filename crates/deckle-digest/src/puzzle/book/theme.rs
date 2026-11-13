@@ -220,7 +220,13 @@ pub fn sources(main: &Path, today: NaiveDate) -> Sources {
         }
     };
     out.puzzle_page = cfg.sections.contains(&crate::config::SectionKind::Puzzle);
-    let puzzles = Puzzles::load(&cfg.puzzle_store());
+    let puzzles = match Puzzles::load(&cfg.puzzle_store()) {
+        Ok(p) => p,
+        Err(e) => {
+            out.error = Some(e);
+            return out;
+        }
+    };
     if let Ok(loaded) = papers::load_all(main) {
         for p in &loaded.papers {
             for i in &p.interests {
@@ -236,7 +242,7 @@ pub fn sources(main: &Path, today: NaiveDate) -> Sources {
         }
     }
     out.week = from_headlines(&puzzles, today, WEEK_DAYS, None).len();
-    out.vocab = from_shelf(&Shelf::load(&cfg.shelf_store())).len();
+    out.vocab = Shelf::load(&cfg.shelf_store()).map_or(0, |s| from_shelf(&s).len());
     out.cookbook = from_cookbook(&Cookbook::new(Cookbook::default_dir())).len();
     out
 }
@@ -248,7 +254,7 @@ pub fn resolve(main: &Path, source: &Source, today: NaiveDate) -> Result<Themed,
     let _ = today.month();
     Ok(match source {
         Source::Interests { names, days } => {
-            let puzzles = Puzzles::load(&cfg.puzzle_store());
+            let puzzles = Puzzles::load(&cfg.puzzle_store())?;
             let days = if *days == 0 { INTEREST_DAYS } else { *days };
             let filter = (!names.is_empty()).then_some(names.as_slice());
             let words = from_headlines(&puzzles, today, days, filter);
@@ -264,7 +270,7 @@ pub fn resolve(main: &Path, source: &Source, today: NaiveDate) -> Result<Themed,
             }
         }
         Source::Week { days } => {
-            let puzzles = Puzzles::load(&cfg.puzzle_store());
+            let puzzles = Puzzles::load(&cfg.puzzle_store())?;
             let days = if *days == 0 { WEEK_DAYS } else { *days };
             let words = from_headlines(&puzzles, today, days, None);
             Themed {
@@ -278,7 +284,7 @@ pub fn resolve(main: &Path, source: &Source, today: NaiveDate) -> Result<Themed,
             }
         }
         Source::Vocab => {
-            let words = from_shelf(&Shelf::load(&cfg.shelf_store()));
+            let words = from_shelf(&Shelf::load(&cfg.shelf_store())?);
             Themed {
                 note: format!("{} words you looked up on the Kindle", words.len()),
                 title: format!("Words you looked up, {month}"),

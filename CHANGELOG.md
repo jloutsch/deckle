@@ -122,6 +122,42 @@
 - **Finished fresh-paper build folders are removed.** Each build left a folder in Deckle's
   private `press/jobs`; it's now removed when the build is recorded, and old ones are cleared
   when the watcher starts.
+- **A settings file that doesn't read is kept, not replaced.** A `settings.json` cut short by a
+  crash, or changed by hand with a stray comma, used to load as the defaults, and the next save
+  wrote the defaults over your API keys and per-book presets. Deckle now keeps a copy beside it
+  (`settings.json.damaged-<time>`), says so at the top of Settings, and saves nothing until the
+  file is fixed or removed. Settings are written to a temporary file and renamed into place, and
+  are always private to you (0600), also when an older copy was readable by others. The
+  message names the line and column that didn't read, never what is written there, so a key
+  can't show up in it.
+- **The same for From Your Shelf and the Morgue.** A `shelf.json` (every Kindle's snapshot and
+  the highlights already printed) or `morgue.json` (the editions sent again) that doesn't read
+  is kept with a copy beside it and not replaced. The paper prints without From Your Shelf and
+  says why, a Kindle connection skips the shelf and still delivers, the shelf card on the
+  Daily tab shows the message, and `digest morgue send` stops with it.
+- **And for the library's own files.** `library.json`, `upgrades.json`, the calibre shelves
+  and write-back settings, the reading log and the watched folder's list of files already tried
+  are kept the same way. Settings → Library says when `library.json` doesn't read, the Books tab
+  lists it with its warnings, and a watched folder whose list doesn't read stops (rather than
+  adding every EPUB in it again) and says so beside the folder in Settings and once in the app.
+- **And for your Kindles, highlights and reading.** `devices.json` (your choices per Kindle),
+  `koreader-documents.json`, `highlights.json`, `readership.json` and `interests.json` are kept
+  the same way. Settings → Highlights and the Readership card show the message; a Kindle
+  connection still delivers and skips only what needs the file.
+- **And for puzzles, the bookmarklet and the reader server.** A damaged `puzzles.json` leaves
+  the puzzle page out of the paper with a note. A `bookmarklet.token` that isn't a token is no
+  longer replaced by a new one (which broke every installed bookmarklet); the message says that
+  deleting it makes a new token and the bookmarklets then need installing again. A new token is
+  private to you (0600), and an older one readable by others is made private. KOReader's sync
+  positions and `wireless.json` are kept the same way (`wireless.json` always 0600), and the
+  wireless server doesn't start, saying why. A reMarkable host-key pin that doesn't read stops
+  the SSH connection instead of trusting whatever key answers. A fresh paper built for a reader
+  app logs the sections it left out.
+- **Files Deckle can rebuild start empty, with a line saying so.** The forecast and frost caches,
+  the watcher's `daemon.json`, KOReader plugin sources, the shelves Deckle made on a reader, the
+  readers seen and the wireless readers list and shelf rules keep a copy of a damaged file and
+  start again; one that can't be read at all is never replaced. See
+  [how it works](docs/how-it-works.md).
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in

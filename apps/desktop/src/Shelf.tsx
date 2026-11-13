@@ -25,12 +25,13 @@ export default function Shelf({ inPaper }: { inPaper: boolean }) {
       })
       .catch((e) => setError(String(e)));
   if (!status) return error ? <section className="card shelf"><p className="warn small">{error}</p></section> : null;
-  if (!inPaper && !status.kindle) return null;
+  if (!inPaper && !status.kindle && !status.damaged) return null;
   const email = emailLine(status);
   return (
     <section className="card shelf" aria-label="From Your Shelf">
       <h3>From Your Shelf</h3>
       <p className="muted small">{statusLine(status)}</p>
+      {status.damaged && <p className="warn small">{status.damaged}</p>}
       {caps.web && !caps.usb ? (
         <Unavailable reason={NO_DEVICE_REASON} />
       ) : (

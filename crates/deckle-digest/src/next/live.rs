@@ -39,22 +39,16 @@ pub struct LiveCache {
 }
 
 impl LiveCache {
-    /// A missing or unreadable file is an empty cache.
+    /// A missing file is an empty cache. It can be fetched again, so one that does not parse
+    /// also starts empty, with a line on stderr and a copy of it kept beside it.
     pub fn load(path: &Path) -> LiveCache {
-        std::fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+        deckle_core::state_file::rebuildable(path).value
     }
 
+    /// Refused when the file on disk can't be read, or no copy of a damaged one was kept.
     pub fn save(&self, path: &Path) -> Result<(), String> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        }
-        let tmp = path.with_extension("json.tmp");
         let body = serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?;
-        std::fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
-        std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
+        deckle_core::state_file::save_rebuildable::<LiveCache>(path, &body)
     }
 }
 

@@ -223,7 +223,7 @@ pub fn record(path: &Path, id: &str, snap: KindleSnapshot) -> Result<Summary, St
         highlights: snap.highlights_shared,
         words: snap.words.len(),
     };
-    let mut shelf = Shelf::load(path);
+    let mut shelf = Shelf::load(path)?;
     shelf.put(id, snap);
     shelf.save(path)?;
     Ok(summary)

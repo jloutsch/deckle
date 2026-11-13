@@ -119,8 +119,8 @@ pub fn save_paper_with_history(
     if renamed.is_empty() {
         return Ok(());
     }
-    let mut st = deckle_readership::State::load(state);
-    let mut lr = deckle_readership::Learning::load(learning);
+    let mut st = deckle_readership::State::load(state)?;
+    let mut lr = deckle_readership::Learning::load(learning)?;
     let (mut moved_state, mut moved_learning) = (0, false);
     for (from, to) in &renamed {
         moved_state +=
@@ -969,7 +969,7 @@ mod tests {
         let mut cfg = Config::load(&main).unwrap();
         cfg.interests[0].name = "Rust lang".into();
         save_paper_with_history(&main, None, cfg, &state, &interests).unwrap();
-        let st = deckle_readership::State::load(&state);
+        let st = deckle_readership::State::load(&state).unwrap();
         let keys: Vec<String> = st
             .editions
             .values()
@@ -977,7 +977,7 @@ mod tests {
             .collect();
         assert!(keys.contains(&"interests:Rust lang".to_owned()), "{keys:?}");
         assert!(!keys.contains(&"interests:Rust".to_owned()));
-        let learning = deckle_readership::Learning::load(&interests);
+        let learning = deckle_readership::Learning::load(&interests).unwrap();
         assert!(
             learning.accepted.contains_key("rust lang"),
             "{:?}",
@@ -1038,6 +1038,7 @@ mod tests {
         learning.save(&interests).unwrap();
         let keys = |state: &std::path::Path| -> Vec<String> {
             deckle_readership::State::load(state)
+                .unwrap()
                 .editions
                 .values()
                 .flat_map(|l| l.sections.iter().map(|s| s.key.clone()))
@@ -1051,7 +1052,7 @@ mod tests {
             keys(&state),
             ["front", "interests:A", "interests:B", "interests:C"]
         );
-        let l = deckle_readership::Learning::load(&interests);
+        let l = deckle_readership::Learning::load(&interests).unwrap();
         assert!(l.accepted.contains_key("b") && l.accepted.contains_key("c"));
         // swap: [A, C] → [C, A]
         let mut cfg = Config::load(&main).unwrap();

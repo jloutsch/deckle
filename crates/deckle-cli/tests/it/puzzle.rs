@@ -79,7 +79,7 @@ fn kindle(home: &Path, store: &Store, with_file: bool) -> PathBuf {
 }
 
 fn stored(home: &Path) -> Store {
-    Store::load(&config_dir(home).join("puzzles.json"))
+    Store::load(&config_dir(home).join("puzzles.json")).unwrap()
 }
 
 #[test]

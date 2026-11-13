@@ -105,8 +105,8 @@ pub fn morgue_search(query: String) -> Result<Vec<Hit>, String> {
 
 pub fn morgue_show(date: String) -> Result<Option<Detail>, String> {
     let date = date_of(&date)?;
-    let reads = deckle_readership::State::load(&deckle_readership::state_path());
-    let state = MorgueState::load(&deckle_morgue::state::state_path());
+    let reads = deckle_readership::State::load(&deckle_readership::state_path())?;
+    let state = MorgueState::load(&deckle_morgue::state::state_path())?;
     Ok(detail(&morgue()?, date, &reads, &state))
 }
 

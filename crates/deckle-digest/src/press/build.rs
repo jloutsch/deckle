@@ -41,8 +41,13 @@ fn read_optional(path: &Path) -> Result<Vec<u8>, PressError> {
     }
 }
 
+/// A missing source stays missing: an empty copy would read as a damaged state file.
 fn snapshot(source: &Path, dest: &Path) -> Result<(), PressError> {
-    std::fs::write(dest, read_optional(source)?).map_err(storage)
+    match std::fs::read(source) {
+        Ok(bytes) => std::fs::write(dest, bytes).map_err(storage),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(storage(e)),
+    }
 }
 
 /// Snapshot queue bytes first, then copy only this edition's selected saved pages. Missing
@@ -145,6 +150,17 @@ pub fn build_fresh(
     net: &dyn Net,
     opts: &GatherOptions,
 ) -> Result<FreshArtifact, PressError> {
+    build_fresh_noted(cfg, context, net, opts).map(|(artifact, _)| artifact)
+}
+
+/// [`build_fresh`] with the build's notes (a section left out and why). The press protocol
+/// has no place for them in a result, so the worker logs them.
+pub fn build_fresh_noted(
+    cfg: &Config,
+    context: &FreshBuildContext,
+    net: &dyn Net,
+    opts: &GatherOptions,
+) -> Result<(FreshArtifact, Vec<String>), PressError> {
     // A new directory fences every output from both persistent inputs and prior attempts.
     // Never recursively create a caller-supplied path or follow an existing output symlink.
     std::fs::create_dir(&context.work_dir).map_err(storage)?;
@@ -165,6 +181,12 @@ pub fn build_fresh(
     snapshot(&cfg.puzzle_store(), &puzzles)?;
     snapshot(&cfg.shelf_store(), &shelf)?;
     snapshot(&cfg.almanac_cache(), &almanac)?;
+    // The snapshot and the owner's file it came from, so a note names the owner's file.
+    let owners = [
+        (puzzles.clone(), cfg.puzzle_store()),
+        (shelf.clone(), cfg.shelf_store()),
+        (almanac.clone(), cfg.almanac_cache()),
+    ];
     isolated.puzzle_path = Some(puzzles);
     isolated.shelf_path = Some(shelf);
     isolated.almanac_path = Some(almanac);
@@ -207,7 +229,29 @@ pub fn build_fresh(
     }
     let gathered =
         crate::gather_with(&isolated, date, context.started_at, net, opts).without_nudges();
-    render_fresh(cfg, context, &gathered)
+    let artifact = render_fresh(cfg, context, &gathered)?;
+    let notes = gathered
+        .notes
+        .iter()
+        .map(|n| owner_note(n, &owners))
+        .collect();
+    Ok((artifact, notes))
+}
+
+/// A note about a snapshot input names the owner's file and says it is damaged: the snapshot
+/// and its copy go with the job's folder, so the log must not point at them. The owner's file
+/// gets its own copy when Deckle next loads it on the owner's side.
+fn owner_note(note: &str, owners: &[(PathBuf, PathBuf)]) -> String {
+    for (snapshot, owner) in owners {
+        if let Some(at) = note.find(&snapshot.display().to_string()) {
+            return format!(
+                "{}{} is damaged, so this fresh paper was built without it.",
+                &note[..at],
+                owner.display()
+            );
+        }
+    }
+    note.to_owned()
 }
 
 fn render_fresh(

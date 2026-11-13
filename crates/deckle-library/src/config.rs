@@ -57,16 +57,15 @@ pub fn default_path() -> PathBuf {
 }
 
 impl LibraryConfig {
-    /// The config at `path`; the default (no library) when it's missing or unreadable.
-    pub fn load(path: &Path) -> Self {
-        std::fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+    /// The config at `path`; the default (no library) when it's missing. A file that is there
+    /// but does not parse or cannot be read is an error naming it.
+    pub fn load(path: &Path) -> Result<Self, String> {
+        Ok(deckle_core::state_file::read(path)?.unwrap_or_default())
     }
 
+    /// Saves, refused while the file on disk does not parse or cannot be read.
     pub fn save(&self, path: &Path) -> Result<(), String> {
         let json = serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?;
-        crate::write_atomic(path, &json)
+        deckle_core::state_file::save_owner::<Self>(path, &json, false)
     }
 }

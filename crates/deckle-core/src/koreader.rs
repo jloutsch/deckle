@@ -225,22 +225,24 @@ pub mod documents {
         pub seen: String,
     }
 
-    /// The registry at `path`; a missing or unreadable one is empty.
-    pub fn load(path: &Path) -> BTreeMap<String, Document> {
-        std::fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+    /// The registry at `path`; a missing one is empty. One that is there but does not parse or
+    /// cannot be read is an error naming it, and nothing is recorded over it.
+    pub fn load(path: &Path) -> Result<BTreeMap<String, Document>, String> {
+        Ok(crate::state_file::read(path)?.unwrap_or_default())
     }
 
-    /// The file a digest names, when Deckle handed it over.
+    /// The file a digest names, when Deckle handed it over. A damaged registry is said and
+    /// names nothing.
     pub fn lookup(path: &Path, digest: &str) -> Option<Document> {
-        load(path).remove(&digest.to_ascii_lowercase())
+        load(path)
+            .inspect_err(|e| eprintln!("koreader: {e}"))
+            .ok()?
+            .remove(&digest.to_ascii_lowercase())
     }
 
     /// Records `bytes`, handed over as `file`, under both names KOReader may give it.
     pub fn record(path: &Path, file: &str, bytes: &[u8]) -> std::io::Result<()> {
-        let mut all = load(path);
+        let mut all = load(path).map_err(std::io::Error::other)?;
         let doc = Document {
             file: file.to_owned(),
             seen: crate::devices::now_iso(),
@@ -257,12 +259,7 @@ pub mod documents {
                 all.remove(&k);
             }
         }
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(&all)?)?;
-        std::fs::rename(&tmp, path)
+        crate::state_file::save(path, &serde_json::to_vec_pretty(&all)?, false)
     }
 }
 

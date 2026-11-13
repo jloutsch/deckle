@@ -108,10 +108,8 @@ fn parse(json: &[u8]) -> Result<Vec<(NaiveDate, f64)>, String> {
 /// A failed fetch isn't cached, so the next build tries again.
 pub fn usual(lat: f64, lon: f64, cache: &Path, net: &dyn Net) -> Result<Usual, String> {
     let key = format!("{lat:.1},{lon:.1}");
-    let mut map: BTreeMap<String, Usual> = std::fs::read(cache)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default();
+    // A cache that does not parse starts empty, said, with a copy kept (rebuildable).
+    let mut map: BTreeMap<String, Usual> = deckle_core::state_file::rebuildable(cache).value;
     if let Some(u) = map.get(&key) {
         return Ok(u.clone());
     }
@@ -119,10 +117,7 @@ pub fn usual(lat: f64, lon: f64, cache: &Path, net: &dyn Net) -> Result<Usual, S
     map.insert(key, u.clone());
     // The cache only saves a request: a failed write still prints the line.
     if let Ok(bytes) = serde_json::to_vec_pretty(&map) {
-        let tmp = cache.with_extension("json.tmp");
-        if std::fs::write(&tmp, bytes).is_ok() {
-            let _ = std::fs::rename(&tmp, cache);
-        }
+        let _ = deckle_core::state_file::save_rebuildable::<BTreeMap<String, Usual>>(cache, &bytes);
     }
     Ok(u)
 }

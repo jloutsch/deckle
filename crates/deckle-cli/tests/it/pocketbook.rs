@@ -96,7 +96,7 @@ fn koreaders_place_in_the_paper_on_a_pocketbook_is_its_readership() {
         home.join("deckle")
     };
     let file = dir.join("readership.json");
-    let state = deckle_readership::State::load(&file);
+    let state = deckle_readership::State::load(&file).unwrap();
     let layout = &state.editions[&"2026-10-23".parse().unwrap()];
     assert!(!layout.is_kfx(), "{layout:?}");
     let epub = layout.epub.as_ref().unwrap();
@@ -116,7 +116,7 @@ fn koreaders_place_in_the_paper_on_a_pocketbook_is_its_readership() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let text = String::from_utf8_lossy(&o.stdout);
     assert!(text.contains("readership: 1 edition read"), "{text}");
-    let state = deckle_readership::State::load(&file);
+    let state = deckle_readership::State::load(&file).unwrap();
     let reads = &state.reads[&"2026-10-23".parse().unwrap()];
     let read = &reads["koreader/pocketbook/PB632"];
     assert!(read.opened);

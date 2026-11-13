@@ -3,3 +3,6 @@
 
 mod dispatch;
 mod press;
+// Unix only (see the module).
+#[cfg(unix)]
+mod state_files;

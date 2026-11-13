@@ -23,7 +23,16 @@ pub(crate) fn settings(cfg: &Config, main_path: &Path) -> Option<Settings> {
     if !w.enabled {
         return None;
     }
-    let secrets = wireless::load_secrets(&wireless::secrets_path(main_path));
+    let secrets = match wireless::load_secrets(&wireless::secrets_path(main_path)) {
+        Ok(s) => s,
+        Err(e) => {
+            // Asked on every watcher tick: said once.
+            if deckle_core::state_file::say_once(&e) {
+                eprintln!("wireless: not started: {e}");
+            }
+            return None;
+        }
+    };
     Some(Settings {
         bind: deckle_readerserver::bind_address(),
         port: w.port,
@@ -170,7 +179,7 @@ pub(crate) fn run(json: bool, action: WirelessCommand) -> Result<ExitCode, Strin
         WirelessCommand::Status => {
             let cfg = config(&main_path)?;
             let w = &cfg.wireless;
-            let secrets = wireless::load_secrets(&secrets_path);
+            let secrets = wireless::load_secrets(&secrets_path)?;
             let readers = store.readers();
             let jobs = store.jobs();
             let value = serde_json::json!({
@@ -225,7 +234,7 @@ pub(crate) fn run(json: bool, action: WirelessCommand) -> Result<ExitCode, Strin
             Ok(ExitCode::SUCCESS)
         }
         WirelessCommand::Password { stdin, clear } => {
-            let mut s = wireless::load_secrets(&secrets_path);
+            let mut s = wireless::load_secrets(&secrets_path)?;
             s.password = if clear {
                 None
             } else {

@@ -64,23 +64,17 @@ pub fn state_path() -> PathBuf {
 }
 
 impl State {
-    /// A missing or unreadable file is an empty state.
-    pub fn load(path: &Path) -> State {
-        std::fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+    /// A missing file is an empty state. One that is there but does not parse or cannot be read
+    /// is an error naming it: it holds the reads and the dismissed suggestions.
+    pub fn load(path: &Path) -> Result<State, String> {
+        Ok(deckle_core::state_file::read(path)?.unwrap_or_default())
     }
 
+    /// Saves through a synced temp file, refused while the file on disk can't be loaded.
     pub fn save(&self, path: &Path) -> Result<(), String> {
-        let err = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| err(&e))?;
-        }
-        let tmp = path.with_extension("json.tmp");
-        let bytes = serde_json::to_vec_pretty(self).map_err(|e| err(&e))?;
-        std::fs::write(&tmp, bytes).map_err(|e| err(&e))?;
-        std::fs::rename(&tmp, path).map_err(|e| err(&e))
+        let bytes =
+            serde_json::to_vec_pretty(self).map_err(|e| format!("{}: {e}", path.display()))?;
+        deckle_core::state_file::save_owner::<State>(path, &bytes, false)
     }
 
     /// Adds or replaces an edition's layout. A rebuilt date whose sections moved loses its

@@ -235,6 +235,8 @@ export interface Settings {
   popup_notes: boolean;
   /** The welcome has been seen or skipped once; Settings → About shows it again. */
   welcome_seen: boolean;
+  /** Only from `get_settings`: the file is there but could not be read. The settings shown are the defaults and every save is refused until the owner fixes or removes the file (#26). */
+  damaged?: string | null;
 }
 
 export interface PreviewerStatus {
@@ -702,6 +704,8 @@ export interface LibraryStatus {
   root: string | null;
   auto_add: boolean;
   books: number;
+  /** library.json is there but could not be read: why, and where its copy is. Nothing is saved over it until it is fixed or removed. */
+  damaged?: string | null;
 }
 
 /** One book in a Kindle's documents/ (library design §4). */
@@ -801,6 +805,8 @@ export interface HighlightsStatus {
   folder: string | null;
   /** `[sync] clippings`: the morning schedule writes highlights on plug-in. */
   clippings: boolean;
+  /** highlights.json is there but could not be read: why, and where its copy is. */
+  damaged?: string | null;
 }
 
 export interface HighlightsReport {
@@ -903,6 +909,8 @@ export interface ShelfStatus {
   emailOn: boolean;
   /** `[sync] shelf` in digest.toml. */
   enabled: boolean;
+  /** shelf.json is there but could not be read: why, and where its copy is. Nothing is recorded until it is fixed or removed (#93). */
+  damaged?: string | null;
 }
 
 /** The press (tomorrow's paper design §4): `next` and `since` are ISO instants with offsets. */

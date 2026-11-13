@@ -42,6 +42,7 @@ pub mod remarkable;
 pub mod remarkable_ssh;
 pub mod screens;
 pub mod shelves;
+pub mod state_file;
 pub mod sync;
 pub mod thumbnail;
 pub mod typography;

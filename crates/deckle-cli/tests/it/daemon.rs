@@ -178,7 +178,8 @@ fn sidecar_guards_a_reprint_with_garbage_daemon_json() {
     assert!(o.status.success(), "{}", text(&o.stderr));
     assert!(!text(&o.stdout).contains("[main]"), "{}", text(&o.stdout));
     assert!(
-        text(&o.stderr).contains("daemon.json unreadable"),
+        text(&o.stderr).contains("daemon.json could not be read")
+            && text(&o.stderr).contains("daemon.json.damaged-"),
         "{}",
         text(&o.stderr)
     );
@@ -194,8 +195,12 @@ fn unreadable_daemon_json_is_said() {
     let o = daemon(&home, "06:00");
     let err = text(&o.stderr);
     assert!(
-        err.contains("daemon.json") && err.contains("can't read"),
+        err.contains("daemon.json could not be read") && err.contains("not saving over it"),
         "{err}"
+    );
+    assert!(
+        config_dir(&home).join("daemon.json").is_dir(),
+        "not replaced"
     );
 }
 

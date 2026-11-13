@@ -44,20 +44,17 @@ pub fn config_path(library_json: &Path) -> PathBuf {
 }
 
 impl Config {
-    pub fn load(path: &Path) -> Config {
-        std::fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+    /// The rules; an error naming the file when it is there but does not parse or cannot be
+    /// read.
+    pub fn load(path: &Path) -> Result<Config, String> {
+        Ok(deckle_core::state_file::read(path)?.unwrap_or_default())
     }
 
+    /// Saves, refused while the file on disk does not parse or cannot be read.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(d) = path.parent() {
-            std::fs::create_dir_all(d)?;
-        }
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(self)?)?;
-        std::fs::rename(tmp, path)
+        let bytes = serde_json::to_vec_pretty(self)?;
+        deckle_core::state_file::save_owner::<Config>(path, &bytes, false)
+            .map_err(std::io::Error::other)
     }
 }
 
@@ -178,13 +175,13 @@ pub fn evaluate(
 /// The rules worked out against the calibre library `library_json` names, saved searches
 /// through `calibredb` when it's there.
 pub fn sets(library_json: &Path, home: Option<&Path>) -> Result<Vec<RuleSet>, String> {
-    let cfg = Config::load(&config_path(library_json));
+    let cfg = Config::load(&config_path(library_json))?;
     if cfg.rules.is_empty() {
         return Ok(Vec::new());
     }
-    let lib = crate::writeback::library_root(&crate::LibraryConfig::load(library_json), home)
+    let lib = crate::writeback::library_root(&crate::LibraryConfig::load(library_json)?, home)
         .ok_or("no calibre library found: choose it in Settings → Library")?;
-    let wb = crate::writeback::Writeback::load(&crate::writeback::config_path(library_json));
+    let wb = crate::writeback::Writeback::load(&crate::writeback::config_path(library_json))?;
     let exe = crate::writeback::find_calibredb(wb.calibredb.as_deref());
     let mut search = |name: &str| -> Option<Vec<i64>> {
         let exe = exe.as_ref()?;

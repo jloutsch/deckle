@@ -17,6 +17,11 @@ export default function LibraryPage({ library, onLibrary, onPickLibrary }: Props
   const caps = useCapabilities();
   return (
     <div className="set-stack">
+      {library?.damaged && (
+        <p className="warn" role="alert">
+          {library.damaged}
+        </p>
+      )}
       <section className="set-card set-pad" aria-label="Library">
       <Row
         label="Library"

@@ -827,7 +827,7 @@ pub fn cookbook_illustrate(
     redraw: bool,
 ) -> Result<IllustrateDto, String> {
     let key = image_key(
-        &load_settings_from(&state.settings_file),
+        &load_settings_from(&state.settings_file)?,
         illustrate::api_key(),
     );
     if ILLUSTRATING.swap(true, Ordering::SeqCst) {

@@ -364,7 +364,7 @@ fn gather_records_headlines_for_tomorrows_puzzle() {
         .find(|s| s.key == "puzzle")
         .unwrap();
     assert!(puzzle.unavailable.is_none());
-    let store = deckle_digest::puzzle::store::Store::load(c.puzzle_path.as_ref().unwrap());
+    let store = deckle_digest::puzzle::store::Store::load(c.puzzle_path.as_ref().unwrap()).unwrap();
     let day = &store.days[&date()];
     assert!(!day.headlines.is_empty());
     assert!(
@@ -384,26 +384,24 @@ fn gather_records_headlines_for_tomorrows_puzzle() {
 }
 
 #[test]
-fn puzzle_store_write_error_is_a_note() {
+fn an_unreadable_puzzle_store_drops_the_puzzle_with_a_note() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = config();
-    // a directory where the file should be: the save fails, the paper doesn't
+    // a directory where the file should be: it can't be read, so the puzzle page is left out
+    // (it would otherwise be saved over), and the paper still builds
     let path = dir.path().join("puzzles.json");
     std::fs::create_dir(&path).unwrap();
-    c.puzzle_path = Some(path);
+    c.puzzle_path = Some(path.clone());
     let g = gather(&c, date(), now(), &fake);
     assert!(
-        g.notes.iter().any(|n| n.contains("puzzle")),
+        g.notes
+            .iter()
+            .any(|n| n.starts_with("The puzzle left out:") && n.contains("puzzles.json")),
         "{:?}",
         g.notes
     );
-    let puzzle = g
-        .edition
-        .sections
-        .iter()
-        .find(|s| s.key == "puzzle")
-        .unwrap();
-    assert!(!puzzle.articles.is_empty());
+    assert!(g.edition.sections.iter().all(|s| s.key != "puzzle"));
+    assert!(path.is_dir());
 }
 
 #[test]
@@ -2245,7 +2243,7 @@ fn yesterdays_returns_from_a_bundle_export_tick_the_word_search() {
     let yesterday = date() - chrono::Days::new(1);
     // yesterday's paper, so the store has its word search
     gather(&c, yesterday, now() - chrono::Days::new(1), &fake);
-    let store = deckle_digest::puzzle::store::Store::load(c.puzzle_path.as_ref().unwrap());
+    let store = deckle_digest::puzzle::store::Store::load(c.puzzle_path.as_ref().unwrap()).unwrap();
     assert!(store.days.contains_key(&yesterday));
     assert_eq!(store.days[&yesterday].search_found, None);
     // the iPad found two words in it
@@ -2256,7 +2254,7 @@ fn yesterdays_returns_from_a_bundle_export_tick_the_word_search() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join(format!("{yesterday}.json")), r.to_string()).unwrap();
     gather(&c, date(), now(), &fake);
-    let store = deckle_digest::puzzle::store::Store::load(c.puzzle_path.as_ref().unwrap());
+    let store = deckle_digest::puzzle::store::Store::load(c.puzzle_path.as_ref().unwrap()).unwrap();
     let found = store.days[&yesterday].search_found.clone().unwrap();
     assert_eq!(found.found, ["COURT", "MILL"]);
     assert!(!found.done);

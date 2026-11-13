@@ -5,6 +5,7 @@ import { api } from "../api";
 import Icon from "../Icon";
 import type { SourcesStatus } from "../types";
 import { Row, Switch } from "./Row";
+import { lastWatchError, onWatchError } from "../watchStatus";
 
 /**
  * Where the Kindle tab looks for originals of books Deckle didn't send (Books and Kindle design
@@ -13,6 +14,10 @@ import { Row, Switch } from "./Row";
 export default function Originals() {
   const [status, setStatus] = useState<SourcesStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Why the watched folder can't be looked at (a damaged list of files tried, a folder gone), from
+  // App's own look: looking here would add books without the notice and the list reload.
+  const [watchError, setWatchError] = useState<string | null>(lastWatchError);
+  useEffect(() => onWatchError(setWatchError), []);
   useEffect(() => {
     api.librarySources().then(setStatus).catch((e) => setError(String(e)));
   }, []);
@@ -89,6 +94,7 @@ export default function Originals() {
         )}
         <Switch label="Watch a folder" checked={!!status.watch} onChange={(on) => (on ? watchFolder() : setWatch(null))} />
       </Row>
+      {watchError && <p className="warn small">{watchError}</p>}
       {error && <p className="warn small">{error}</p>}
     </>
   );

@@ -111,6 +111,11 @@ export default function SettingsView(props: Props) {
       </nav>
       <main className="settings-page">
         <div className="settings-inner">
+          {settings.damaged && (
+            <p className="warn" role="alert">
+              {settings.damaged} Until then, changes here are not saved.
+            </p>
+          )}
           {query ? (
             <>
               <h2>Search</h2>

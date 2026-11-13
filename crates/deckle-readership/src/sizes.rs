@@ -103,7 +103,8 @@ pub fn next_paper(
     use deckle_digest::reading::ReadingQueue;
     let stopped = deckle_digest::press::read_stop(&cfg.press_state(), now.date_naive());
     let edition = deckle_digest::press::press(at, stopped, now).edition;
-    let st = State::load(state);
+    // A damaged readership.json plans without the reading shares; nothing is saved here.
+    let st = State::load(state).unwrap_or_default();
     let shares = crate::report(&st, cfg)
         .sections
         .into_iter()

@@ -50,7 +50,7 @@ pub fn export_clippings(
     state_path: &Path,
     to: Option<&Path>,
 ) -> Result<Outcome, String> {
-    let mut state = State::load(state_path);
+    let mut state = State::load(state_path)?;
     if let Some(to) = to {
         std::fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
         state.folder = Some(to.canonicalize().unwrap_or_else(|_| to.to_owned()));
@@ -65,9 +65,7 @@ pub fn export_clippings(
     if let Some(dir) = state_path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    state
-        .save(state_path)
-        .map_err(|e| format!("{}: {e}", state_path.display()))?;
+    state.save(state_path).map_err(|e| e.to_string())?;
     Ok(Outcome {
         report,
         parse_error: parsed.error,

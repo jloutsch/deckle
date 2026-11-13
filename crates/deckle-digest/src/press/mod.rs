@@ -282,7 +282,7 @@ pub use protocol::*;
 pub mod setup;
 
 pub mod build;
-pub use build::{FreshArtifact, FreshBuildContext, build_fresh, build_reading};
+pub use build::{FreshArtifact, FreshBuildContext, build_fresh, build_fresh_noted, build_reading};
 
 mod journal;
 mod queue;

@@ -31,22 +31,19 @@ pub struct DaemonState {
 }
 
 impl DaemonState {
-    /// Missing or unreadable state is a fresh start; the caller logs it.
+    /// Missing state is a fresh start. It can be rebuilt (`decide` at worst repeats one
+    /// edition), so state that does not parse is a fresh start too, said in one line, with a
+    /// copy of it kept beside it.
     pub fn load(path: &Path) -> DaemonState {
-        std::fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+        deckle_core::state_file::rebuildable(path).value
     }
 
-    /// Written aside, then renamed, so a crash never leaves half a file.
+    /// Written aside, synced, then renamed, so a crash never leaves half a file. Refused while
+    /// the file on disk can't be read (a root-owned copy) or no copy of a damaged one was kept.
     pub fn save(&self, path: &Path) -> io::Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(self)?)?;
-        std::fs::rename(&tmp, path)
+        let bytes = serde_json::to_vec_pretty(self)?;
+        deckle_core::state_file::save_rebuildable::<DaemonState>(path, &bytes)
+            .map_err(io::Error::other)
     }
 }
 

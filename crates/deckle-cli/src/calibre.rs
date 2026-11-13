@@ -41,7 +41,10 @@ pub(crate) fn record(reader: &str, records: &[Record]) {
         return;
     }
     let p = paths();
-    let mut log = ReadLog::load(&p.log);
+    let mut log = match ReadLog::load(&p.log) {
+        Ok(log) => log,
+        Err(e) => return eprintln!("calibre: {e}"),
+    };
     if log.record(reader, records) > 0
         && let Err(e) = log.save(&p.log)
     {
@@ -66,7 +69,17 @@ impl Writer {
         }
         self.last = Some(Instant::now());
         let p = paths();
-        let wb = Writeback::load(&p.config);
+        let wb = match Writeback::load(&p.config) {
+            Ok(wb) => wb,
+            // Said once, not every minute.
+            Err(e) => {
+                if self.said.as_deref() != Some(e.as_str()) {
+                    eprintln!("calibre: {e}");
+                    self.said = Some(e);
+                }
+                return;
+            }
+        };
         if !wb.enabled {
             return;
         }
@@ -145,7 +158,7 @@ fn plan_lines(s: &writeback::Status) -> Vec<String> {
 
 pub(crate) fn run(json: bool, action: CalibreCommand) -> Result<ExitCode, String> {
     let p = paths();
-    let mut wb = Writeback::load(&p.config);
+    let mut wb = Writeback::load(&p.config)?;
     match action {
         CalibreCommand::Status => {
             let s = writeback::status(&p);

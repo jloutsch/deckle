@@ -269,7 +269,7 @@ fn an_older_file_without_the_epub_field_loads() {
             "reads":{"2026-10-20":{"G000":{"opened":true,"furthest":50,"seen":"x"}}}}"#,
     )
     .unwrap();
-    let s = State::load(&path);
+    let s = State::load(&path).unwrap();
     let l = &s.editions[&d("2026-10-20")];
     assert_eq!(l.epub, None);
     assert!(l.is_kfx());
@@ -278,7 +278,7 @@ fn an_older_file_without_the_epub_field_loads() {
     let mut s = s;
     s.record_layout(epub_only("2026-10-30"));
     s.save(&path).unwrap();
-    let back = State::load(&path);
+    let back = State::load(&path).unwrap();
     assert_eq!(back, s);
     assert!(!back.editions[&d("2026-10-30")].is_kfx());
 }

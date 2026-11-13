@@ -92,28 +92,24 @@ pub fn secrets_path(config: &Path) -> PathBuf {
     config.with_file_name("wireless.json")
 }
 
-/// The saved secrets, with a library id made and kept the first time.
-pub fn load_secrets(path: &Path) -> Secrets {
-    let mut s: Secrets = std::fs::read(path)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default();
+/// The saved secrets, with a library id made and kept the first time. A file that is there but
+/// does not parse or cannot be read is an error naming it: a new library id would make every
+/// reader see a different library, so nothing is saved over it.
+pub fn load_secrets(path: &Path) -> Result<Secrets, String> {
+    let mut s: Secrets = deckle_core::state_file::read_secret(path)?.unwrap_or_default();
     if s.library_uuid.is_empty() {
         s.library_uuid = uuid::Uuid::new_v4().to_string();
         if let Err(e) = save_secrets(path, &s) {
             eprintln!("wireless: {}: {e}", path.display());
         }
     }
-    s
+    Ok(s)
 }
 
+/// Saves the secrets, owner-only (0600), refused while the file on disk can't be loaded.
 pub fn save_secrets(path: &Path, s: &Secrets) -> io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    crate::auth::write_private(&tmp, &serde_json::to_vec_pretty(s)?)?;
-    std::fs::rename(tmp, path)
+    let bytes = serde_json::to_vec_pretty(s)?;
+    deckle_core::state_file::save_owner::<Secrets>(path, &bytes, true).map_err(io::Error::other)
 }
 
 /// Answers broadcasts on every port it can bind until `stop`. Returns how many it bound;

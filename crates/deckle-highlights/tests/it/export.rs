@@ -202,7 +202,7 @@ fn pending_matches_what_export_writes() {
 }
 
 #[test]
-fn state_round_trips_and_tolerates_a_bad_file() {
+fn state_round_trips_and_a_bad_file_is_an_error() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("highlights.json");
     let mut st = State {
@@ -211,13 +211,18 @@ fn state_round_trips_and_tolerates_a_bad_file() {
     };
     export(&books(&["h:10:one"]), dir.path(), &mut st);
     st.save(&path).unwrap();
-    let back = State::load(&path);
+    let back = State::load(&path).unwrap();
     assert_eq!(back.folder.as_deref(), Some(dir.path()));
     assert_eq!(back.books.len(), 1);
     fs::write(&path, "{not json").unwrap();
-    assert!(State::load(&path).books.is_empty());
+    assert!(
+        State::load(&path)
+            .unwrap_err()
+            .contains("highlights.json.damaged-")
+    );
     assert!(
         State::load(&dir.path().join("missing.json"))
+            .unwrap()
             .folder
             .is_none()
     );

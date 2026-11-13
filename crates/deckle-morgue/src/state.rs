@@ -34,28 +34,17 @@ pub fn state_path() -> PathBuf {
 }
 
 impl MorgueState {
-    /// The state at `path`; a missing or unreadable file is an empty state.
-    pub fn load(path: &Path) -> MorgueState {
-        std::fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+    /// The state at `path`; a missing file is an empty state. A file that does not parse or
+    /// cannot be read is an error naming it (#82): it holds the editions sent again and the
+    /// import flag, so nothing may be saved over it.
+    pub fn load(path: &Path) -> Result<MorgueState, String> {
+        Ok(deckle_core::state_file::read(path)?.unwrap_or_default())
     }
 
-    /// Writes through a temp file and a rename.
+    /// Writes through a synced temp file and a rename.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let tmp = crate::folder::unique_tmp(path);
-        let result = std::fs::write(
-            &tmp,
-            serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?,
-        )
-        .and_then(|()| std::fs::rename(&tmp, path));
-        if result.is_err() {
-            let _ = std::fs::remove_file(&tmp);
-        }
-        result
+        let json = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
+        deckle_core::state_file::save_owner::<MorgueState>(path, &json, false)
+            .map_err(std::io::Error::other)
     }
 }

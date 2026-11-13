@@ -6,3 +6,4 @@ mod folder;
 mod import;
 mod search;
 mod sidecar;
+mod state_file;

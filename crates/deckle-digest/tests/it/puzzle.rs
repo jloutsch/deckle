@@ -60,7 +60,7 @@ fn stored_puzzle_survives_a_new_word_list() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("puzzles.json");
     store.save(&path).unwrap();
-    let mut store = Store::load(&path);
+    let mut store = Store::load(&path).unwrap();
     let again = today(date(), &cfg, Words::embedded(), &mut store).clone();
     assert_eq!(made, again);
     assert_eq!(
@@ -170,16 +170,20 @@ fn prune_keeps_sixty_days() {
 }
 
 #[test]
-fn store_round_trips_and_a_bad_file_loads_empty() {
+fn store_round_trips_and_a_bad_file_is_an_error() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("puzzles.json");
-    assert_eq!(Store::load(&path), Store::default());
+    assert_eq!(Store::load(&path), Ok(Store::default()));
     let mut store = store_with_yesterday(vec![leaf()]);
     store.notes_readable = Some(false);
     store.save(&path).unwrap();
-    assert_eq!(Store::load(&path), store);
+    assert_eq!(Store::load(&path), Ok(store));
     std::fs::write(&path, "{ not json").unwrap();
-    assert_eq!(Store::load(&path), Store::default());
+    assert!(
+        Store::load(&path)
+            .unwrap_err()
+            .contains("puzzles.json.damaged-")
+    );
 }
 
 #[test]

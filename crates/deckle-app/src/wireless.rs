@@ -47,7 +47,11 @@ fn view_at(main: &Path, store: &Store) -> WirelessView {
         .map(|c| c.wireless)
         .unwrap_or_default();
     let port = cfg.port;
-    let secrets = wireless::load_secrets(&wireless::secrets_path(main));
+    // A damaged wireless.json is said as the newest line of the log.
+    let (secrets, damaged) = match wireless::load_secrets(&wireless::secrets_path(main)) {
+        Ok(s) => (s, None),
+        Err(e) => (Default::default(), Some(e)),
+    };
     let r = store.readers();
     let mut readers: Vec<ReaderView> = r
         .readers
@@ -78,7 +82,7 @@ fn view_at(main: &Path, store: &Store) -> WirelessView {
         discovery: r.discovery,
         readers,
         queue: store.jobs(),
-        log: r.log[keep..].to_vec(),
+        log: r.log[keep..].iter().cloned().chain(damaged).collect(),
     }
 }
 
@@ -93,7 +97,7 @@ pub fn wireless_status() -> WirelessView {
 /// Sets the password a reader must give, or clears it (`None` or empty).
 pub fn wireless_set_password(password: Option<String>) -> Result<WirelessView, String> {
     let path = wireless::secrets_path(&deckle_digest::config::default_path());
-    let mut s = wireless::load_secrets(&path);
+    let mut s = wireless::load_secrets(&path)?;
     s.password = password.filter(|p| !p.is_empty());
     wireless::save_secrets(&path, &s).map_err(|e| e.to_string())?;
     Ok(view())

@@ -177,7 +177,11 @@ fn progress(main_path: &Path, p: &Progress) {
 
 /// Every book `p`'s device has open (not finished), from the sync records, as its shelf.
 fn shelf(cfg: &Config, device: &str, p: &Progress) {
-    let mut books: Vec<deckle_core::kobo::Book> = deckle_readerserver::sync::load(&sync_store())
+    let all = match deckle_readerserver::sync::load(&sync_store()) {
+        Ok(all) => all,
+        Err(e) => return eprintln!("shelf: {e}"),
+    };
+    let mut books: Vec<deckle_core::kobo::Book> = all
         .into_values()
         .filter(|r| r.device_id == p.device_id && r.percentage > 0.0 && r.percentage < 1.0)
         .filter_map(|r| {
@@ -214,10 +218,13 @@ fn shelf(cfg: &Config, device: &str, p: &Progress) {
         .collect();
     books.sort_by(|a, b| b.last_read.cmp(&a.last_read));
     let path = cfg.shelf_store();
-    let previous = deckle_digest::shelf::store::Shelf::load(&path)
-        .kindles
-        .get(device)
-        .cloned();
+    let previous = match deckle_digest::shelf::store::Shelf::load(&path) {
+        Ok(shelf) => shelf.kindles.get(device).cloned(),
+        Err(e) => {
+            eprintln!("shelf: {e}");
+            return;
+        }
+    };
     let name = cfg
         .sync
         .device_name(device)
