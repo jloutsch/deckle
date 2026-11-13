@@ -1,0 +1,68 @@
+{
+ "spine": [
+  {
+   "href": "OEBPS/c1.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/c2.xhtml",
+   "linear": true
+  }
+ ],
+ "page_progression_direction": "rtl",
+ "manifest": [
+  {
+   "id": "c1",
+   "href": "OEBPS/c1.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "c2",
+   "href": "OEBPS/c2.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "page_css",
+   "href": "page_styles.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "css",
+   "href": "stylesheet.css",
+   "media_type": "text/css"
+  }
+ ],
+ "toc": [
+  {
+   "title": "פרק א",
+   "href": "OEBPS/c1.xhtml",
+   "children": []
+  },
+  {
+   "title": "פרק ב",
+   "href": "OEBPS/c2.xhtml",
+   "children": []
+  }
+ ],
+ "auto_generated_toc": false,
+ "guide": [],
+ "metadata": {
+  "title": [
+   "ספר"
+  ],
+  "creator": [
+   "Fixture Author"
+  ],
+  "description": [],
+  "language": [
+   "heb"
+  ],
+  "publisher": [],
+  "date": [],
+  "cover": []
+ },
+ "raw": {
+  "opfname": "OEBPS/content.opf",
+  "sha256": "7fc158ce19f4b448b61633d47d767dfadafe4a0ffdbf9a739e03b0bc8a94a80d"
+ }
+}

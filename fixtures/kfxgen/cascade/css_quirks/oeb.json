@@ -1,0 +1,164 @@
+{
+ "spine": [
+  {
+   "href": "OEBPS/cleanups.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/sheet.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/shorthand.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/selectors.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/cascade.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/flatten.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/values.xhtml",
+   "linear": true
+  }
+ ],
+ "page_progression_direction": null,
+ "manifest": [
+  {
+   "id": "cascade",
+   "href": "OEBPS/cascade.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "cleanups",
+   "href": "OEBPS/cleanups.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "flatten",
+   "href": "OEBPS/flatten.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "pic",
+   "href": "OEBPS/pic.png",
+   "media_type": "image/png"
+  },
+  {
+   "id": "selectors",
+   "href": "OEBPS/selectors.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "sheet",
+   "href": "OEBPS/sheet.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "shorthand",
+   "href": "OEBPS/shorthand.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "values",
+   "href": "OEBPS/values.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "page_css",
+   "href": "page_styles.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "page_css1",
+   "href": "page_styles1.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "page_css2",
+   "href": "page_styles2.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "css",
+   "href": "stylesheet.css",
+   "media_type": "text/css"
+  }
+ ],
+ "toc": [
+  {
+   "title": "Clean-ups",
+   "href": "OEBPS/cleanups.xhtml",
+   "children": []
+  },
+  {
+   "title": "Sheet",
+   "href": "OEBPS/sheet.xhtml",
+   "children": []
+  },
+  {
+   "title": "Shorthands",
+   "href": "OEBPS/shorthand.xhtml",
+   "children": []
+  },
+  {
+   "title": "Selectors",
+   "href": "OEBPS/selectors.xhtml",
+   "children": []
+  },
+  {
+   "title": "Cascade",
+   "href": "OEBPS/cascade.xhtml",
+   "children": []
+  },
+  {
+   "title": "Flatten",
+   "href": "OEBPS/flatten.xhtml",
+   "children": []
+  },
+  {
+   "title": "Values",
+   "href": "OEBPS/values.xhtml",
+   "children": []
+  }
+ ],
+ "auto_generated_toc": false,
+ "guide": [
+  {
+   "type": "text",
+   "href": "OEBPS/cleanups.xhtml"
+  }
+ ],
+ "metadata": {
+  "title": [
+   "CSS Quirks"
+  ],
+  "creator": [
+   "Fixture Author"
+  ],
+  "description": [
+   "Calibre CSS quirks, one file each."
+  ],
+  "language": [
+   "eng"
+  ],
+  "publisher": [
+   "Deckle fixtures"
+  ],
+  "date": [
+   "2026-03-15T00:00:00+00:00"
+  ],
+  "cover": []
+ },
+ "raw": {
+  "opfname": "OEBPS/content.opf",
+  "sha256": "da4b6a0e02435a4f957dda912fa0fe5f9ecdbab67819dcf99bad7c9f4d9b000e"
+ }
+}

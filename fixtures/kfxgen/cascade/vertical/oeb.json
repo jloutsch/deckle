@@ -1,0 +1,82 @@
+{
+ "spine": [
+  {
+   "href": "c1.xhtml",
+   "linear": true
+  },
+  {
+   "href": "c2.xhtml",
+   "linear": true
+  },
+  {
+   "href": "c3.xhtml",
+   "linear": true
+  }
+ ],
+ "page_progression_direction": "rtl",
+ "manifest": [
+  {
+   "id": "x0",
+   "href": "c1.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "x1",
+   "href": "c2.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "x2",
+   "href": "c3.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "page_css",
+   "href": "page_styles.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "css",
+   "href": "stylesheet.css",
+   "media_type": "text/css"
+  }
+ ],
+ "toc": [
+  {
+   "title": "第一章　縦書き",
+   "href": "c1.xhtml",
+   "children": []
+  },
+  {
+   "title": "奥付",
+   "href": "c2.xhtml",
+   "children": []
+  },
+  {
+   "title": "第二章　終わり",
+   "href": "c3.xhtml",
+   "children": []
+  }
+ ],
+ "auto_generated_toc": false,
+ "guide": [],
+ "metadata": {
+  "title": [
+   "S746 kfxgen - Vertical"
+  ],
+  "creator": [
+   "kfxgen tests"
+  ],
+  "description": [],
+  "language": [
+   "jpn"
+  ],
+  "publisher": [],
+  "date": [],
+  "cover": []
+ },
+ "raw": {
+  "opfname": "content.opf",
+  "sha256": null
+ }
+}

@@ -1,0 +1,124 @@
+{
+ "spine": [
+  {
+   "href": "a.xhtml",
+   "linear": true
+  },
+  {
+   "href": "b.xhtml",
+   "linear": true
+  },
+  {
+   "href": "c.xhtml",
+   "linear": true
+  },
+  {
+   "href": "d.xhtml",
+   "linear": true
+  },
+  {
+   "href": "e.xhtml",
+   "linear": true
+  },
+  {
+   "href": "notes.xhtml",
+   "linear": true
+  }
+ ],
+ "page_progression_direction": null,
+ "manifest": [
+  {
+   "id": "i0",
+   "href": "a.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "i1",
+   "href": "b.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "i2",
+   "href": "c.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "i3",
+   "href": "d.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "i4",
+   "href": "e.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "i5",
+   "href": "notes.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "page_css",
+   "href": "page_styles.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "css",
+   "href": "stylesheet.css",
+   "media_type": "text/css"
+  }
+ ],
+ "toc": [
+  {
+   "title": "A footnote",
+   "href": "a.xhtml",
+   "children": []
+  },
+  {
+   "title": "B note elsewhere",
+   "href": "b.xhtml",
+   "children": []
+  },
+  {
+   "title": "C endnote",
+   "href": "c.xhtml",
+   "children": []
+  },
+  {
+   "title": "D list item",
+   "href": "d.xhtml",
+   "children": []
+  },
+  {
+   "title": "E inline-block number",
+   "href": "e.xhtml",
+   "children": []
+  },
+  {
+   "title": "Notes",
+   "href": "notes.xhtml",
+   "children": []
+  }
+ ],
+ "auto_generated_toc": false,
+ "guide": [],
+ "metadata": {
+  "title": [
+   "N445b kfxgen - pop-up notes"
+  ],
+  "creator": [
+   "Unknown"
+  ],
+  "description": [],
+  "language": [
+   "eng"
+  ],
+  "publisher": [],
+  "date": [],
+  "cover": []
+ },
+ "raw": {
+  "opfname": "content.opf",
+  "sha256": null
+ }
+}

@@ -1,0 +1,68 @@
+{
+ "spine": [
+  {
+   "href": "OEBPS/c1.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/c2.xhtml",
+   "linear": true
+  }
+ ],
+ "page_progression_direction": null,
+ "manifest": [
+  {
+   "id": "c1",
+   "href": "OEBPS/c1.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "c2",
+   "href": "OEBPS/c2.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "page_css",
+   "href": "page_styles.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "css",
+   "href": "stylesheet.css",
+   "media_type": "text/css"
+  }
+ ],
+ "toc": [
+  {
+   "title": "Bullets and numbers",
+   "href": "OEBPS/c1.xhtml",
+   "children": []
+  },
+  {
+   "title": "Definitions",
+   "href": "OEBPS/c2.xhtml",
+   "children": []
+  }
+ ],
+ "auto_generated_toc": false,
+ "guide": [],
+ "metadata": {
+  "title": [
+   "Lists"
+  ],
+  "creator": [
+   "Fixture Author"
+  ],
+  "description": [],
+  "language": [
+   "eng"
+  ],
+  "publisher": [],
+  "date": [],
+  "cover": []
+ },
+ "raw": {
+  "opfname": "OEBPS/content.opf",
+  "sha256": "6a8ba726e60517cfa4e4e3f6894ecd52002c10dd95d6875af95adb28d3962599"
+ }
+}

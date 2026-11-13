@@ -1,0 +1,124 @@
+{
+ "spine": [
+  {
+   "href": "OEBPS/c0.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/c1.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/c2.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/c3.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/c4.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/c5.xhtml",
+   "linear": true
+  }
+ ],
+ "page_progression_direction": null,
+ "manifest": [
+  {
+   "id": "c0",
+   "href": "OEBPS/c0.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "c1",
+   "href": "OEBPS/c1.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "c2",
+   "href": "OEBPS/c2.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "c3",
+   "href": "OEBPS/c3.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "c4",
+   "href": "OEBPS/c4.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "c5",
+   "href": "OEBPS/c5.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "page_css",
+   "href": "page_styles.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "css",
+   "href": "stylesheet.css",
+   "media_type": "text/css"
+  }
+ ],
+ "toc": [
+  {
+   "title": "Contents",
+   "href": "OEBPS/c0.xhtml",
+   "children": []
+  },
+  {
+   "title": "Runs",
+   "href": "OEBPS/c1.xhtml",
+   "children": []
+  },
+  {
+   "title": "Paragraphs",
+   "href": "OEBPS/c2.xhtml",
+   "children": []
+  },
+  {
+   "title": "Tables and boxes",
+   "href": "OEBPS/c3.xhtml",
+   "children": []
+  },
+  {
+   "title": "A table alone",
+   "href": "OEBPS/c4.xhtml",
+   "children": []
+  },
+  {
+   "title": "Vertical",
+   "href": "OEBPS/c5.xhtml",
+   "children": []
+  }
+ ],
+ "auto_generated_toc": false,
+ "guide": [],
+ "metadata": {
+  "title": [
+   "Directions"
+  ],
+  "creator": [
+   "Fixture Author"
+  ],
+  "description": [],
+  "language": [
+   "eng"
+  ],
+  "publisher": [],
+  "date": [],
+  "cover": []
+ },
+ "raw": {
+  "opfname": "OEBPS/content.opf",
+  "sha256": "ee2a0c5844b465dddcdb4d88962838e9ad69e33da6d8e7c1e597818ce15f4dde"
+ }
+}

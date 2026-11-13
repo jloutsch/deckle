@@ -1,0 +1,129 @@
+{
+ "spine": [
+  {
+   "href": "OEBPS/c1.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/c2.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/c3.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/c4.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/c5.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/c6.xhtml",
+   "linear": true
+  }
+ ],
+ "page_progression_direction": null,
+ "manifest": [
+  {
+   "id": "c1",
+   "href": "OEBPS/c1.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "c2",
+   "href": "OEBPS/c2.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "c3",
+   "href": "OEBPS/c3.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "c4",
+   "href": "OEBPS/c4.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "c5",
+   "href": "OEBPS/c5.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "c6",
+   "href": "OEBPS/c6.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "x6",
+   "href": "OEBPS/p.png",
+   "media_type": "image/png"
+  },
+  {
+   "id": "page_css",
+   "href": "page_styles.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "css",
+   "href": "stylesheet.css",
+   "media_type": "text/css"
+  }
+ ],
+ "toc": [
+  {
+   "title": "Figure at 40%",
+   "href": "OEBPS/c1.xhtml",
+   "children": []
+  },
+  {
+   "title": "Centred figures",
+   "href": "OEBPS/c2.xhtml",
+   "children": []
+  },
+  {
+   "title": "Floated figure",
+   "href": "OEBPS/c3.xhtml",
+   "children": []
+  },
+  {
+   "title": "Sizes in a box",
+   "href": "OEBPS/c4.xhtml",
+   "children": []
+  },
+  {
+   "title": "Floats first",
+   "href": "OEBPS/c5.xhtml",
+   "children": []
+  },
+  {
+   "title": "Float in a box",
+   "href": "OEBPS/c6.xhtml",
+   "children": []
+  }
+ ],
+ "auto_generated_toc": false,
+ "guide": [],
+ "metadata": {
+  "title": [
+   "Frames"
+  ],
+  "creator": [
+   "Fixture Author"
+  ],
+  "description": [],
+  "language": [
+   "eng"
+  ],
+  "publisher": [],
+  "date": [],
+  "cover": []
+ },
+ "raw": {
+  "opfname": "OEBPS/content.opf",
+  "sha256": "a987b202406484e93c011288f88115ae9a97d5e85b81e324aef4b939c441db38"
+ }
+}
