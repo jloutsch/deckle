@@ -23,6 +23,13 @@ Tasks added on the way, each because a review or a corpus run found work no task
 
 Smaller items that can wait are listed in the final review's triage; none affects output on any fixture or corpus book.
 
+## Before the final port ships
+
+- Test #88 in the running desktop app with a reader attached. The fix (`16eb377`, an awaited
+  `platform.confirm`) passed the build and unit tests but was never run live: press Remove on a
+  book on a Kobo, PocketBook or reMarkable and choose Cancel (the book must stay), then OK; send
+  a puzzle book that is already on the device and answer "Replace it?" both ways.
+
 ## Found in kfxgen
 
 - jloutsch/kfxgen#759 (filed 2026-11-11): output depended on `PYTHONHASHSEED` when one run carried two links. Fixed upstream in #760; the port follows the fix.

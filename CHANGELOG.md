@@ -158,6 +158,10 @@
   readers seen and the wireless readers list and shelf rules keep a copy of a damaged file and
   start again; one that can't be read at all is never replaced. See
   [how it works](docs/how-it-works.md).
+- **The desktop app asks again before removing or replacing.** Remove on a Kobo, PocketBook or
+  reMarkable deleted the chosen books at once, and sending a puzzle book that was already there
+  replaced it, ink and all, without asking "Replace it?". Both now show the question and wait for
+  the answer (#88). The web app always asked.
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in
