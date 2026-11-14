@@ -99,5 +99,18 @@ Not done: the attributes of a tag the XML scan does not see, read as HTML ("Befo
    2. A patched `html5ever` whose duplicate check is not linear (a `[patch]` fork Deckle maintains).
    3. A scan that reads a tag from every `<` and letter, whatever the state: it cannot be bypassed, but it needs memoization to stay linear (`<a<a<a…` is quadratic without it).
    4. Feeding `html5ever` in chunks (as `html_tree` already does, 64 bytes at a time) and stopping on a budget between chunks, if the time a tag takes can be charged from outside the tokenizer.
+3. A stylesheet is parsed again for every file that links it, and no book-wide count holds sheet
+   bytes: 6,000 spine files linking one 9 MB stylesheet that is a single comment (a 1.4 MB EPUB)
+   return `Ok` after 71 s at 1.3 GB; 2,000 files take 22.5 s. Calibre parses each sheet once. Keep
+   each parsed sheet by its path, or charge sheet bytes to a book-wide count.
+4. Item 2's worst case is larger than its measured figure: the cost grows with the square of the
+   attribute count, and a 32 MiB file holds about 4.5 million attributes, roughly 10 hours
+   (extrapolated, not run).
+5. The limits add up: 8 files of 31 MiB with 1.92 million elements, read as HTML, return `Ok` at
+   2.38 GB in 7.8 s. Decide the peak the app accepts and lower the limits to it.
+6. The OPF has no size check of its own: a 200 MB description returns `Ok` at 1.0 GB.
+7. The attribute scan can refuse a file Calibre reads: an unescaped `<` followed by more than 256
+   `=` before the next `>`, or a root element declaring more than 256 namespaces. The book is
+   refused, not read wrongly.
 
 Still before the final port ships (from phase 1's note): test #88 in the running desktop app.
