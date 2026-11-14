@@ -510,3 +510,20 @@ fn many_stylesheet_items_and_links_finish() {
     assert!(book_selectors(&book).is_empty());
     assert!(took < crate::support::COST_LIMIT, "{took:?}");
 }
+
+/// `stylizer.py` `Stylizer.__init__` reads `{xhtml}style`, `{svg}style` and `{xhtml}link`
+/// only: XML names are case-sensitive, and a `style` in another namespace is not CSS.
+#[test]
+fn style_elements_are_calibres() {
+    let opf = opf_with(r#"<item id="a" href="a.css" media-type="text/css"/>"#);
+    let page = r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title><STYLE>p.upper { color: red }</STYLE><LINK rel="stylesheet" href="a.css"/><x:style xmlns:x="urn:x">p.other { color: red }</x:style></head><body><svg xmlns="http://www.w3.org/2000/svg"><style>p.svg { color: red }</style></svg><p>Hi.</p></body></html>"#;
+    let file = epub_of(
+        opf.as_bytes(),
+        &[
+            ("c.xhtml", page.as_bytes()),
+            ("a.css", b"p.link { color: red }"),
+        ],
+    );
+    let book = read_book(file.path()).unwrap();
+    assert_eq!(book_selectors(&book), ["p.svg"]);
+}

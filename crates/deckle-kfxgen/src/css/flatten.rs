@@ -32,10 +32,7 @@ use super::cascade::{Spent, Units, decl_units, run};
 use super::style::{py_float, unit_number};
 use super::value::{declarations, write_value};
 use super::{Cascaded, Decls, Error, Origin, Profile, Rule, normalize};
-use crate::dom::{Dom, NodeId, XHTML_NS, py_space};
-
-/// The SVG namespace: Calibre flattens SVG elements too.
-const SVG_NS: &str = "http://www.w3.org/2000/svg";
+use crate::dom::{Dom, NodeId, SVG_NS, XHTML_NS, py_space};
 
 /// No class.
 pub(crate) const NO_CLASS: u32 = u32::MAX;

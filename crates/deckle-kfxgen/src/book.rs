@@ -27,7 +27,7 @@ use crate::css::{
     self, Budget, ClassNamer, DEFAULT_PROFILE, Decls, Flat, Origin, Profile, Rule, Sheet, Styles,
     cascade, flatten, media_ok, parse_sheet_in, prepare_body, remove_fake_margins,
 };
-use crate::dom::{self, Dom, generated_toc, mark_chapters};
+use crate::dom::{self, Dom, SVG_NS, XHTML_NS, generated_toc, mark_chapters};
 use crate::epub::package::{abshref, urlnormalize};
 use crate::epub::{self, OEB_STYLES, Oeb, Package, oeb_view, read_package};
 
@@ -258,12 +258,6 @@ pub fn stylesheets(pkg: &Package) -> HashSet<String> {
         .collect()
 }
 
-/// The local name of element `n`, in lower case.
-fn local(dom: &Dom, n: dom::NodeId) -> String {
-    let tag = dom.tag(n);
-    tag.rsplit(':').next().unwrap_or(tag).to_ascii_lowercase()
-}
-
 /// A spine file's stylesheets in Calibre's order (`stylizer.py` `Stylizer.__init__`): each
 /// `<style>` and `<link rel=stylesheet>` in document order, with their imports. A linked
 /// sheet's `@page` rules are dropped (`base.py` `_parse_css`); its URLs and those in a
@@ -301,8 +295,9 @@ pub fn file_sheets(
     // Calibre's rule index runs on across the file's sheets.
     let mut next = 0;
     for n in dom.descendants() {
-        let sheet = match local(dom, n).as_str() {
-            "style" => {
+        // `elem.tag in (XHTML('style'), SVG('style'))`, `elem.tag == XHTML('link')`.
+        let sheet = match (dom.tag(n), dom.namespace(n)) {
+            ("style", Some(XHTML_NS | SVG_NS)) => {
                 // `elem.get('type', CSS_MIME) in OEB_STYLES`, as written.
                 if dom
                     .attr(n, "type")
@@ -327,7 +322,7 @@ pub fn file_sheets(
                 let mut import = |h: &str| read_css(&abshref(href, h));
                 parse_sheet_in(&budget, &text, Origin::Book, href, next, &mut import)
             }
-            "link" => {
+            ("link", Some(XHTML_NS)) => {
                 let Some(link) = dom.attr(n, "href").filter(|h| !h.is_empty()) else {
                     continue;
                 };

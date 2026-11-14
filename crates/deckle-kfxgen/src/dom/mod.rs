@@ -31,6 +31,8 @@ use deckle_limits::MAX_DEPTH;
 
 /// The XHTML namespace.
 pub(crate) const XHTML_NS: &str = "http://www.w3.org/1999/xhtml";
+/// The SVG namespace.
+pub(crate) const SVG_NS: &str = "http://www.w3.org/2000/svg";
 /// The namespace of the `xml:` prefix.
 const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
 
