@@ -929,3 +929,31 @@ fn drop_stylesheets(dom: &mut Dom) {
         dom.remove_many_with_tails(&gone);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::css::{DEFAULT_PROFILE, cascade};
+
+    /// The book's limit is checked as each file is flattened: a book whose files so far used
+    /// it all has its next file refused, however small.
+    #[test]
+    fn a_book_at_its_limit_refuses_its_next_file() {
+        let mut dom = crate::dom::parse(
+            b"<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>T</title></head>\
+              <body><p style=\"color: red\">x</p></body></html>",
+        )
+        .unwrap();
+        prepare_body(&mut dom);
+        let first = cascade(&mut dom, "a.xhtml", Vec::new(), &DEFAULT_PROFILE).unwrap();
+        let mut namer = ClassNamer {
+            units: MAX_BOOK_CASCADE_DECLS,
+            ..ClassNamer::default()
+        };
+        let got = flatten(&mut dom, "a.xhtml", first, &mut namer, &DEFAULT_PROFILE);
+        assert!(
+            matches!(got, Err(Error::BookCascade(MAX_BOOK_CASCADE_DECLS))),
+            "{got:?}"
+        );
+    }
+}

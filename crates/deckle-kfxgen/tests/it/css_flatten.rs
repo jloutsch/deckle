@@ -6,7 +6,7 @@
 //! classes; [`check_specified`], run on `read_book` by `book.rs` and `corpus_cascade.rs`).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use deckle_kfxgen::book;
 use deckle_kfxgen::css::{
@@ -860,5 +860,5 @@ fn a_book_of_many_styled_files_is_refused() {
         "{got:?}"
     );
     assert!(done < 200);
-    assert!(took < Duration::from_secs(4), "{took:?}");
+    assert!(took < crate::support::COST_LIMIT, "{took:?}");
 }
