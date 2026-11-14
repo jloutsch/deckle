@@ -20,7 +20,7 @@ use std::cell::RefCell;
 use std::path::Path;
 
 use deckle_kfx::epub_zip::{EpubReader, InspectError, join, percent_decode};
-use deckle_limits::XmlError;
+use deckle_limits::{MAX_BOOK_DOM_NODES, XmlError};
 
 use crate::css::{
     self, Budget, ClassNamer, DEFAULT_PROFILE, Decls, Flat, Origin, Profile, Rule, Sheet, Styles,
@@ -169,10 +169,18 @@ pub fn read_book(path: &Path) -> Result<Book, Error> {
 
     // `parse_html`, then `DetectStructure`: marks in every file, then the contents.
     let mut doms = Vec::with_capacity(oeb.spine.len());
+    let mut nodes = 0usize;
     for s in &oeb.spine {
         let bytes = zip.read_bytes(&percent_decode(&s.href))?;
         let mut dom = dom::parse(&bytes).map_err(|e| too_large_in(&s.href, e))?;
         drop(bytes);
+        // Every tree is held until the book is styled.
+        nodes = nodes.saturating_add(dom.node_count());
+        if nodes > MAX_BOOK_DOM_NODES {
+            return Err(Error::TooLarge {
+                what: format!("this book's files hold more than {MAX_BOOK_DOM_NODES} elements"),
+            });
+        }
         mark_chapters(&mut dom);
         doms.push(dom);
     }

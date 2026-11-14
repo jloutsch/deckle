@@ -10,8 +10,8 @@ use std::cell::{Cell, Ref, RefCell};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::LazyLock;
 
-use deckle_limits::MAX_DEPTH;
 use deckle_limits::roxmltree::{Document, Node, ParsingOptions};
+use deckle_limits::{MAX_DEPTH, MAX_DOM_NODES, XmlError};
 use html5ever::interface::{ElementFlags, NodeOrText, QuirksMode, TreeSink};
 use html5ever::tendril::{StrTendril, TendrilSink};
 use html5ever::{Attribute, QualName, local_name, ns};
@@ -46,11 +46,11 @@ pub fn parse(bytes: &[u8]) -> Result<Dom, Error> {
     let raw = clean_word_doc(&data);
 
     // "Try with more & more drastic measures to parse"
-    let dom = match xml_tree(&raw, pre) {
+    let dom = match xml_tree(&raw, pre)? {
         Some(dom) => dom,
         None => {
             let raw = replace_entities(&raw, true);
-            match xml_tree(&raw, pre) {
+            match xml_tree(&raw, pre)? {
                 Some(dom) => dom,
                 None => html_tree(&raw)?,
             }
@@ -546,18 +546,27 @@ fn clean_word_doc(data: &str) -> String {
 
 /// `safe_xml_fromstring(data, recover=False)` then `check_for_html5`: the tree, or None when
 /// `data` is not XML `parse_xml` reads, or is un-namespaced HTML 5 with an `<svg>`.
-fn xml_tree(data: &str, pre: &str) -> Option<Dom> {
+/// [`Error::TooLarge`] past [`MAX_DOM_NODES`] nodes: read as HTML it would stop there too.
+fn xml_tree(data: &str, pre: &str) -> Result<Option<Dom>, Error> {
     let options = ParsingOptions {
         allow_dtd: true,
+        // Past it the file is refused: read as HTML it would stop at the same number.
+        nodes_limit: u32::try_from(MAX_DOM_NODES).unwrap_or(u32::MAX),
         ..Default::default()
     };
-    let doc = deckle_limits::parse_xml(data, options).ok()?;
+    let doc = match deckle_limits::parse_xml(data, options) {
+        Ok(doc) => doc,
+        Err(XmlError::Parse(deckle_limits::roxmltree::Error::NodesLimitReached)) => {
+            return Err(Error::TooManyNodes(MAX_DOM_NODES));
+        }
+        Err(_) => return Ok(None),
+    };
     let dom = from_xml(&doc);
     let html5 = HTML5_DOCTYPE.is_match(pre)
         && dom
             .descendants()
             .any(|n| dom.tag(n) == "svg" && dom.namespace(n).is_none());
-    (!html5).then_some(dom)
+    Ok((!html5).then_some(dom))
 }
 
 /// The elements and text of `doc`, as lxml holds them, uncleaned.
@@ -632,8 +641,9 @@ fn xml_attrs(dom: &mut Dom, n: &Node) -> Vec<Attr> {
 /// well-formed").
 fn html_tree(data: &str) -> Result<Dom, Error> {
     let data: String = data.chars().filter(|&c| xml_char(c)).collect();
-    // Every node the input accounts for, and room for the elements the HTML algorithm adds.
-    let budget = data.len() + 1024;
+    // Every node the input accounts for, and room for the elements the HTML algorithm adds,
+    // up to the nodes a file's tree may hold.
+    let budget = (data.len() + 1024).min(MAX_DOM_NODES);
     let sink = Sink::new(budget);
     let opts = html5ever::ParseOpts {
         tree_builder: html5ever::tree_builder::TreeBuilderOpts {

@@ -122,6 +122,17 @@ pub const MAX_CASCADE_DECLS: usize = 500_000;
 /// `NOVEL_CSS`) use 135,800.
 pub const MAX_BOOK_CASCADE_DECLS: usize = 3_000_000;
 
+/// EPUB to KFX: the nodes of one book file's tree, refused while the file is parsed: read as
+/// XML, its elements, runs of text, comments and processing instructions (`roxmltree`'s
+/// `nodes_limit`); read as HTML, its elements and their attributes. The trees of nine
+/// Gutenberg books and the cascade fixtures hold at most 530 elements a file.
+pub const MAX_DOM_NODES: usize = 500_000;
+
+/// EPUB to KFX: the elements of all a book's files' trees together: every tree is held until
+/// the book is styled. The nine Gutenberg books hold at most 5,067 elements a book. A book of
+/// 2.25 million empty elements, refused at the limit, peaked at 595 MB (release build).
+pub const MAX_BOOK_DOM_NODES: usize = 2_000_000;
+
 /// Largest reservation made from a size a file declares (rule 1 of the size-limits design):
 /// `Vec::with_capacity(declared.min(MAX_RESERVE))`.
 pub const MAX_RESERVE: usize = 64 * 1024;

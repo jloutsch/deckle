@@ -39,9 +39,13 @@ const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
 pub enum Error {
     /// Read as HTML, it builds far more elements and attributes than its size accounts for
     /// (the HTML parsing algorithm copies open formatting elements, attributes and all, into
-    /// every paragraph), so the parse was stopped.
+    /// every paragraph), or more than [`deckle_limits::MAX_DOM_NODES`], so the parse was
+    /// stopped.
     #[error("this file builds more than {0} elements and attributes when read as HTML")]
     TooLarge(usize),
+    /// Read as XML, it holds more than [`deckle_limits::MAX_DOM_NODES`] nodes.
+    #[error("this file holds more than {0} elements and runs of text")]
+    TooManyNodes(usize),
     /// Read as HTML (it is not XML `deckle_limits::parse_xml` reads), its elements nest more
     /// than `MAX_DEPTH` deep. Calibre falls back to libxml2's HTML parser there
     /// (DIVERGENCES.md, "XHTML that is not well-formed").

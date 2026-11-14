@@ -318,3 +318,63 @@ fn a_file_past_a_limit_is_too_large_and_named() {
         other => panic!("{:?}", other.map(|_| ())),
     }
 }
+
+/// A page of `n` empty elements.
+fn elements_page(n: usize) -> String {
+    format!(
+        r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title></head><body>{}</body></html>"#,
+        "<a/>".repeat(n)
+    )
+}
+
+/// A file of more nodes than `MAX_DOM_NODES` is refused while it is parsed, the file named.
+#[test]
+fn a_file_of_too_many_elements_is_too_large() {
+    let page = elements_page(deckle_limits::MAX_DOM_NODES + 1);
+    let file = epub_of(opf_with("").as_bytes(), &[("c.xhtml", page.as_bytes())]);
+    let start = std::time::Instant::now();
+    match read_book(file.path()) {
+        Err(Error::TooLarge { what }) => assert!(what.starts_with("c.xhtml: "), "{what}"),
+        other => panic!("{:?}", other.map(|_| ())),
+    }
+    assert!(
+        start.elapsed() < crate::support::COST_LIMIT,
+        "{:?}",
+        start.elapsed()
+    );
+}
+
+/// Files each under `MAX_DOM_NODES` that together pass `MAX_BOOK_DOM_NODES` are refused.
+#[test]
+fn a_book_of_too_many_elements_is_too_large() {
+    let per_file = deckle_limits::MAX_DOM_NODES * 9 / 10;
+    let files = deckle_limits::MAX_BOOK_DOM_NODES / per_file + 1;
+    let items: String = (0..files)
+        .map(|i| {
+            format!(r#"<item id="f{i}" href="f{i}.xhtml" media-type="application/xhtml+xml"/>"#)
+        })
+        .collect();
+    let spine: String = (0..files)
+        .map(|i| format!(r#"<itemref idref="f{i}"/>"#))
+        .collect();
+    let opf = opf_with(&items).replace(
+        r#"<itemref idref="c"/>"#,
+        &format!(r#"<itemref idref="c"/>{spine}"#),
+    );
+    let page = elements_page(per_file);
+    let names: Vec<String> = (0..files).map(|i| format!("f{i}.xhtml")).collect();
+    let small = page_with("");
+    let mut entries: Vec<(&str, &[u8])> = vec![("c.xhtml", small.as_bytes())];
+    entries.extend(names.iter().map(|n| (n.as_str(), page.as_bytes())));
+    let file = epub_of(opf.as_bytes(), &entries);
+    let start = std::time::Instant::now();
+    match read_book(file.path()) {
+        Err(Error::TooLarge { what }) => assert!(what.contains("book"), "{what}"),
+        other => panic!("{:?}", other.map(|_| ())),
+    }
+    assert!(
+        start.elapsed() < crate::support::COST_LIMIT,
+        "{:?}",
+        start.elapsed()
+    );
+}
