@@ -1,6 +1,6 @@
 # Native KFX, phase 2 (EPUB reader and styles): outcome
 
-Date: 2026-11-13. Branch `feat/native-kfx-epub-cascade` (38 commits on `main` `0ca92a2`, not pushed). Plan: `docs/superpowers/plans/2026-11-13-native-kfx-phase2-epub-cascade.md`. Design: `docs/superpowers/specs/2026-11-10-native-kfx-design.md` (its Cascade oracle row names the corrected oracle: kfxgen's own Stylizer, dumped inside the conversion).
+Date: 2026-11-13. Branch `feat/native-kfx-epub-cascade` (40 commits on `main` `0ca92a2`, not pushed). Plan: `docs/superpowers/plans/2026-11-13-native-kfx-phase2-epub-cascade.md`. Design: `docs/superpowers/specs/2026-11-10-native-kfx-design.md` (its Cascade oracle row names the corrected oracle: kfxgen's own Stylizer, dumped inside the conversion).
 
 ## Result
 
@@ -8,7 +8,7 @@ Date: 2026-11-13. Branch `feat/native-kfx-epub-cascade` (38 commits on `main` `0
 - **13 cascade fixtures** (`fixtures/kfxgen/cascade/`, 49 spine files) match through `read_book` at four levels: book view (`oeb.json`), element tree and first-pass rules (`dom/`, `rules/`: 306 book rules, 3 `@font-face` rules), declared styles and classes (every element, `styles/`), computed values (34 properties of every element, over 30,000 values). One allow-list entry is used, the one Task 3 made: `css_quirks`'s `page_css1` and `page_css2` ("One page_styles.css until the CSS is read").
 - **The 9-book Gutenberg corpus** (`gutenberg/models/<book>/cascade`, outside git, made by `tools/ref/kfxgen_models.sh --corpus` in the checkout the test runs from; a `gutenberg/models` dumped before this task has no `cascade/` folders and no `TZ: UTC`, and the test refuses it) matches the same four comparisons with **no mismatch and no allow-list entry**: 294 spine files, 13,278 book rules, 22,519 elements, 765,646 computed values. The corpus has no `@font-face` rule and no book without a contents file, so those two paths are checked on fixtures only.
 - A changed dump fails the comparison: with one `styles/` table entry's `font-size` and one `rules/` selector altered in a copy of pg11's dump, the corpus test failed with 48 mismatches (47 elements sharing that entry, one rule).
-- Tests: `deckle-kfxgen` lib 17 + it 258 passed, 13 ignored (the 12 before, plus `corpus_cascade::corpus_matches_calibre`). The six fixture-wide comparison tests of Tasks 3, 8, 9 and 10 (and the fixture loop of `img_size_attributes_fold_into_css`) became check functions that `book::read_book_matches_every_dump` and the corpus test run on `read_book`; the per-step tests on hand-made pages stay, and the test harness reads stylesheets through the library (`book::file_sheets`, `book::stylesheets`).
+- Tests: `deckle-kfxgen` lib 17 + it 260 passed, 14 ignored (the 12 before, plus `corpus_cascade::corpus_matches_calibre` and the known-gap test `book::a_many_attribute_tag_read_as_html_is_a_known_gap`). The six fixture-wide comparison tests of Tasks 3, 8, 9 and 10 (and the fixture loop of `img_size_attributes_fold_into_css`) became check functions that `book::read_book_matches_every_dump` and the corpus test run on `read_book`; the per-step tests on hand-made pages stay, and the test harness reads stylesheets through the library (`book::file_sheets`, `book::stylesheets`).
 - The test harness refuses a dump whose `TOOLS` names another Calibre than 9.18.0 or no `TZ: UTC` (`tests/it/support.rs` `check_tools`, tested by `book::dump_from_another_calibre_version_is_refused`).
 
 ## Timings
@@ -64,11 +64,13 @@ The scoped re-review found neighbouring paths still open. Each fix has a test th
 - **XML files.** Every XML parse (OPF, nav, NCX, XML items) stops at `MAX_DOM_NODES` and the file is refused, named. An EPUB whose 8 MB XML item holds 2 million empty elements is refused in 0.07 s at 61 MB.
 - **File size.** `MAX_CONTENT_FILE_BYTES`, 32 MiB: a spine document, the nav, the NCX or an XML item past it is refused before it is parsed, named. The largest file in the corpus and fixtures is 70 KB. A 32 MB XML item (2.63 GB before), a 32 MB NCX (633 MB before) and text files of 32 and 64 MB are refused in under 0.05 s at under 80 MB. At the limit, one paragraph of text peaks at 302 MB read as XML and 432 MB read as HTML; a file of attributes read as XML at 774 MB.
 - **Elements and attributes per book.** Every document `oeb_view` reads for its links counts against `MAX_BOOK_DOM_NODES`, and attributes now count with elements there and in the held trees. 20 files of 8 MB of attributes are refused after 0.58 s at 202 MB (12 s and 1.49 GB before). A styled book just under the limit (2 million paragraphs) peaks at 1.11 GB after 2.2 s; the largest corpus book holds 7,718 elements and attributes (pg76).
+- **Attributes in a tag.** `MAX_TAG_ATTRIBUTES`, 256: `deckle_limits::parse_xml_limiting_attributes` runs `parse_xml`'s scan with a count of the `=` signs outside quoted runs in each start tag and refuses a tag past it (`parse_xml` is unchanged for the rest of Deckle). `dom::parse`'s XML attempt and `package::parse_with` use it. A tag of 80,000 attributes (30 s read as XML, 18 s through the HTML fallback) is refused in under 0.03 s; a 31 MiB file of 256-attribute tags is refused by the book count after 1.2 s at 685 MB. The corpus and fixtures have at most 7 attributes in a tag. A tag the scan does not see is a known gap (below).
+- **All of a book's content.** `MAX_BOOK_CONTENT_BYTES`, 256 MiB: the documents and XML files `oeb_view` reads, with the nav and the NCX, count together. 30 files of 31 MiB of text (2.25 GB, 10 s before) are refused after 1.3 s at 535 MB. Under the limit, 8 files of 31 MiB of text peak at 772 MB in 2.6 s read as XML and 1.85 GB in 4.2 s read as HTML. The corpus's largest book reads 989 KB.
 - **Kept selectors.** Each 64 bytes of a kept rule's selector counts a unit against `MAX_BOOK_CASCADE_DECLS`: 100 files linking one sheet with a 4.5 MB selector are refused after 0.23 s at 381 MB (836 MB before).
 - **Tests** for the HTML budget's `.min(MAX_DOM_NODES)` (fails with it removed) and for the book-limit arm of flatten's errors (`flatten_error`); the first-pass rules test checks that the message names no file.
 - `docs/books.md`: a row for the 32 MB limit, the book row's 1.1 GB, attributes in the per-file row.
 
-Not done, waiting for a ruling: a limit on the attributes of one start tag (an 80,000-attribute tag takes 30 s read as XML, 18 s as HTML; no scan before html5ever can count them faithfully without modelling its states), and a limit on the text of all a book's files together (30 files of 31 MiB of text read to 2.25 GB in 10 s).
+Not done: the attributes of a tag the XML scan does not see, read as HTML ("Before phase 4" below).
 
 ## Fixture size
 
@@ -87,10 +89,15 @@ Not done, waiting for a ruling: a limit on the attributes of one start tag (an 8
 
 ## Before merging
 
-1. One release run of the ignored cost tests: `cargo test -p deckle-kfxgen --release -- --ignored --skip corpus` (11 tests, about 7 s of tests; nothing in the pre-push checks runs a release build, so the 5 s release bound holds only when this is run).
+1. One release run of the ignored cost tests: `cargo test -p deckle-kfxgen --release -- --ignored --skip corpus` (12 tests, about 6 s of tests; nothing in the pre-push checks runs a release build, so the 5 s release bound holds only when this is run).
 
 ## Before phase 4 calls `read_book`
 
 1. A fallback when `read_book` returns `Error::TooLarge`: a book past a limit is refused, not degraded. The per-file style limit is the one an honest book is most likely to reach (a single-file book with an inline style on each of more than about 12,000 to 25,000 elements).
+2. The many-attribute tag read as HTML (known gap, `DIVERGENCES.md` "Files too large to read"). The XML scan counts a tag's attributes, but a tag it does not see is not counted when `html5ever` reads the file: `<script><x y="</script><p a0=1 … a79999=1>"</script>` reads as one quoted value to the scan, while `html5ever` ends the script and compares each of the `<p>`'s 80,000 attributes with the ones before it, 12 s in a release build (80,000 in a plain tag took 18 s before the scan counted them). `book::a_many_attribute_tag_read_as_html_is_a_known_gap` records the cost at 20,000 (0.56 s). Options to evaluate:
+   1. A scan that follows `html5ever`'s states (raw text, RCDATA, foreign content): about 150 lines or more, and any difference from `html5ever` is a way around it.
+   2. A patched `html5ever` whose duplicate check is not linear (a `[patch]` fork Deckle maintains).
+   3. A scan that reads a tag from every `<` and letter, whatever the state: it cannot be bypassed, but it needs memoization to stay linear (`<a<a<a…` is quadratic without it).
+   4. Feeding `html5ever` in chunks (as `html_tree` already does, 64 bytes at a time) and stopping on a budget between chunks, if the time a tag takes can be charged from outside the tokenizer.
 
 Still before the final port ships (from phase 1's note): test #88 in the running desktop app.
