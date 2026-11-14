@@ -68,7 +68,11 @@ find "$WORK/plugin" \( -name __pycache__ -o -name '*.pyc' -o -name .DS_Store \) 
 calibre_model() {
   local name="$1" epub="$2" dir="$3/$1" book="${4:-}"
   rm -rf "$dir"
-  if ! KFXGEN_DUMP_MODEL="$dir" KFXGEN_DUMP_BOOK="$book" \
+  # A run that also dumps the cascade is in UTC, as --cascade's (calibre_book) are: calibre
+  # turns a date with no time into midnight local time, written in UTC.
+  local zone=()
+  [ -z "$book" ] || zone=(TZ=UTC)
+  if ! env ${zone[@]+"${zone[@]}"} KFXGEN_DUMP_MODEL="$dir" KFXGEN_DUMP_BOOK="$book" \
     "$EBOOK_CONVERT" "$epub" "$WORK/$name.kfx" >"$WORK/$name.log" 2>&1; then
     tail -20 "$WORK/$name.log" >&2
     echo "$name: ebook-convert failed" >&2
@@ -101,6 +105,16 @@ record_tools() {
   } >"$1/TOOLS"
 }
 
+# record_cascade_run DIR: the time zone and month of a run that dumped cascades, after
+# record_tools. A year-only dc:date takes day 15 of this month
+# (calibre.utils.date.parse_only_date).
+record_cascade_run() {
+  {
+    echo "TZ: UTC"
+    echo "month of the run: $(TZ=UTC date +%Y-%m)"
+  } >>"$1/TOOLS"
+}
+
 if [ "${1:-}" = "--corpus" ]; then
   shift
   : "${DECKLE_KFXGEN_CORPUS_OUT:?set DECKLE_KFXGEN_CORPUS_OUT to the folder for the models}"
@@ -121,6 +135,7 @@ if [ "${1:-}" = "--corpus" ]; then
   done
   for epub in "$@"; do basename "$epub" .epub; done >"$DECKLE_KFXGEN_CORPUS_OUT/BOOKS"
   record_tools "$DECKLE_KFXGEN_CORPUS_OUT"
+  record_cascade_run "$DECKLE_KFXGEN_CORPUS_OUT"
   exit 0
 fi
 
@@ -166,11 +181,7 @@ if [ "${1:-}" = "--cascade" ]; then
   mv "$CASCADE_BUILD/$first/ua_rules.json" "$CASCADE_BUILD/ua_rules.json"
   for name in $CASCADE_SOURCES; do rm -f "$CASCADE_BUILD/$name/ua_rules.json"; done
   record_tools "$CASCADE_BUILD"
-  {
-    echo "TZ: UTC"
-    # A year-only dc:date takes day 15 of this month (calibre.utils.date.parse_only_date).
-    echo "month of the run: $(TZ=UTC date +%Y-%m)"
-  } >>"$CASCADE_BUILD/TOOLS"
+  record_cascade_run "$CASCADE_BUILD"
   rm -rf "$CASCADE"
   mv "$CASCADE_BUILD" "$CASCADE"
   du -sh "$CASCADE"

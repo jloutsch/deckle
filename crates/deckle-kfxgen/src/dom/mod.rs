@@ -19,6 +19,7 @@ mod parse;
 mod structure;
 mod write;
 
+pub(crate) use parse::decode;
 pub use parse::parse;
 pub(crate) use parse::{from_xml, py_space};
 pub use structure::{generated_toc, mark_chapters};

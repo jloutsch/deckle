@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! All integration tests in one binary: one link instead of one per file.
 
+mod book;
 mod corpus;
+mod corpus_cascade;
 mod css_cascade;
 mod css_flatten;
 mod css_normalize;

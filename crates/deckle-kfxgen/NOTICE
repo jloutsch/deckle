@@ -76,6 +76,12 @@ src/calibre/ebooks/oeb/stylizer.py (`Style`, `validate_color`), src/calibre/eboo
 (`unit_convert`, `UNIT_RE`) and src/calibre/customize/profiles.py (`fsizes`, the screen size).
 The colour pattern is css_parser's CSS 2.1 `color`, read from calibre.
 
+src/book.rs runs those ports in calibre 9.18.0's order and reads each file's stylesheets as its
+Stylizer finds them, under the same notice: src/calibre/ebooks/conversion/plumber.py,
+src/calibre/ebooks/oeb/stylizer.py, src/calibre/ebooks/oeb/base.py,
+src/calibre/ebooks/oeb/reader.py, src/calibre/ebooks/oeb/transforms/structure.py and
+src/calibre/ebooks/oeb/transforms/flatcss.py.
+
 The tables in src/css/defaults.rs are calibre's (`DEFAULTS`, `INHERITED`). src/css also
 follows the behaviour of css_parser 1.1.1, the CSS library calibre runs (a fork of cssutils,
 licensed under the GNU Lesser General Public License v3 or later); no css_parser code is

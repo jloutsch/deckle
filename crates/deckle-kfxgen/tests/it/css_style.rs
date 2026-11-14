@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! Style values (phase 2 plan Task 10): what Calibre 9.18's `Style[prop]` gives kfxgen for each
 //! element of the flattened files, against `computed` in the dumps under
-//! `fixtures/kfxgen/cascade/` (`styles/NNN.json`), and the cost of asking for them all on large
-//! pages.
+//! `fixtures/kfxgen/cascade/` (`styles/NNN.json`; [`check_computed`], run on `read_book` by
+//! `book.rs` and `corpus_cascade.rs`), and the cost of asking for them all on large pages.
 
-use std::collections::BTreeSet;
 use std::time::Instant;
 
+use deckle_kfxgen::book::{self, File, read_book};
 use deckle_kfxgen::css::{
     ClassNamer, DEFAULT_PROFILE, Error, Flat, Origin, Styles, Value, cascade, flatten, parse_sheet,
     prepare_body,
 };
 use deckle_kfxgen::dom::{self, Dom, NodeId};
 
-use crate::css_flatten::{File, body, find, fixtures_dir, flat_page, flatten_book, path_of, read};
-use crate::support::BOOKS;
+use crate::css_flatten::{body, flat_page};
+use crate::support::{Dump, Tally, find, path_of};
 
 /// `tools/ref/kfxgen_hook/book_dump.py` `COMPUTED_PROPS`, in its order.
 const COMPUTED_PROPS: [&str; 34] = [
@@ -81,75 +81,66 @@ fn same(got: &Result<Value, Error>, want: &serde_json::Value) -> bool {
     }
 }
 
-#[test]
-fn every_cascade_fixture_computed_matches_kfxgens_stylizer() {
-    let mut failed = Vec::new();
-    let mut allowed_used = BTreeSet::new();
-    let mut compared = 0;
-    for name in BOOKS {
-        let (book, _) = flatten_book(name);
-        for f in book {
-            let File { nnn, dom, flat, .. } = &f;
-            let styles = Styles::new(dom, flat, &DEFAULT_PROFILE);
-            let dump = read(&fixtures_dir(name).join(format!("styles/{nnn}.json")));
-            let table = dump["table"].as_array().unwrap();
-            let mut skipped = 0;
-            for node in dump["nodes"].as_array().unwrap() {
-                let path = path_of(&node[0]);
-                // Calibre's flattener links two new stylesheets at the end of <head>; the
-                // port's tree has no such links (`css_flatten.rs` checks they are links).
-                let Some(n) = find(dom, &path) else {
-                    assert!(
-                        path.len() == 2 && path[0] == 0,
-                        "{name} {}: {path:?} is missing",
-                        f.href
-                    );
-                    skipped += 1;
-                    assert!(skipped <= 2, "{name} {}: {skipped} missing", f.href);
+/// [`ALLOWED`] as (book, the key [`check_computed`] records when it uses an entry).
+pub(crate) fn allowed() -> Vec<(String, String)> {
+    ALLOWED
+        .iter()
+        .map(|(b, file, p, q, section)| {
+            (
+                (*b).to_owned(),
+                format!("computed {b} {file} {p:?} {q} ({section})"),
+            )
+        })
+        .collect()
+}
+
+/// `read_book`'s computed values against `computed` in the dump (Task 10), for every element
+/// and every property of [`COMPUTED_PROPS`].
+pub(crate) fn check_computed(got: &book::Book, dump: &Dump, tally: &mut Tally) {
+    let name = dump.name.as_str();
+    for f in &got.files {
+        let nnn = dump.nnn(&f.href);
+        let styles = f.styles(&DEFAULT_PROFILE);
+        let json = dump.json("styles", &f.href);
+        let table = json["table"].as_array().unwrap();
+        for node in json["nodes"].as_array().unwrap() {
+            let path = path_of(&node[0]);
+            // Calibre's flattener links two new stylesheets at the end of <head>; the port's
+            // tree has no such links (`check_specified` checks they are links).
+            let Some(n) = find(&f.dom, &path) else {
+                continue;
+            };
+            let want = &table[node[1].as_u64().unwrap() as usize]["computed"];
+            for prop in COMPUTED_PROPS {
+                tally.values += 1;
+                let got = styles.computed(n, prop);
+                if same(&got, &want[prop]) {
                     continue;
-                };
-                let want = &table[node[1].as_u64().unwrap() as usize]["computed"];
-                for prop in COMPUTED_PROPS {
-                    compared += 1;
-                    let got = styles.computed(n, prop);
-                    if same(&got, &want[prop]) {
-                        continue;
+                }
+                match ALLOWED.iter().find(|(b, file, p, q, _)| {
+                    *b == name && *file == nnn && *p == path && *q == prop
+                }) {
+                    Some((b, file, p, q, section)) => {
+                        tally
+                            .allowed_used
+                            .insert(format!("computed {b} {file} {p:?} {q} ({section})"));
                     }
-                    let key = ALLOWED.iter().find(|(b, file, p, q, _)| {
-                        *b == name && file == nnn && *p == path && *q == prop
-                    });
-                    match key {
-                        Some(k) => {
-                            allowed_used.insert((k.0, k.1, k.2, k.3));
-                        }
-                        None => failed.push(format!(
-                            "{name} {} {path:?} {prop}: got {got:?}, want {}",
-                            f.href, want[prop]
-                        )),
-                    }
+                    None => tally.failures.push(format!(
+                        "{name} {} {path:?} {prop}: got {got:?}, want {}",
+                        f.href, want[prop]
+                    )),
                 }
             }
         }
     }
-    assert!(
-        failed.is_empty(),
-        "{}\n{} mismatches",
-        failed.join("\n"),
-        failed.len()
-    );
-    for (b, file, p, q, _) in ALLOWED {
-        assert!(
-            allowed_used.contains(&(*b, *file, *p, *q)),
-            "{b} {file} {p:?} {q} is allowed but matches: take it out"
-        );
-    }
-    assert!(compared > 30_000, "{compared} values");
 }
 
-/// `css_quirks`'s `values.xhtml`, flattened with the rest of its book.
+/// `css_quirks`'s `values.xhtml`, read with the rest of its book.
 fn values_page() -> File {
-    let (book, _) = flatten_book("css_quirks");
-    book.into_iter()
+    read_book(&deckle_kfx::fixtures::kfxgen("sources/css_quirks.epub"))
+        .unwrap()
+        .files
+        .into_iter()
         .find(|f| f.href == "OEBPS/values.xhtml")
         .unwrap()
 }

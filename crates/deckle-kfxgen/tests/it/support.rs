@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Helpers the CSS tests share: the cascade fixture books and each spine file's stylesheets in
-//! Calibre's order.
+//! Helpers the CSS tests share: the cascade fixture books, each spine file's stylesheets in
+//! Calibre's order, and the dumps `read_book` is compared with ([`check_book`]).
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
-use deckle_kfx::epub_zip::{EpubReader, join, percent_decode};
+use deckle_kfx::epub_zip::{EpubReader, percent_decode};
 use deckle_kfx::fixtures;
-use deckle_kfxgen::css::{Decls, Origin, Sheet, media_ok, parse_sheet};
+use deckle_kfxgen::book::{self, file_sheets};
+use deckle_kfxgen::css::{Decls, Sheet};
 use deckle_kfxgen::dom::{Dom, NodeId};
 use deckle_kfxgen::epub::read_package;
+use serde_json::Value;
 
 /// Every book under `fixtures/kfxgen/cascade/`.
 /// How long a cost test may take. Debug builds run several times slower and share the machine
@@ -51,13 +53,7 @@ impl Book {
             serde_json::from_slice(&std::fs::read(dir.join("files.json")).unwrap()).unwrap();
         let mut zip = EpubReader::open(&fixtures::kfxgen(&format!("sources/{name}.epub"))).unwrap();
         let pkg = read_package(&mut zip).unwrap();
-        let opf_dir = dir_of(&pkg.opf_path).to_owned();
-        let css_items = pkg
-            .manifest
-            .iter()
-            .filter(|i| i.media_type == "text/css")
-            .map(|i| join(&opf_dir, &percent_decode(&i.href)))
-            .collect();
+        let css_items = book::stylesheets(&pkg);
         Book {
             zip,
             css_items,
@@ -76,100 +72,176 @@ impl Book {
 
     /// The stylesheets of the spine file `href`, whose tree is `dom` ([`file_sheets`]).
     pub fn sheets(&mut self, href: &str, dom: &Dom) -> Vec<Sheet> {
-        file_sheets(&mut self.zip, &self.css_items, href, dom)
+        file_sheets(&mut self.zip, &self.css_items, href, dom).unwrap()
     }
-}
-
-/// The element's local name in lower case.
-pub fn local(dom: &Dom, n: NodeId) -> String {
-    let tag = dom.tag(n);
-    tag.rsplit(':').next().unwrap_or(tag).to_ascii_lowercase()
-}
-
-/// The directory part of an href from the EPUB root.
-pub fn dir_of(href: &str) -> &str {
-    href.rsplit_once('/').map_or("", |(d, _)| d)
-}
-
-/// A spine file's stylesheets in Calibre's order (`stylizer.py` `Stylizer.__init__`): each
-/// `<style>` and `<link rel=stylesheet>` in document order, with their imports. A linked
-/// sheet's `@page` rules are dropped (`base.py` `_parse_css`); its URLs and those in a
-/// `<style>` are made book-absolute (`flatcss.py` `CSSFlattener.__call__`, `replaceUrls`).
-pub fn file_sheets(
-    zip: &mut EpubReader,
-    css_items: &[String],
-    href: &str,
-    dom: &Dom,
-) -> Vec<Sheet> {
-    let mut read_css = |path: &str| -> Option<String> {
-        if !css_items.iter().any(|c| c == path) {
-            return None;
-        }
-        zip.read_string(path).ok()
-    };
-    let mut sheets = Vec::new();
-    // Calibre's rule index runs on across the file's sheets.
-    let mut next = 0;
-    for n in dom.descendants() {
-        match local(dom, n).as_str() {
-            "style" => {
-                if dom.attr(n, "type").is_some_and(|t| t != "text/css")
-                    || !media_ok(dom.attr(n, "media").unwrap_or(""))
-                {
-                    continue;
-                }
-                let mut text = dom.text(n).to_owned();
-                for &c in dom.children(n) {
-                    for t in [dom.text(c), dom.tail(c)] {
-                        if !t.is_empty() {
-                            text.push_str("\n\n");
-                            text.push_str(t);
-                        }
-                    }
-                }
-                if text.is_empty() {
-                    continue;
-                }
-                let base = dir_of(href);
-                let mut import = |h: &str| read_css(&join(base, h));
-                let sheet = parse_sheet(&text, Origin::Book, href, next, &mut import).unwrap();
-                next = sheet.next_index;
-                sheets.push(sheet);
-            }
-            "link" => {
-                let Some(link) = dom.attr(n, "href").filter(|h| !h.is_empty()) else {
-                    continue;
-                };
-                if !dom
-                    .attr(n, "rel")
-                    .unwrap_or("stylesheet")
-                    .eq_ignore_ascii_case("stylesheet")
-                    || !dom
-                        .attr(n, "type")
-                        .unwrap_or("text/css")
-                        .eq_ignore_ascii_case("text/css")
-                    || !media_ok(dom.attr(n, "media").unwrap_or(""))
-                {
-                    continue;
-                }
-                let path = join(dir_of(href), &percent_decode(link));
-                let Some(text) = read_css(&path) else {
-                    continue;
-                };
-                let base = dir_of(&path).to_owned();
-                let mut import = |h: &str| read_css(&join(&base, h));
-                let mut sheet = parse_sheet(&text, Origin::Book, &path, next, &mut import).unwrap();
-                sheet.page.clear();
-                next = sheet.next_index;
-                sheets.push(sheet);
-            }
-            _ => {}
-        }
-    }
-    sheets
 }
 
 /// The `@font-face` rules of `sheets`, in order.
 pub fn font_faces(sheets: &[Sheet]) -> Vec<Decls> {
     sheets.iter().flat_map(|s| s.font_face.clone()).collect()
+}
+
+/// A dump's JSON file.
+pub fn read_json(path: &Path) -> Value {
+    serde_json::from_slice(
+        &std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display())),
+    )
+    .unwrap()
+}
+
+/// An element path as the dumps write it.
+pub fn path_of(v: &Value) -> Vec<u32> {
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i.as_u64().unwrap() as u32)
+        .collect()
+}
+
+/// The element at `path` (element-child indexes from the root), if there is one.
+pub fn find(dom: &Dom, path: &[u32]) -> Option<NodeId> {
+    let mut n = dom.root();
+    for &i in path {
+        n = *dom.children(n).get(i as usize)?;
+    }
+    Some(n)
+}
+
+/// Refuses dumps made with another Calibre, or outside UTC: `dir/TOOLS` must name Calibre
+/// 9.18.0 and `TZ: UTC` (`tools/ref/kfxgen_models.sh`, `record_tools` and
+/// `record_cascade_run`).
+pub fn check_tools(dir: &Path) -> Result<(), String> {
+    let file = dir.join("TOOLS");
+    let tools = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    if !tools
+        .lines()
+        .any(|l| l == "calibre: ebook-convert (calibre 9.18.0)")
+    {
+        return Err(format!(
+            "{}: not made with calibre 9.18.0:\n{tools}",
+            file.display()
+        ));
+    }
+    if !tools.lines().any(|l| l == "TZ: UTC") {
+        return Err(format!("{}: not made in UTC:\n{tools}", file.display()));
+    }
+    Ok(())
+}
+
+/// One book's cascade dump (`tools/ref/kfxgen_hook/book_dump.py`).
+pub struct Dump {
+    /// The book's name: a fixture's (`css_quirks`) or a corpus book's (`pg11`).
+    pub name: String,
+    /// The folder holding `oeb.json`, `files.json`, `dom/`, `styles/` and `rules/`.
+    pub dir: PathBuf,
+    /// Spine href → `NNN`.
+    pub files: BTreeMap<String, String>,
+    /// Calibre's user-agent rules as the run dumped them.
+    pub ua_rules: PathBuf,
+}
+
+impl Dump {
+    fn new(name: &str, dir: PathBuf, ua_rules: PathBuf) -> Dump {
+        Dump {
+            name: name.to_owned(),
+            files: serde_json::from_value(read_json(&dir.join("files.json"))).unwrap(),
+            dir,
+            ua_rules,
+        }
+    }
+
+    /// The dump of the fixture book `name`, under `fixtures/kfxgen/cascade/`, whose
+    /// user-agent rules the fixture books share.
+    pub fn fixture(name: &str) -> Dump {
+        Dump::new(
+            name,
+            fixtures::kfxgen(&format!("cascade/{name}")),
+            fixtures::kfxgen("cascade/ua_rules.json"),
+        )
+    }
+
+    /// The dump of the corpus book `name` in the corpus folder `root` (`--corpus` writes
+    /// `<book>/cascade`, with its own user-agent rules).
+    pub fn corpus(root: &Path, name: &str) -> Dump {
+        let dir = root.join(name).join("cascade");
+        let ua = dir.join("ua_rules.json");
+        Dump::new(name, dir, ua)
+    }
+
+    /// The dump's name for the spine file `href`.
+    pub fn nnn(&self, href: &str) -> &str {
+        self.files
+            .get(href)
+            .unwrap_or_else(|| panic!("{}: {href} is not in files.json", self.name))
+    }
+
+    /// `<kind>/<NNN>.json` of the spine file `href` (`styles` or `rules`).
+    pub fn json(&self, kind: &str, href: &str) -> Value {
+        read_json(&self.dir.join(format!("{kind}/{}.json", self.nnn(href))))
+    }
+
+    /// `dom/<NNN>.xhtml` of the spine file `href`.
+    pub fn xhtml(&self, href: &str) -> String {
+        std::fs::read_to_string(self.dir.join(format!("dom/{}.xhtml", self.nnn(href)))).unwrap()
+    }
+}
+
+/// What the comparisons of one run found: failures, what was compared, and the allow-list
+/// entries that were needed.
+#[derive(Default)]
+pub struct Tally {
+    pub failures: Vec<String>,
+    /// The books compared.
+    pub books: BTreeSet<String>,
+    pub files: usize,
+    /// Book rules of the first cascade.
+    pub rules: usize,
+    pub font_faces: usize,
+    /// Chapter marks in the dumps.
+    pub marks: usize,
+    /// Elements whose declared styles were compared.
+    pub elements: usize,
+    /// Computed values compared.
+    pub values: usize,
+    /// Allow-list entries used, by their section and key.
+    pub allowed_used: BTreeSet<String>,
+}
+
+impl Tally {
+    /// Fails with every mismatch, and with every allow-list entry for a compared book that
+    /// nothing needed (so the entry goes when the port catches up). `allowed` lists every
+    /// entry as (book, key) with the key [`Tally::allowed_used`] records.
+    pub fn assert_clean(&self, allowed: &[(String, String)]) {
+        assert!(
+            self.failures.is_empty(),
+            "{}\n{} mismatches",
+            self.failures.join("\n"),
+            self.failures.len()
+        );
+        for (book, key) in allowed {
+            assert!(
+                !self.books.contains(book) || self.allowed_used.contains(key),
+                "{key} is allowed but matches: take it out"
+            );
+        }
+    }
+}
+
+/// Every allow-list entry of the four comparisons, as (book, key).
+pub fn allowed() -> Vec<(String, String)> {
+    let mut out = crate::epub::allowed();
+    out.extend(crate::css_flatten::allowed());
+    out.extend(crate::css_style::allowed());
+    out
+}
+
+/// `read_book`'s result for `book` against its dump at four levels: the book view (Task 3),
+/// the element tree and first-pass rules (Task 8), the declared styles (Task 9) and the
+/// computed values (Task 10).
+pub fn check_book(got: &book::Book, dump: &Dump, tally: &mut Tally) {
+    tally.books.insert(dump.name.clone());
+    crate::epub::check_oeb(got, dump, tally);
+    crate::css_cascade::check_tree_and_rules(got, dump, tally);
+    crate::css_flatten::check_specified(got, dump, tally);
+    crate::css_style::check_computed(got, dump, tally);
 }

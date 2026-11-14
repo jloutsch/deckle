@@ -323,9 +323,10 @@ attribute) the two trees are the same; they can differ:
 
 ## Encodings
 
-Calibre decodes a document by its byte-order mark, as UTF-8, by the encoding it declares, or
-else by uchardet's guess (`base.py` `OEBBook.decode`, `chardet.py` `xml_to_unicode`,
-`force_encoding`). The port differs in two places:
+Calibre decodes a document or a stylesheet by its byte-order mark, as UTF-8, by the encoding it
+declares, or else by uchardet's guess (`base.py` `OEBBook.decode`, `chardet.py`
+`xml_to_unicode`, `force_encoding`). The port decodes both the same way (`dom::parse`,
+`book::file_sheets`) and differs in two places:
 
 - **No declaration.** The port has no detector and decodes a file that is not UTF-8 and
   declares nothing as windows-1252 (Python's `cp1252`), uchardet's answer for most Western text.

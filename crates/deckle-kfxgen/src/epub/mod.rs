@@ -15,6 +15,7 @@ mod oeb;
 pub(crate) mod package;
 mod toc;
 
+pub(crate) use oeb::is_stylesheet;
 pub use oeb::oeb_view;
 pub use package::read_package;
 

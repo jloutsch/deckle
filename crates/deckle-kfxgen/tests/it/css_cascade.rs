@@ -2,16 +2,17 @@
 //! The first cascade (phase 2 plan Task 8): each spine file's rules sorted and applied as
 //! Calibre 9.18's first-pass `Stylizer` applies them, the chapter marks `DetectStructure` puts
 //! in, and the contents it makes for a book with none, against the dumps under
-//! `fixtures/kfxgen/cascade/` and against `data/css_cascade_probe.json`, read from Calibre with
+//! `fixtures/kfxgen/cascade/` ([`check_tree_and_rules`], run on `read_book` by `book.rs` and
+//! `corpus_cascade.rs`) and against `data/css_cascade_probe.json`, read from Calibre with
 //! `calibre-debug` (its `how` says how).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-use deckle_kfx::fixtures;
+use deckle_kfxgen::book;
 use deckle_kfxgen::css::{
-    Cascaded, DEFAULT_PROFILE, Decls, Error, HTML_CSS, Origin, Sheet, cascade, parse_sheet,
+    Cascaded, DEFAULT_PROFILE, Decls, Error, HTML_CSS, Origin, Rule, Sheet, cascade, parse_sheet,
 };
 use deckle_kfxgen::dom::{self, Dom, NodeId, generated_toc, mark_chapters};
 use deckle_kfxgen::epub::TocNode;
@@ -19,17 +20,13 @@ use deckle_limits::roxmltree::{Node, ParsingOptions};
 use deckle_limits::{MAX_CASCADE_DECLS, MAX_STYLE_RULES};
 use serde_json::Value;
 
-use crate::support::{BOOKS, Book};
+use crate::support::{Book, Dump, Tally, path_of, read_json};
 
 /// The style of the `<div>` Calibre puts before a chapter (`structure.py` `detect_chapters`).
 const MARK: &str = "display: block; page-break-after: always";
 
-fn read(path: &std::path::Path) -> Value {
-    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
-}
-
 fn probe() -> Value {
-    read(
+    read_json(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/it/data/css_cascade_probe.json"),
     )
@@ -79,14 +76,6 @@ fn strings(v: &Value) -> Vec<(String, String)> {
                 p[1].as_str().unwrap().to_owned(),
             )
         })
-        .collect()
-}
-
-fn path_of(v: &Value) -> Vec<u32> {
-    v.as_array()
-        .unwrap()
-        .iter()
-        .map(|i| i.as_u64().unwrap() as u32)
         .collect()
 }
 
@@ -220,41 +209,29 @@ fn img_size_attributes_fold_into_css() {
     // A style attribute sets a height: the same.
     assert_eq!(size(img(13)), (Some("30"), Some("40")));
     assert_eq!(decls(img(13)), wh("auto", "2em"));
-
-    // Across every fixture file, the pictures keep exactly the size attributes kfxgen's tree
-    // has (dom/NNN.xhtml).
-    let mut compared = 0;
-    for name in BOOKS {
-        let mut book = Book::open(name);
-        for (href, n) in book.files.clone() {
-            let (dom, _) = cascaded(&mut book, &href, |_| {});
-            let xhtml = std::fs::read_to_string(book.dir.join(format!("dom/{n}.xhtml"))).unwrap();
-            let want = dump_img_sizes(&xhtml);
-            let got: BTreeMap<Vec<u32>, (Option<String>, Option<String>)> = dom
-                .descendants()
-                .filter(|&e| dom.tag(e) == "img")
-                .map(|e| {
-                    let attr = |a: &str| dom.attr(e, a).map(str::to_owned);
-                    (dom.path(e), (attr("width"), attr("height")))
-                })
-                .collect();
-            assert_eq!(got, want, "{name} {href}");
-            compared += got.len();
-        }
-    }
-    assert!(compared > 10, "{compared} pictures");
 }
 
-/// Path → (width, height) of each `<img>` in a `dom/` dump.
-fn dump_img_sizes(xhtml: &str) -> BTreeMap<Vec<u32>, (Option<String>, Option<String>)> {
+/// An element as the tree comparison sees it: (local name, id, width, height). The size
+/// attributes are those `img` keeps (Task 8 folds the others into CSS).
+type Shape = (String, Option<String>, Option<String>, Option<String>);
+
+/// Path → [`Shape`] of every element of a `dom/` dump.
+fn dump_tree(xhtml: &str) -> BTreeMap<Vec<u32>, Shape> {
     let doc = deckle_limits::parse_xml(xhtml, ParsingOptions::default()).unwrap();
     let mut out = BTreeMap::new();
     let mut stack = vec![(doc.root_element(), Vec::new())];
     while let Some((n, path)) = stack.pop() {
-        if n.tag_name().name() == "img" {
-            let attr = |a: &str| n.attribute(a).map(str::to_owned);
-            out.insert(path.clone(), (attr("width"), attr("height")));
-        }
+        let attr = |a: &str| n.attribute(a).map(str::to_owned);
+        let img = n.tag_name().name() == "img";
+        out.insert(
+            path.clone(),
+            (
+                n.tag_name().name().to_owned(),
+                attr("id"),
+                attr("width").filter(|_| img),
+                attr("height").filter(|_| img),
+            ),
+        );
         for (i, c) in n.children().filter(Node::is_element).enumerate() {
             let mut p = path.clone();
             p.push(i as u32);
@@ -262,6 +239,26 @@ fn dump_img_sizes(xhtml: &str) -> BTreeMap<Vec<u32>, (Option<String>, Option<Str
         }
     }
     out
+}
+
+/// Path → [`Shape`] of every element of the port's tree.
+fn tree(dom: &Dom) -> BTreeMap<Vec<u32>, Shape> {
+    dom.descendants()
+        .map(|n| {
+            let attr = |a: &str| dom.attr(n, a).map(str::to_owned);
+            let img = dom.tag(n) == "img";
+            let tag = dom.tag(n);
+            (
+                dom.path(n),
+                (
+                    tag.rsplit(':').next().unwrap_or(tag).to_owned(),
+                    attr("id"),
+                    attr("width").filter(|_| img),
+                    attr("height").filter(|_| img),
+                ),
+            )
+        })
+        .collect()
 }
 
 /// The paths of the dump's chapter marks: elements whose style is exactly the mark's.
@@ -277,40 +274,6 @@ fn dump_marks(styles: &Value) -> BTreeSet<Vec<u32>> {
         .collect()
 }
 
-/// (path, tag, id) of every element of a `dom/` dump, and of the port's tree. Calibre's
-/// flattener, after the marks, renames `<font>` (Task 9).
-fn dump_shape(xhtml: &str) -> Vec<(Vec<u32>, String, Option<String>)> {
-    let doc = deckle_limits::parse_xml(xhtml, ParsingOptions::default()).unwrap();
-    let mut out = Vec::new();
-    let mut stack = vec![(doc.root_element(), Vec::new())];
-    while let Some((n, path)) = stack.pop() {
-        out.push((
-            path.clone(),
-            n.tag_name().name().to_owned(),
-            n.attribute("id").map(str::to_owned),
-        ));
-        let kids: Vec<_> = n.children().filter(Node::is_element).collect();
-        for (i, c) in kids.into_iter().enumerate().rev() {
-            let mut p = path.clone();
-            p.push(i as u32);
-            stack.push((c, p));
-        }
-    }
-    out
-}
-
-fn shape(dom: &Dom) -> Vec<(Vec<u32>, String, Option<String>)> {
-    dom.descendants()
-        .map(|n| {
-            (
-                dom.path(n),
-                dom.tag(n).to_owned(),
-                dom.attr(n, "id").map(str::to_owned),
-            )
-        })
-        .collect()
-}
-
 /// The marks the port put in: the `<div>`s styled as a mark.
 fn marks(dom: &Dom) -> BTreeSet<Vec<u32>> {
     dom.descendants()
@@ -319,47 +282,140 @@ fn marks(dom: &Dom) -> BTreeSet<Vec<u32>> {
         .collect()
 }
 
-#[test]
-fn chapter_divs_are_inserted_where_calibre_inserts_them() {
-    let mut files = 0;
-    let mut marked = 0;
-    for name in BOOKS {
-        let mut book = Book::open(name);
-        let oeb = read(&book.dir.join("oeb.json"));
-        let mut doms: Vec<(String, String, Dom)> = Vec::new();
-        for (href, n) in book.files.clone() {
-            let mut dom = dom::parse(&book.read(&href)).unwrap();
-            mark_chapters(&mut dom);
-            doms.push((href, n, dom));
+/// A rule as compared: (selector, declarations, sorted `!important` names), in Calibre's
+/// cascade order.
+type RuleShape = (String, Vec<(String, String)>, Vec<String>);
+
+fn dumped_rules(rules: &Value) -> Vec<RuleShape> {
+    rules
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            let decls = r[2]
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
+                .collect();
+            let imp = r[3]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s.as_str().unwrap().to_owned())
+                .collect();
+            (r[1].as_str().unwrap().to_owned(), decls, imp)
+        })
+        .collect()
+}
+
+/// serde_json's maps sort their keys: declarations are compared as sorted pairs.
+fn ported_rules(rules: &[Rule], origin: Origin) -> Vec<RuleShape> {
+    rules
+        .iter()
+        .filter(|r| r.origin == origin)
+        .map(|r| {
+            let mut decls = pairs(&r.decls);
+            decls.sort();
+            (r.selector.clone(), decls, important(&r.decls))
+        })
+        .collect()
+}
+
+fn sorted_pairs(decls: &Decls) -> Vec<(String, String)> {
+    let mut p = pairs(decls);
+    p.sort();
+    p
+}
+
+/// `read_book`'s trees and first-pass rules against the dump (Task 8): every element of
+/// `dom/NNN.xhtml` at the same path with the same name, id and picture size (the chapter marks
+/// and generated-contents ids among them), the rules of the first cascade against
+/// `rules/NNN.json` and the user-agent rules, and the book's `@font-face` rules against those
+/// kfxgen's `Stylizer` reports (`styles/NNN.json`) and the first pass's (`rules/NNN.json`), in
+/// spine order.
+pub(crate) fn check_tree_and_rules(got: &book::Book, dump: &Dump, tally: &mut Tally) {
+    let name = &dump.name;
+    let ua_want = dumped_rules(&read_json(&dump.ua_rules)["rules"]);
+    // The `@font-face` rules kfxgen's `Stylizer` reports, and the first pass's.
+    let mut faces_want: Vec<Vec<(String, String)>> = Vec::new();
+    let mut faces_first: Vec<Vec<(String, String)>> = Vec::new();
+    let faces_of = |v: &Value, out: &mut Vec<Vec<(String, String)>>| {
+        for face in v["font_face"].as_array().unwrap() {
+            let mut p: Vec<(String, String)> = face
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
+                .collect();
+            p.sort();
+            out.push(p);
         }
-        if oeb["auto_generated_toc"].as_bool().unwrap() {
-            let spine = spine_order(&oeb, &mut doms);
-            let mut files: Vec<(&str, bool, &mut Dom)> = spine;
-            generated_toc(&mut files);
-        }
-        for (href, n, dom) in &doms {
-            files += 1;
-            let styles = read(&book.dir.join(format!("styles/{n}.json")));
-            let want_marks = dump_marks(&styles);
-            let xhtml = std::fs::read_to_string(book.dir.join(format!("dom/{n}.xhtml"))).unwrap();
-            // <head> gains Calibre's links and meta after the marks: compare <body>.
-            let in_body = |s: &(Vec<u32>, String, Option<String>)| s.0.first() == Some(&1);
-            let want: Vec<_> = dump_shape(&xhtml).into_iter().filter(in_body).collect();
-            let got: Vec<_> = shape(dom).into_iter().filter(in_body).collect();
-            assert_eq!(marks(dom), want_marks, "{name} {href}: marks");
-            marked += want_marks.len();
-            assert_eq!(got.len(), want.len(), "{name} {href}: elements");
-            for (g, w) in got.iter().zip(&want) {
-                let renamed = g.1 == "font" && (w.1 == "span" || w.1 == "div");
-                assert!(
-                    g.0 == w.0 && (g.1 == w.1 || renamed) && g.2 == w.2,
-                    "{name} {href}: got {g:?}, want {w:?}"
-                );
+    };
+    for f in &got.files {
+        let href = &f.href;
+        let styles = dump.json("styles", href);
+        tally.marks += dump_marks(&styles).len();
+        faces_of(&styles, &mut faces_want);
+
+        // The tree.
+        let want = dump_tree(&dump.xhtml(href));
+        let ours = tree(&f.dom);
+        for (path, w) in &want {
+            match ours.get(path) {
+                Some(g) if g == w => {}
+                Some(g) => tally
+                    .failures
+                    .push(format!("{name} {href} {path:?}: got {g:?}, want {w:?}")),
+                // Calibre's flattener links the book's two new stylesheets at the end of
+                // <head> (`flatten_head`); the port's tree has no such links.
+                None if path.len() == 2 && path[0] == 0 && w.0 == "link" => {}
+                None => tally
+                    .failures
+                    .push(format!("{name} {href} {path:?}: {w:?} is missing")),
             }
         }
+        for (path, g) in &ours {
+            if !want.contains_key(path) {
+                tally
+                    .failures
+                    .push(format!("{name} {href} {path:?}: {g:?} is not in the dump"));
+            }
+        }
+
+        // The first cascade's rules.
+        let rules = dump.json("rules", href);
+        faces_of(&rules, &mut faces_first);
+        if ported_rules(&f.first_pass_rules, Origin::UserAgent) != ua_want {
+            tally
+                .failures
+                .push(format!("{name} {href}: html.css rules"));
+        }
+        let want = dumped_rules(&rules["rules"]);
+        let ours = ported_rules(&f.first_pass_rules, Origin::Book);
+        if ours != want {
+            let i = ours.iter().zip(&want).take_while(|(g, w)| g == w).count();
+            tally.failures.push(format!(
+                "{name} {href}: rule {i}: got {:?}, want {:?}",
+                ours.get(i),
+                want.get(i)
+            ));
+        }
+        tally.files += 1;
+        tally.rules += ours.len();
     }
-    assert_eq!(files, 49);
-    assert!(marked >= 3, "{marked} marks");
+    let faces: Vec<Vec<(String, String)>> = got.font_face.iter().map(sorted_pairs).collect();
+    for (whose, want) in [
+        ("kfxgen's", &faces_want),
+        ("the first pass's", &faces_first),
+    ] {
+        if &faces != want {
+            tally.failures.push(format!(
+                "{name}: @font-face rules against {whose}: got {faces:?}, want {want:?}"
+            ));
+        }
+    }
+    tally.font_faces += faces.len();
 }
 
 /// The trees of a book's spine, in `oeb.json`'s spine order, as `generated_toc` takes them.
@@ -404,7 +460,7 @@ fn toc_pairs(nodes: &[TocNode]) -> Vec<(String, String)> {
 #[test]
 fn generated_contents_match_calibre() {
     let mut book = Book::open("no_toc");
-    let oeb = read(&book.dir.join("oeb.json"));
+    let oeb = read_json(&book.dir.join("oeb.json"));
     let mut doms: Vec<(String, String, Dom)> = Vec::new();
     for (href, n) in book.files.clone() {
         let mut dom = dom::parse(&book.read(&href)).unwrap();
@@ -500,114 +556,6 @@ fn chapter_marks_and_contents_match_probes() {
             assert_eq!(got, want, "{name} {href}");
         }
     }
-}
-
-#[test]
-fn rules_sort_as_calibre_sorts_them() {
-    // (selector, declarations, sorted !important names), in Calibre's cascade order.
-    type Flat = (String, Vec<(String, String)>, Vec<String>);
-    let dumped = |rules: &Value| -> Vec<Flat> {
-        rules
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|r| {
-                let decls = r[2]
-                    .as_object()
-                    .unwrap()
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
-                    .collect();
-                let imp = r[3]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|s| s.as_str().unwrap().to_owned())
-                    .collect();
-                (r[1].as_str().unwrap().to_owned(), decls, imp)
-            })
-            .collect()
-    };
-    // serde_json's maps sort their keys: compare declarations as sets of pairs.
-    let ported = |c: &Cascaded, origin: Origin| -> Vec<Flat> {
-        c.rules
-            .iter()
-            .filter(|r| r.origin == origin)
-            .map(|r| {
-                let mut decls = pairs(&r.decls);
-                decls.sort();
-                (r.selector.clone(), decls, important(&r.decls))
-            })
-            .collect()
-    };
-    let ua_want = dumped(&read(&fixtures::kfxgen("cascade/ua_rules.json"))["rules"]);
-    let mut files = 0;
-    let mut rules = 0;
-    for name in BOOKS {
-        let mut book = Book::open(name);
-        for (href, n) in book.files.clone() {
-            let (_, c) = cascaded(&mut book, &href, |_| {});
-            let dump = read(&book.dir.join(format!("rules/{n}.json")));
-            assert_eq!(
-                ported(&c, Origin::UserAgent),
-                ua_want,
-                "{name} {href}: html.css"
-            );
-            let want = dumped(&dump["rules"]);
-            let got = ported(&c, Origin::Book);
-            let i = got.iter().zip(&want).take_while(|(g, w)| g == w).count();
-            assert!(
-                got == want,
-                "{name} {href}: rule {i}: got {:?}, want {:?}",
-                got.get(i),
-                want.get(i)
-            );
-            files += 1;
-            rules += got.len();
-        }
-    }
-    assert_eq!((files, rules), (49, 306));
-}
-
-#[test]
-fn font_face_rules_match_calibre() {
-    let mut files = 0;
-    let mut faces = 0;
-    for name in BOOKS {
-        let mut book = Book::open(name);
-        for (href, n) in book.files.clone() {
-            let (_, c) = cascaded(&mut book, &href, |_| {});
-            let dump = read(&book.dir.join(format!("rules/{n}.json")));
-            let want: Vec<Vec<(String, String)>> = dump["font_face"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|f| {
-                    let mut p: Vec<(String, String)> = f
-                        .as_object()
-                        .unwrap()
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
-                        .collect();
-                    p.sort();
-                    p
-                })
-                .collect();
-            let got: Vec<Vec<(String, String)>> = c
-                .font_face
-                .iter()
-                .map(|d| {
-                    let mut p = pairs(d);
-                    p.sort();
-                    p
-                })
-                .collect();
-            assert_eq!(got, want, "{name} {href}");
-            files += 1;
-            faces += got.len();
-        }
-    }
-    assert_eq!((files, faces), (49, 3));
 }
 
 // ---------------------------------------------------------------------------------------

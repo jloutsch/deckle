@@ -68,7 +68,7 @@ type Decoder = fn(&[u8]) -> Option<String>;
 
 /// `OEBBook.decode` with no input encoding (EPUB input sets none): a byte-order mark, else
 /// UTF-8, else `xml_to_unicode`. Line ends become `\n`.
-fn decode(bytes: &[u8]) -> String {
+pub(crate) fn decode(bytes: &[u8]) -> String {
     let fix = |s: String| s.replace("\r\n", "\n").replace('\r', "\n");
     let mut data = bytes;
     let bom: Option<(Decoder, usize)> = match data {

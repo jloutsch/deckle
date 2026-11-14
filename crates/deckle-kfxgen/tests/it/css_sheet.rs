@@ -11,7 +11,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Instant;
 
-use deckle_kfx::epub_zip::{EpubReader, join, percent_decode};
+use deckle_kfx::epub_zip::{EpubReader, percent_decode};
 use deckle_kfx::fixtures;
 use deckle_kfxgen::css::{
     DEFAULT_PROFILE, Decl, Decls, Error, HTML_CSS, Origin, Sheet, media_ok, parse_sheet,
@@ -23,7 +23,7 @@ use deckle_limits::{MAX_STYLE_DECLS, MAX_STYLE_RULES};
 use serde::Deserialize;
 use serde::de::{Deserializer, MapAccess, Visitor};
 
-use crate::support::{self, BOOKS, dir_of};
+use crate::support::{self, BOOKS};
 
 /// A JSON object read in its written order (serde_json's `Map` sorts its keys).
 #[derive(Debug, PartialEq)]
@@ -149,7 +149,7 @@ fn first_difference(got: &[Flat], want: &[Flat]) -> String {
     )
 }
 
-/// A spine file's stylesheets in Calibre's order ([`support::file_sheets`]) and their
+/// A spine file's stylesheets in Calibre's order (`book::file_sheets`) and their
 /// `@font-face` rules.
 fn spine_file_sheets(
     zip: &mut EpubReader,
@@ -161,7 +161,7 @@ fn spine_file_sheets(
         .or_else(|_| zip.read_bytes(&percent_decode(href)))
         .unwrap();
     let dom = dom::parse(&bytes).unwrap();
-    let sheets = support::file_sheets(zip, css_items, href, &dom);
+    let sheets = deckle_kfxgen::book::file_sheets(zip, css_items, href, &dom).unwrap();
     let font_face = support::font_faces(&sheets);
     (sheets, font_face)
 }
@@ -193,13 +193,7 @@ fn book_rules_match_calibre_in_text_and_order() {
         let path = fixtures::kfxgen(&format!("sources/{book}.epub"));
         let mut zip = EpubReader::open(&path).unwrap();
         let pkg = read_package(&mut zip).unwrap();
-        let opf_dir = dir_of(&pkg.opf_path).to_owned();
-        let css_items: Vec<String> = pkg
-            .manifest
-            .iter()
-            .filter(|i| i.media_type == "text/css")
-            .map(|i| join(&opf_dir, &percent_decode(&i.href)))
-            .collect();
+        let css_items = deckle_kfxgen::book::stylesheets(&pkg);
         for (href, n) in &files {
             total += 1;
             let dump: RulesDump = serde_json::from_slice(

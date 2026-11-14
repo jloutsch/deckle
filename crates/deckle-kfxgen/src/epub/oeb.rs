@@ -110,6 +110,25 @@ static SHEET_IMPORT: LazyLock<Regex> = LazyLock::new(|| {
 });
 static CSS_COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)/\*.*?\*/").unwrap());
 
+/// `_manifest_from_opf`: the media type Calibre's manifest gives an OPF item of `href` whose
+/// `media-type` is `written`: guessed from the extension when empty or `text/xml`, lower-cased.
+fn media_type(href: &str, written: &str) -> String {
+    let mut mt = written.to_owned();
+    if mt.is_empty() || mt == "text/xml" {
+        mt = guess_type(href)
+            .map(str::to_owned)
+            .or(Some(mt).filter(|m| !m.is_empty()))
+            .unwrap_or_else(|| BINARY_MIME.to_owned());
+    }
+    mt.to_lowercase()
+}
+
+/// Whether Calibre's manifest holds the OPF item `href` of `media-type` `written` as a
+/// stylesheet (`OEB_STYLES`), so that a document's links and imports reach it.
+pub(crate) fn is_stylesheet(href: &str, written: &str) -> bool {
+    OEB_STYLES.contains(&media_type(href, written).as_str())
+}
+
 /// `calibre.guess_type` for the extensions a book holds (asked of Calibre 9.18).
 fn guess_type(href: &str) -> Option<&'static str> {
     let ext = splitext(href)
@@ -1055,14 +1074,7 @@ impl State {
             let Some(href) = it.href.clone() else {
                 continue;
             };
-            let mut mt = it.media_type.clone().unwrap_or_default();
-            if mt.is_empty() || mt == "text/xml" {
-                mt = guess_type(&href)
-                    .map(str::to_owned)
-                    .or(Some(mt).filter(|m| !m.is_empty()))
-                    .unwrap_or_else(|| BINARY_MIME.to_owned());
-            }
-            let mt = mt.to_lowercase();
+            let mt = media_type(&href, it.media_type.as_deref().unwrap_or(""));
             if self.hrefs.contains_key(&href) || !names.contains(&unquote(&href)) {
                 continue;
             }

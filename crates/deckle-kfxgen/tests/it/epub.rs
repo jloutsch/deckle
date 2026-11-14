@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! The package as Calibre presents it to kfxgen (phase 2 plan Task 3): `oeb_view` against the
-//! `cascade/<book>/oeb.json` dumps, Calibre 9.18's own view recorded inside a kfxgen run.
+//! The package as Calibre presents it to kfxgen (phase 2 plan Task 3): the book view against the
+//! `cascade/<book>/oeb.json` dumps, Calibre 9.18's own view recorded inside a kfxgen run
+//! ([`check_oeb`], run on `read_book` by `book.rs` and `corpus_cascade.rs`), and `oeb_view` on
+//! hand-made packages.
 
 use std::io::Write as _;
 use std::time::Instant;
@@ -11,22 +13,7 @@ use deckle_kfxgen::epub::{Error, Oeb, Package, TocNode, oeb_view, read_package};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-/// Every book under `fixtures/kfxgen/cascade/`.
-const BOOKS: [&str; 13] = [
-    "css_quirks",
-    "directions",
-    "fake_margins",
-    "fonts",
-    "frames",
-    "lists",
-    "malformed",
-    "navigation",
-    "no_toc",
-    "notes",
-    "package_quirks",
-    "rtl",
-    "vertical",
-];
+use crate::support::{BOOKS, Dump, Tally, read_json};
 
 /// Manifest items in a dump that the port does not make yet, by book: (book, ids, the
 /// DIVERGENCES.md section that says why). Each listed id must be in the dump, so the entry
@@ -87,9 +74,9 @@ fn oeb_json(oeb: &Oeb) -> Value {
 
 #[test]
 fn the_dumps_are_from_calibre_9_18() {
+    crate::support::check_tools(&fixtures::kfxgen("cascade")).unwrap();
     let tools = std::fs::read_to_string(fixtures::kfxgen("cascade/TOOLS")).unwrap();
     assert!(tools.contains("(calibre 9.18.0)"), "{tools}");
-    assert!(tools.contains("TZ: UTC"), "{tools}");
     let mut found: Vec<String> = std::fs::read_dir(fixtures::kfxgen("cascade"))
         .unwrap()
         .map(|e| e.unwrap())
@@ -100,83 +87,93 @@ fn the_dumps_are_from_calibre_9_18() {
     assert_eq!(found, BOOKS);
 }
 
-#[test]
-fn every_cascade_fixture_oeb_matches_calibre() {
+/// [`NOT_YET_MADE`] as (book, the key [`check_oeb`] records when it uses an entry).
+pub(crate) fn allowed() -> Vec<(String, String)> {
+    NOT_YET_MADE
+        .iter()
+        .flat_map(|&(book, ids, section)| {
+            ids.iter()
+                .map(move |id| (book.to_owned(), format!("oeb {book} {id} ({section})")))
+        })
+        .collect()
+}
+
+/// The book view `read_book` gives against the dump's `oeb.json` (Task 3), and the OPF's
+/// bytes against `raw.sha256`.
+pub(crate) fn check_oeb(got: &deckle_kfxgen::book::Book, dump: &Dump, tally: &mut Tally) {
     let divergences =
         std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/DIVERGENCES.md")).unwrap();
-    let mut failures = Vec::new();
-    for book in BOOKS {
-        let dump: Value = serde_json::from_slice(
-            &std::fs::read(fixtures::kfxgen(&format!("cascade/{book}/oeb.json"))).unwrap(),
-        )
-        .unwrap();
-        let (pkg, mut zip) = open(&fixtures::kfxgen(&format!("sources/{book}.epub")));
-        let oeb = oeb_view(&pkg, &mut zip).unwrap();
+    let book = dump.name.as_str();
+    let want_all = read_json(&dump.dir.join("oeb.json"));
+    let (pkg, oeb) = (&got.package, &got.oeb);
 
-        // `raw`: the EPUB's own OPF, its sha256 null where Calibre wrote over it.
-        assert_eq!(
-            dump["raw"]["opfname"],
-            json!(pkg.opf_path),
-            "{book}: opf path"
-        );
-        if let Some(want) = dump["raw"]["sha256"].as_str() {
-            let got: String = Sha256::digest(pkg.opf_text.as_bytes())
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect();
-            assert_eq!(got, want, "{book}: opf_text is not the OPF's bytes");
-        }
-
-        let mut want = dump.clone();
-        want.as_object_mut().unwrap().remove("raw");
-        let mut got = oeb_json(&oeb);
-        for &(b, ids, section) in NOT_YET_MADE {
-            assert!(
-                divergences.contains(&format!("\n## {section}\n")),
-                "DIVERGENCES.md has no section {section:?}"
-            );
-            if b != book {
-                continue;
-            }
-            let items = want["manifest"].as_array_mut().unwrap();
-            for id in ids {
-                let before = items.len();
-                items.retain(|i| i["id"] != json!(id));
-                assert_eq!(
-                    items.len() + 1,
-                    before,
-                    "{book}: allow-listed {id} is not in the dump"
-                );
-            }
-        }
-        // Task 8 makes the contents Calibre generates; until then only the flag is compared.
-        if oeb.auto_generated_toc {
-            want["toc"] = json!([]);
-        }
-        // A year-only dc:date takes the month of the run in Calibre, January in the port
-        // (DIVERGENCES.md, "The month of a year-only date").
-        if pkg
-            .metadata
-            .date
-            .first()
-            .is_some_and(|d| d.trim().len() == 4)
-        {
-            for v in [&mut want, &mut got] {
-                for d in v["metadata"]["date"].as_array_mut().unwrap() {
-                    let s = d.as_str().unwrap();
-                    *d = json!(format!("{}MM{}", &s[..5], &s[7..]));
-                }
-            }
-        }
-        if got != want {
-            failures.push(format!(
-                "{book}:\n want {}\n  got {}",
-                serde_json::to_string(&want).unwrap(),
-                serde_json::to_string(&got).unwrap()
-            ));
+    // `raw`: the EPUB's own OPF, its sha256 null where Calibre wrote over it.
+    if want_all["raw"]["opfname"] != json!(pkg.opf_path) {
+        tally.failures.push(format!(
+            "{book}: opf path {} against {}",
+            pkg.opf_path, want_all["raw"]["opfname"]
+        ));
+    }
+    if let Some(want) = want_all["raw"]["sha256"].as_str() {
+        let sha: String = Sha256::digest(pkg.opf_text.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        if sha != want {
+            tally
+                .failures
+                .push(format!("{book}: opf_text is not the OPF's bytes"));
         }
     }
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
+
+    let mut want = want_all.clone();
+    want.as_object_mut().unwrap().remove("raw");
+    let mut got = oeb_json(oeb);
+    for &(b, ids, section) in NOT_YET_MADE {
+        assert!(
+            divergences.contains(&format!("\n## {section}\n")),
+            "DIVERGENCES.md has no section {section:?}"
+        );
+        if b != book {
+            continue;
+        }
+        let items = want["manifest"].as_array_mut().unwrap();
+        for id in ids {
+            let before = items.len();
+            items.retain(|i| i["id"] != json!(id));
+            if items.len() + 1 == before {
+                tally
+                    .allowed_used
+                    .insert(format!("oeb {book} {id} ({section})"));
+            } else {
+                tally
+                    .failures
+                    .push(format!("{book}: allow-listed {id} is not in the dump"));
+            }
+        }
+    }
+    // A year-only dc:date takes the month of the run in Calibre, January in the port
+    // (DIVERGENCES.md, "The month of a year-only date").
+    if pkg
+        .metadata
+        .date
+        .first()
+        .is_some_and(|d| d.trim().len() == 4)
+    {
+        for v in [&mut want, &mut got] {
+            for d in v["metadata"]["date"].as_array_mut().unwrap() {
+                let s = d.as_str().unwrap();
+                *d = json!(format!("{}MM{}", &s[..5], &s[7..]));
+            }
+        }
+    }
+    if got != want {
+        tally.failures.push(format!(
+            "{book}: book view\n want {}\n  got {}",
+            serde_json::to_string(&want).unwrap(),
+            serde_json::to_string(&got).unwrap()
+        ));
+    }
 }
 
 /// An EPUB of `opf` (at `content.opf`) and `files`, written to a temp file.

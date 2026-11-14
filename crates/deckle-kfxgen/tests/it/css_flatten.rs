@@ -3,29 +3,26 @@
 //! as Calibre 9.18's `CSSFlattener` turns them, `RemoveFakeMargins` over the book, and the
 //! styles kfxgen's own `Stylizer` then reads, against the dumps under
 //! `fixtures/kfxgen/cascade/` (`styles/NNN.json` for the styles, `dom/NNN.xhtml` for the
-//! classes).
+//! classes; [`check_specified`], run on `read_book` by `book.rs` and `corpus_cascade.rs`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
+use deckle_kfxgen::book;
 use deckle_kfxgen::css::{
     ClassNamer, DEFAULT_PROFILE, Decls, Error, Flat, Origin, cascade, flatten, parse_sheet,
     prepare_body, remove_fake_margins,
 };
-use deckle_kfxgen::dom::{self, Dom, NodeId, mark_chapters};
+use deckle_kfxgen::dom::{self, Dom, NodeId};
 use deckle_limits::roxmltree::{Node, ParsingOptions};
 use deckle_limits::{MAX_BOOK_CASCADE_DECLS, MAX_CASCADE_DECLS, MAX_STYLE_RULES};
 use serde_json::Value;
 
-use crate::support::{BOOKS, Book};
+use crate::support::{Book, Dump, Tally, find, path_of, read_json};
 
 /// Fixture nodes whose styles or class the port gives differently from kfxgen's dump, each
 /// with its `DIVERGENCES.md` section: (book, file, path, section).
 const ALLOWED: &[(&str, &str, &[u32], &str)] = &[];
-
-pub(crate) fn read(path: &std::path::Path) -> Value {
-    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
-}
 
 /// Runs `f`, failing past `COST_LIMIT`.
 fn timed<T>(what: &str, f: impl FnOnce() -> T) -> T {
@@ -35,60 +32,6 @@ fn timed<T>(what: &str, f: impl FnOnce() -> T) -> T {
     eprintln!("{what}: {took:?}");
     assert!(took < crate::support::COST_LIMIT, "{what} took {took:?}");
     out
-}
-
-/// One flattened spine file.
-pub(crate) struct File {
-    pub(crate) href: String,
-    /// The dump's name for it.
-    pub(crate) nnn: String,
-    pub(crate) dom: Dom,
-    pub(crate) flat: Flat,
-}
-
-/// A fixture book's spine, flattened in spine order as `CSSFlattener.flatten_spine` does, then
-/// its fake margins removed; and the units its files used together.
-pub(crate) fn flatten_book(name: &str) -> (Vec<File>, usize) {
-    let mut book = Book::open(name);
-    // `files.json` numbers the spine in order (checked against `oeb.json` below).
-    let mut order: Vec<(String, String)> = book
-        .files
-        .iter()
-        .map(|(h, n)| (n.clone(), h.clone()))
-        .collect();
-    order.sort();
-    let oeb = read(&book.dir.join("oeb.json"));
-    let spine: Vec<&str> = oeb["spine"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|s| s["href"].as_str().unwrap())
-        .collect();
-    assert_eq!(
-        order.iter().map(|(_, h)| h.as_str()).collect::<Vec<_>>(),
-        spine,
-        "{name}: spine order"
-    );
-    let mut namer = ClassNamer::default();
-    let mut files = Vec::new();
-    for (nnn, href) in order {
-        let mut dom = dom::parse(&book.read(&href)).unwrap();
-        mark_chapters(&mut dom);
-        prepare_body(&mut dom);
-        let sheets = book.sheets(&href, &dom);
-        let first = cascade(&mut dom, &href, sheets, &DEFAULT_PROFILE).unwrap();
-        let flat = flatten(&mut dom, &href, first, &mut namer, &DEFAULT_PROFILE).unwrap();
-        files.push(File {
-            href,
-            nnn,
-            dom,
-            flat,
-        });
-    }
-    let mut docs: Vec<(&Dom, &mut Flat)> =
-        files.iter_mut().map(|f| (&f.dom, &mut f.flat)).collect();
-    remove_fake_margins(&mut namer, &mut docs);
-    (files, namer.units())
 }
 
 fn sorted(decls: &Decls) -> BTreeMap<String, String> {
@@ -116,24 +59,8 @@ fn class_set(class: Option<&str>) -> Option<BTreeSet<String>> {
     class.map(|c| c.split_ascii_whitespace().map(str::to_owned).collect())
 }
 
-pub(crate) fn path_of(v: &Value) -> Vec<u32> {
-    v.as_array()
-        .unwrap()
-        .iter()
-        .map(|i| i.as_u64().unwrap() as u32)
-        .collect()
-}
-
-pub(crate) fn find(dom: &Dom, path: &[u32]) -> Option<NodeId> {
-    let mut n = dom.root();
-    for &i in path {
-        n = *dom.children(n).get(i as usize)?;
-    }
-    Some(n)
-}
-
 /// Path → (local name, class attribute) of every element of a `dom/` dump.
-pub(crate) fn dump_elements(xhtml: &str) -> BTreeMap<Vec<u32>, (String, Option<String>)> {
+fn dump_elements(xhtml: &str) -> BTreeMap<Vec<u32>, (String, Option<String>)> {
     let doc = deckle_limits::parse_xml(xhtml, ParsingOptions::default()).unwrap();
     let mut out = BTreeMap::new();
     let mut stack = vec![(doc.root_element(), Vec::new())];
@@ -154,101 +81,93 @@ pub(crate) fn dump_elements(xhtml: &str) -> BTreeMap<Vec<u32>, (String, Option<S
     out
 }
 
-#[test]
-fn every_cascade_fixture_specified_matches_kfxgens_stylizer() {
-    let mut failed = Vec::new();
-    let mut allowed_used = BTreeSet::new();
-    let mut compared = 0;
-    let mut files = 0;
-    let mut most_units = 0;
-    for name in BOOKS {
-        let (book, units) = flatten_book(name);
-        most_units = most_units.max(units);
-        for f in book {
-            files += 1;
-            let dir = fixtures_dir(name);
-            let styles = read(&dir.join(format!("styles/{}.json", f.nnn)));
-            let xhtml = std::fs::read_to_string(dir.join(format!("dom/{}.xhtml", f.nnn))).unwrap();
-            let elements = dump_elements(&xhtml);
-            let table = styles["table"].as_array().unwrap();
-            let mut seen = BTreeSet::new();
-            for node in styles["nodes"].as_array().unwrap() {
-                let path = path_of(&node[0]);
-                let want = &table[node[1].as_u64().unwrap() as usize];
-                let (tag, want_class) = &elements[&path];
-                let Some(n) = find(&f.dom, &path) else {
-                    // Calibre's flattener links the book's two new stylesheets at the end of
-                    // <head> (`flatten_head`); the port's tree has no such links.
-                    assert!(
-                        path.len() == 2 && path[0] == 0 && tag == "link",
-                        "{name} {}: {path:?} ({tag}) is missing",
-                        f.href
-                    );
-                    continue;
-                };
-                seen.insert(n);
-                compared += 1;
-                let got = (
-                    f.dom.tag(n).rsplit(':').next().unwrap().to_owned(),
-                    sorted(f.flat.specified(n)),
-                    pseudo_map(f.flat.pseudo(n)),
-                    class_set(f.flat.class(n)),
-                    class_set(f.dom.attr(n, "class")),
-                );
-                let want_pseudo: BTreeMap<String, BTreeMap<String, String>> = want["pseudo"]
-                    .as_object()
-                    .unwrap()
-                    .iter()
-                    .map(|(k, v)| (k.clone(), json_map(v)))
-                    .collect();
-                let want = (
-                    tag.clone(),
-                    json_map(&want["specified"]),
-                    want_pseudo,
-                    class_set(want_class.as_deref()),
-                    class_set(want_class.as_deref()),
-                );
-                if got != want {
-                    let key = ALLOWED
-                        .iter()
-                        .find(|(b, file, p, _)| *b == name && *file == f.nnn && *p == path);
-                    match key {
-                        Some(k) => {
-                            allowed_used.insert((k.0, k.1, k.2));
-                        }
-                        None => failed.push(format!(
-                            "{name} {} {path:?}:\n  got  {got:?}\n  want {want:?}",
-                            f.href
-                        )),
-                    }
-                }
-            }
-            // Every element of the port's tree is in the dump.
-            let ours = f.dom.descendants().count();
-            assert_eq!(seen.len(), ours, "{name} {}: elements", f.href);
-        }
-    }
-    assert!(
-        failed.is_empty(),
-        "{}\n{} mismatches",
-        failed.join("\n"),
-        failed.len()
-    );
-    for (b, file, p, _) in ALLOWED {
-        assert!(
-            allowed_used.contains(&(*b, *file, *p)),
-            "{b} {file} {p:?} is allowed but matches: take it out"
-        );
-    }
-    assert_eq!(files, 49);
-    assert!(compared > 1_000, "{compared} elements");
-    // The book-wide limit stays far above what the fixture books use.
-    eprintln!("the most units a fixture book used: {most_units}");
-    assert!(most_units * 10 <= MAX_BOOK_CASCADE_DECLS, "{most_units}");
+/// [`ALLOWED`] as (book, the key [`check_specified`] records when it uses an entry).
+pub(crate) fn allowed() -> Vec<(String, String)> {
+    ALLOWED
+        .iter()
+        .map(|(b, file, p, section)| {
+            (
+                (*b).to_owned(),
+                format!("specified {b} {file} {p:?} ({section})"),
+            )
+        })
+        .collect()
 }
 
-pub(crate) fn fixtures_dir(name: &str) -> std::path::PathBuf {
-    deckle_kfx::fixtures::kfxgen(&format!("cascade/{name}"))
+/// `read_book`'s declared styles against the dump (Task 9): each element's declarations,
+/// pseudo-class declarations and classes against kfxgen's `Stylizer` (`styles/NNN.json`) and
+/// tree (`dom/NNN.xhtml`), every element of the port's tree in the dump.
+pub(crate) fn check_specified(got: &book::Book, dump: &Dump, tally: &mut Tally) {
+    let name = dump.name.as_str();
+    for f in &got.files {
+        let nnn = dump.nnn(&f.href);
+        let styles = dump.json("styles", &f.href);
+        let elements = dump_elements(&dump.xhtml(&f.href));
+        let table = styles["table"].as_array().unwrap();
+        let mut seen = BTreeSet::new();
+        for node in styles["nodes"].as_array().unwrap() {
+            let path = path_of(&node[0]);
+            let want = &table[node[1].as_u64().unwrap() as usize];
+            let (tag, want_class) = &elements[&path];
+            let Some(n) = find(&f.dom, &path) else {
+                // Calibre's flattener links the book's two new stylesheets at the end of
+                // <head> (`flatten_head`); the port's tree has no such links.
+                if !(path.len() == 2 && path[0] == 0 && tag == "link") {
+                    tally
+                        .failures
+                        .push(format!("{name} {}: {path:?} ({tag}) is missing", f.href));
+                }
+                continue;
+            };
+            seen.insert(n);
+            tally.elements += 1;
+            let got = (
+                f.dom.tag(n).rsplit(':').next().unwrap().to_owned(),
+                sorted(f.flat.specified(n)),
+                pseudo_map(f.flat.pseudo(n)),
+                class_set(f.flat.class(n)),
+                class_set(f.dom.attr(n, "class")),
+            );
+            let want_pseudo: BTreeMap<String, BTreeMap<String, String>> = want["pseudo"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), json_map(v)))
+                .collect();
+            let want = (
+                tag.clone(),
+                json_map(&want["specified"]),
+                want_pseudo,
+                class_set(want_class.as_deref()),
+                class_set(want_class.as_deref()),
+            );
+            if got != want {
+                match ALLOWED
+                    .iter()
+                    .find(|(b, file, p, _)| *b == name && *file == nnn && *p == path)
+                {
+                    Some((b, file, p, section)) => {
+                        tally
+                            .allowed_used
+                            .insert(format!("specified {b} {file} {p:?} ({section})"));
+                    }
+                    None => tally.failures.push(format!(
+                        "{name} {} {path:?}:\n  got  {got:?}\n  want {want:?}",
+                        f.href
+                    )),
+                }
+            }
+        }
+        // Every element of the port's tree is in the dump.
+        let ours = f.dom.descendants().count();
+        if seen.len() != ours {
+            tally.failures.push(format!(
+                "{name} {}: {ours} elements, {} of them in the dump",
+                f.href,
+                seen.len()
+            ));
+        }
+    }
 }
 
 /// One page, its `<head>` holding `css`, flattened alone.
@@ -306,7 +225,7 @@ fn invalid_values_are_kept() {
 fn body_style_is_the_one_calibre_writes() {
     // `data/css_cascade_probe.json` holds the style attribute `stylize_spine` gave <body> in
     // css_quirks's cascade.xhtml, read from Calibre.
-    let probe = read(
+    let probe = read_json(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/it/data/css_cascade_probe.json"),
     );

@@ -168,9 +168,11 @@ on 2026-08-01), so a fresh download can differ from them: on 2026-11-11 `pg11-im
 test both start from whatever is in `gutenberg/`; it just isn't the same books byte for byte.
 To dump them:
 `DECKLE_KFXGEN_CORPUS_OUT=gutenberg/models tools/ref/kfxgen_models.sh --corpus gutenberg/*.epub`
-(28 s on an M-series Mac, 174 MB, before each book also got its `cascade/` dump, which the same
-run now writes to `<book>/cascade`; not measured since), which writes `KFXGEN_COMMIT`, `TOOLS`
-and `BOOKS` (the books it dumped) there too, once every book is made. The corpus test stops unless the folder holds
+(82 s on an M-series Mac on 2026-11-13, 186 MB; 28 s and 174 MB before each book also got its
+`cascade/` dump, which the same run writes to `<book>/cascade`), which writes `KFXGEN_COMMIT`,
+`TOOLS` and `BOOKS` (the books it dumped) there too, once every book is made. Its conversions run
+with `TZ=UTC`, as `--cascade`'s do, and `TOOLS` says so with the month of the run; each
+`<book>/cascade` holds its own `ua_rules.json`. The corpus test stops unless the folder holds
 exactly the books in `BOOKS`: a dump that failed leaves no list, and a book left from an earlier
 corpus isn't in it (delete its folder). Two dumps
 give the same `expected.kfx` for every book, but not always the same `model.json`: in two dumps of
@@ -178,6 +180,10 @@ pg74 the `images` argument held the same pictures in another order (pg76, pg86 a
 `model.json` also changed on a redump, their `expected.kfx` not). The port makes the same bytes
 from either order. `crates/deckle-kfxgen` makes every corpus book byte for
 byte: `DECKLE_KFXGEN_CORPUS=gutenberg/models cargo test -p deckle-kfxgen --test it corpus -- --ignored`.
+The same command also runs `corpus_cascade`, which reads each book with `book::read_book` and
+compares it with its `cascade/` dump as `book::read_book_matches_every_dump` compares the
+fixtures below; it reads the EPUBs from `DECKLE_KFXGEN_CORPUS_EPUBS`, else from the corpus
+folder's parent (`gutenberg/`), and refuses a corpus whose `TOOLS` is not Calibre 9.18.0 in UTC.
 
 ## cascade/
 
@@ -188,7 +194,12 @@ book's CSS: Calibre flattens it to one class per element first, and kfxgen build
 M-series Mac); two runs give the same bytes. `KFXGEN_COMMIT` and `TOOLS` are as in `models/`
 (calibre 9.18.0); `TOOLS` also says the dump ran with `TZ=UTC` (Calibre turns a date with no
 time into local midnight) and in which month (a year-only `dc:date` takes day 15 of the month
-of the run, so `package_quirks`'s date changes with it).
+of the run, so `package_quirks`'s date changes with it). The test harness refuses a dump whose
+`TOOLS` names another Calibre or no `TZ: UTC` (`tests/it/support.rs` `check_tools`).
+`tests/it/book.rs` `read_book_matches_every_dump` reads each source with `book::read_book` and
+compares the result with its dump at four levels: book view (`oeb.json`), element tree and
+first-pass rules (`dom/`, `rules/`), declared styles and classes (`styles/` `specified`,
+`pseudo`), computed values (`styles/` `computed`).
 
 `ua_rules.json` holds Calibre's user-agent rules (its `html.css`), the same for every file of
 every book (the dump and the script both check), and one folder per source,
