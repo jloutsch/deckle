@@ -94,6 +94,9 @@ fn write_identity_in_place(path: &Path, dir: &Path, id: Uuid) -> Result<Uuid, Pr
     fs::File::open(dir)
         .and_then(|d| d.sync_all())
         .map_err(|_| storage())?;
+    // Windows has no directory sync.
+    #[cfg(not(unix))]
+    let _ = dir;
     Ok(id)
 }
 
