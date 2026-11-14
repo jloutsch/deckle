@@ -548,6 +548,8 @@ pub fn flatten(
             names.sort_unstable();
             names.dedup();
             let class = names.join(" ");
+            // Each element holds its own copy of the names: a unit for each 64 bytes.
+            units.charge(class.len() / 64)?;
             dom.set_attr(e, "class", Some(&class));
         }
         dom.set_attr(e, "style", None);

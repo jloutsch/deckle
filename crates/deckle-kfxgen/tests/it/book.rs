@@ -416,3 +416,25 @@ fn first_pass_rules_count_against_the_book_limit() {
         start.elapsed()
     );
 }
+
+/// A class's name is written into the `class` attribute of every element that has it: each
+/// copy counts against the file's limit, so one long name on many elements is refused.
+#[test]
+fn a_long_class_name_on_many_elements_is_too_large() {
+    let name = "k".repeat(100 * 1024);
+    let page = format!(
+        r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title></head><body><p class="{name}">x</p>{}</body></html>"#,
+        "<p>x</p>".repeat(2_000)
+    );
+    let file = epub_of(opf_with("").as_bytes(), &[("c.xhtml", page.as_bytes())]);
+    let start = std::time::Instant::now();
+    match read_book(file.path()) {
+        Err(Error::TooLarge { what }) => assert!(what.starts_with("c.xhtml: "), "{what}"),
+        other => panic!("{:?}", other.map(|_| ())),
+    }
+    assert!(
+        start.elapsed() < crate::support::COST_LIMIT,
+        "{:?}",
+        start.elapsed()
+    );
+}

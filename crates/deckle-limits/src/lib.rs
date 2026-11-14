@@ -100,7 +100,8 @@ pub const MAX_SELECTOR_WORK: u64 = 100_000_000;
 /// EPUB to KFX: declarations the two cascades of one book file (Calibre's first pass, and
 /// kfxgen's over the flattened classes) store for its elements, together, in units: one for
 /// each declaration copied into an element's styles, one more for each 64 bytes of it, and one
-/// for each set of rules found to match an element. Elements the same rules match share one
+/// for each set of rules found to match an element, and one for each 64 bytes of the class
+/// names the flattener writes into each element. Elements the same rules match share one
 /// copy, so a book's units grow with its distinct styles, not its elements. A `style`
 /// attribute counts its text, a unit for each 64 bytes, before it is read. At the limit the
 /// first cascade alone takes about 85 MB (81 to 83 MB measured at 480,000 units: 40,000
@@ -119,9 +120,9 @@ pub const MAX_CASCADE_DECLS: usize = 500_000;
 /// About 135 bytes a unit stay held (121 to 134 measured over 2.7 to 3.8 million units, in
 /// books of 6 files of 24,000 elements styled their own way, 100 files of 6,000 elements of
 /// 2,000 styles each, and 1,500 files of 300 elements of 100 styles; release build), so at
-/// the limit a book's styles take about 400 MB besides its trees. Kept rules cost more a unit:
-/// 100 files each keeping 45,000 one-declaration rules were refused at 690 MB. The 13 cascade fixture
-/// books use at most 4,196 units; 200 chapters of an ordinary novel (`css_flatten`'s
+/// the limit a book's styles take about 400 MB besides its trees. Kept rules cost more a
+/// unit: 100 files each keeping 45,000 one-declaration rules were refused at 690 MB. The 13
+/// cascade fixture books use at most 4,196 units; 200 chapters of an ordinary novel (`css_flatten`'s
 /// `NOVEL_CSS`) use 135,800.
 pub const MAX_BOOK_CASCADE_DECLS: usize = 3_000_000;
 
