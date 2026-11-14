@@ -349,18 +349,7 @@ fn a_file_of_too_many_elements_is_too_large() {
 fn a_book_of_too_many_elements_is_too_large() {
     let per_file = deckle_limits::MAX_DOM_NODES * 9 / 10;
     let files = deckle_limits::MAX_BOOK_DOM_NODES / per_file + 1;
-    let items: String = (0..files)
-        .map(|i| {
-            format!(r#"<item id="f{i}" href="f{i}.xhtml" media-type="application/xhtml+xml"/>"#)
-        })
-        .collect();
-    let spine: String = (0..files)
-        .map(|i| format!(r#"<itemref idref="f{i}"/>"#))
-        .collect();
-    let opf = opf_with(&items).replace(
-        r#"<itemref idref="c"/>"#,
-        &format!(r#"<itemref idref="c"/>{spine}"#),
-    );
+    let opf = opf_of_files(files, "");
     let page = elements_page(per_file);
     let names: Vec<String> = (0..files).map(|i| format!("f{i}.xhtml")).collect();
     let small = page_with("");
@@ -370,6 +359,55 @@ fn a_book_of_too_many_elements_is_too_large() {
     let start = std::time::Instant::now();
     match read_book(file.path()) {
         Err(Error::TooLarge { what }) => assert!(what.contains("book"), "{what}"),
+        other => panic!("{:?}", other.map(|_| ())),
+    }
+    assert!(
+        start.elapsed() < crate::support::COST_LIMIT,
+        "{:?}",
+        start.elapsed()
+    );
+}
+
+/// An OPF whose spine is `c.xhtml` then `f0.xhtml` … `f{n-1}.xhtml`, with `items` too.
+fn opf_of_files(n: usize, items: &str) -> String {
+    let files: String = (0..n)
+        .map(|i| {
+            format!(r#"<item id="f{i}" href="f{i}.xhtml" media-type="application/xhtml+xml"/>"#)
+        })
+        .collect();
+    let spine: String = (0..n)
+        .map(|i| format!(r#"<itemref idref="f{i}"/>"#))
+        .collect();
+    opf_with(&format!("{files}{items}")).replace(
+        r#"<itemref idref="c"/>"#,
+        &format!(r#"<itemref idref="c"/>{spine}"#),
+    )
+}
+
+/// Every file's first-pass rules are kept until the book is done: they count against the
+/// book's limit, so files each linking a large sheet that matches nothing are refused.
+#[test]
+fn first_pass_rules_count_against_the_book_limit() {
+    // One rule of 120,000 declarations: under the file's limits, a 25th of the book's.
+    let mut css = String::from("x-none {");
+    for i in 0..120_000 {
+        css.push_str(&format!("a{i}:1;"));
+    }
+    css.push('}');
+    let files = MAX_BOOK_CASCADE_DECLS / 120_000 + 1;
+    let opf = opf_of_files(
+        files,
+        r#"<item id="a" href="a.css" media-type="text/css"/>"#,
+    );
+    let page = page_with(r#"<link rel="stylesheet" href="a.css"/>"#);
+    let names: Vec<String> = (0..files).map(|i| format!("f{i}.xhtml")).collect();
+    let mut entries: Vec<(&str, &[u8])> =
+        vec![("c.xhtml", page.as_bytes()), ("a.css", css.as_bytes())];
+    entries.extend(names.iter().map(|n| (n.as_str(), page.as_bytes())));
+    let file = epub_of(opf.as_bytes(), &entries);
+    let start = std::time::Instant::now();
+    match read_book(file.path()) {
+        Err(Error::TooLarge { what }) => assert!(what.contains("this book"), "{what}"),
         other => panic!("{:?}", other.map(|_| ())),
     }
     assert!(

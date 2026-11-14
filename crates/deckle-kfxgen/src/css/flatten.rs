@@ -119,6 +119,29 @@ impl ClassNamer {
         self.units
     }
 
+    /// Counts against [`MAX_BOOK_CASCADE_DECLS`] a file's first-pass `rules` and `font_face`
+    /// rules, which the book keeps: one unit a rule and [`decl_units`] for each declaration,
+    /// the declarations the selectors of a list share counted once. [`Error::BookCascade`] past
+    /// the limit.
+    pub(crate) fn charge_kept(&mut self, rules: &[Rule], font_face: &[Decls]) -> Result<(), Error> {
+        let mut seen: HashSet<*const Decls> = HashSet::new();
+        let shared = rules
+            .iter()
+            .filter(|r| seen.insert(Arc::as_ptr(&r.decls)))
+            .map(|r| r.decls.as_slice());
+        let units: usize = shared
+            .chain(font_face.iter().map(Vec::as_slice))
+            .flat_map(|d| d.iter().map(|(k, v)| decl_units(k, v)))
+            .sum::<usize>()
+            + rules.len()
+            + font_face.len();
+        self.units = self.units.saturating_add(units);
+        if self.units > MAX_BOOK_CASCADE_DECLS {
+            return Err(Error::BookCascade(MAX_BOOK_CASCADE_DECLS));
+        }
+        Ok(())
+    }
+
     /// `klass + str(names[klass] or '')`, counted.
     fn next_name(&mut self, klass: &str) -> String {
         let n = self.counts.entry(klass.to_owned()).or_insert(0);

@@ -113,11 +113,14 @@ pub const MAX_SELECTOR_WORK: u64 = 100_000_000;
 pub const MAX_CASCADE_DECLS: usize = 500_000;
 
 /// EPUB to KFX: the units of [`MAX_CASCADE_DECLS`] all a book's files use together, each
-/// file's two cascades counted: a book's styles stay held until its last file is styled.
+/// file's two cascades counted, and the first-pass rules and `@font-face` rules each file
+/// keeps (a unit a rule, a unit a declaration and one more for each 64 bytes of it): a book's
+/// styles stay held until its last file is styled.
 /// About 135 bytes a unit stay held (121 to 134 measured over 2.7 to 3.8 million units, in
 /// books of 6 files of 24,000 elements styled their own way, 100 files of 6,000 elements of
 /// 2,000 styles each, and 1,500 files of 300 elements of 100 styles; release build), so at
-/// the limit a book's styles take about 400 MB besides its trees. The 13 cascade fixture
+/// the limit a book's styles take about 400 MB besides its trees. Kept rules cost more a unit:
+/// 100 files each keeping 45,000 one-declaration rules were refused at 690 MB. The 13 cascade fixture
 /// books use at most 4,196 units; 200 chapters of an ordinary novel (`css_flatten`'s
 /// `NOVEL_CSS`) use 135,800.
 pub const MAX_BOOK_CASCADE_DECLS: usize = 3_000_000;

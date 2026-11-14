@@ -160,9 +160,10 @@ pub enum Error {
     /// units: the limit passed.
     #[error("the CSS of this book file gives its elements more than {0} declarations")]
     Cascade(usize),
-    /// The styles the two cascades give the elements of the book's files so far pass
-    /// [`deckle_limits::MAX_BOOK_CASCADE_DECLS`] units together: the limit passed.
-    #[error("the CSS of this book gives the elements of its files more than {0} declarations")]
+    /// The styles the two cascades give the elements of the book's files so far, with the
+    /// first-pass rules each file keeps, pass [`deckle_limits::MAX_BOOK_CASCADE_DECLS`] units
+    /// together: the limit passed.
+    #[error("the CSS of this book holds more than {0} declarations over its files")]
     BookCascade(usize),
     /// A style value Calibre has no default for was asked of an element that has none:
     /// Calibre raises `KeyError` ([`Styles::inherited`]).

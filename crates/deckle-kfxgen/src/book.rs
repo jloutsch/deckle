@@ -206,6 +206,8 @@ pub fn read_book(path: &Path) -> Result<Book, Error> {
             cascade(&mut dom, href, sheets, &DEFAULT_PROFILE).map_err(|e| too_large_in(href, e))?;
         // `flatten` takes the first cascade whole and keeps neither.
         let first_pass_rules = std::mem::take(&mut first.rules);
+        // Both stay until the book is done.
+        namer.charge_kept(&first_pass_rules, &first.font_face)?;
         font_face.append(&mut first.font_face);
         let flat = flatten(&mut dom, href, first, &mut namer, &DEFAULT_PROFILE).map_err(|e| {
             match e {
