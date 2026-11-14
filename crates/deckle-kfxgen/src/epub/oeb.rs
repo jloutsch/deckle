@@ -33,7 +33,8 @@ const OEB_DOCS: [&str; 4] = [
     "text/x-oeb-document",
 ];
 /// `base.py` `OEB_STYLES`.
-const OEB_STYLES: [&str; 4] = [CSS_MIME, "text/x-oeb1-css", "text/x-oeb-css", "xhtml/css"];
+pub(crate) const OEB_STYLES: [&str; 4] =
+    [CSS_MIME, "text/x-oeb1-css", "text/x-oeb-css", "xhtml/css"];
 const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
 /// `base.py` `_link_attrs`: lxml's `html.defs.link_attrs` with `poster` and `altimg` (and
 /// `xlink:href`, checked apart).

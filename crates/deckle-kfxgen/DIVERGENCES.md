@@ -274,6 +274,8 @@ These change the book only in uncommon cases and are not ported:
 
 - Files the documents link to that the manifest does not list are added by Calibre with ids
   `added`, `added1`… (`reader.py` `_manifest_add_missing`).
+  So a stylesheet a document links to that the OPF does not list is read and applied by
+  Calibre's Stylizer; the port's `book::file_sheets` skips it.
 - `data:` URLs become manifest files (`transforms/data_url.py`).
 - With no title, Calibre takes the title sort (`calibre:title_sort` or the title's file-as) as
   the title before falling back to `Unknown`.

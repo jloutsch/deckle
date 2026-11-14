@@ -45,6 +45,7 @@ mod sheet;
 mod style;
 mod value;
 
+pub(crate) use budget::Budget;
 pub use cascade::{Cascaded, cascade};
 pub use defaults::{DEFAULTS, INHERITED};
 pub use fake_margins::remove_fake_margins;
@@ -55,6 +56,7 @@ pub use select::{
     DocIndex, MAX_SELECTOR_BYTES, Parsed, Selector, TooLarge, parse_selector, select,
 };
 pub use sheet::parse_sheet;
+pub(crate) use sheet::parse_sheet_in;
 pub use style::{Styles, Value};
 pub use value::{parse_style_attr, serialize_value};
 

@@ -23,11 +23,11 @@ use deckle_kfx::epub_zip::{EpubReader, InspectError, join, percent_decode};
 use deckle_limits::XmlError;
 
 use crate::css::{
-    self, ClassNamer, DEFAULT_PROFILE, Decls, Flat, Origin, Profile, Rule, Sheet, Styles, cascade,
-    flatten, media_ok, parse_sheet, prepare_body, remove_fake_margins,
+    self, Budget, ClassNamer, DEFAULT_PROFILE, Decls, Flat, Origin, Profile, Rule, Sheet, Styles,
+    cascade, flatten, media_ok, parse_sheet_in, prepare_body, remove_fake_margins,
 };
 use crate::dom::{self, Dom, generated_toc, mark_chapters};
-use crate::epub::{self, Oeb, Package, oeb_view, read_package};
+use crate::epub::{self, OEB_STYLES, Oeb, Package, oeb_view, read_package};
 
 /// A book as kfxgen receives it from Calibre.
 #[derive(Debug, Clone)]
@@ -150,8 +150,14 @@ fn too_large_in(href: &str, e: impl std::fmt::Display) -> Error {
 pub fn read_book(path: &Path) -> Result<Book, Error> {
     let mut zip = EpubReader::open(path)?;
     let package = read_package(&mut zip).map_err(|e| match e {
-        // `read_package` reads the OPF as UTF-8 text; the nav and NCX it reads as missing.
-        epub::Error::Zip(InspectError::Io(io)) if io.kind() == std::io::ErrorKind::InvalidData => {
+        // `read_package` reads the OPF as UTF-8 text (the nav and NCX it reads as missing).
+        // A checksum that fails is the same kind of error: the bytes say which it is.
+        epub::Error::Zip(InspectError::Io(io))
+            if io.kind() == std::io::ErrorKind::InvalidData
+                && zip
+                    .read_bytes(&zip.opf_path.clone())
+                    .is_ok_and(|b| std::str::from_utf8(&b).is_err()) =>
+        {
             Error::Encoding {
                 file: zip.opf_path.clone(),
             }
@@ -256,7 +262,9 @@ fn local(dom: &Dom, n: dom::NodeId) -> String {
 /// sheet's `@page` rules are dropped (`base.py` `_parse_css`); its URLs and those in a
 /// `<style>` are made book-absolute (`flatcss.py` `CSSFlattener.__call__`, `replaceUrls`).
 /// `css_items` are the book's stylesheets ([`stylesheets`]); a link or import to anything
-/// else is skipped. A stylesheet is decoded as Calibre decodes it (`OEBBook.decode`).
+/// else is skipped. A stylesheet is decoded as Calibre decodes it (`OEBBook.decode`). The
+/// file's sheets share one budget: [`deckle_limits::MAX_STYLE_RULES`] and
+/// [`deckle_limits::MAX_STYLE_DECLS`] hold for all of them together, charged as they are read.
 pub fn file_sheets(
     zip: &mut EpubReader,
     css_items: &[String],
@@ -278,13 +286,17 @@ pub fn file_sheets(
             }
         }
     };
+    let budget = Budget::default();
     let mut sheets = Vec::new();
     // Calibre's rule index runs on across the file's sheets.
     let mut next = 0;
     for n in dom.descendants() {
         let sheet = match local(dom, n).as_str() {
             "style" => {
-                if dom.attr(n, "type").is_some_and(|t| t != "text/css")
+                // `elem.get('type', CSS_MIME) in OEB_STYLES`, as written.
+                if dom
+                    .attr(n, "type")
+                    .is_some_and(|t| !OEB_STYLES.contains(&t))
                     || !media_ok(dom.attr(n, "media").unwrap_or(""))
                 {
                     continue;
@@ -303,7 +315,7 @@ pub fn file_sheets(
                 }
                 let base = dir_of(href);
                 let mut import = |h: &str| read_css(&join(base, h));
-                parse_sheet(&text, Origin::Book, href, next, &mut import)
+                parse_sheet_in(&budget, &text, Origin::Book, href, next, &mut import)
             }
             "link" => {
                 let Some(link) = dom.attr(n, "href").filter(|h| !h.is_empty()) else {
@@ -313,10 +325,12 @@ pub fn file_sheets(
                     .attr(n, "rel")
                     .unwrap_or("stylesheet")
                     .eq_ignore_ascii_case("stylesheet")
-                    || !dom
-                        .attr(n, "type")
-                        .unwrap_or("text/css")
-                        .eq_ignore_ascii_case("text/css")
+                    || !OEB_STYLES.contains(
+                        &dom.attr(n, "type")
+                            .unwrap_or("text/css")
+                            .to_lowercase()
+                            .as_str(),
+                    )
                     || !media_ok(dom.attr(n, "media").unwrap_or(""))
                 {
                     continue;
@@ -327,10 +341,12 @@ pub fn file_sheets(
                 };
                 let base = dir_of(&path).to_owned();
                 let mut import = |h: &str| read_css(&join(&base, h));
-                parse_sheet(&text, Origin::Book, &path, next, &mut import).map(|mut sheet| {
-                    sheet.page.clear();
-                    sheet
-                })
+                parse_sheet_in(&budget, &text, Origin::Book, &path, next, &mut import).map(
+                    |mut sheet| {
+                        sheet.page.clear();
+                        sheet
+                    },
+                )
             }
             _ => continue,
         };

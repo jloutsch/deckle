@@ -78,7 +78,19 @@ pub fn parse_sheet(
     first_index: u32,
     import: &mut dyn FnMut(&str) -> Option<String>,
 ) -> Result<Sheet, Error> {
-    let budget = Budget::default();
+    parse_sheet_in(&Budget::default(), text, origin, href, first_index, import)
+}
+
+/// [`parse_sheet`], charging `budget`: the one budget of all of a book file's sheets
+/// (`book::file_sheets`), so the limits hold for them together.
+pub(crate) fn parse_sheet_in(
+    budget: &Budget,
+    text: &str,
+    origin: Origin,
+    href: &str,
+    first_index: u32,
+    import: &mut dyn FnMut(&str) -> Option<String>,
+) -> Result<Sheet, Error> {
     if !budget.text(text.len()) {
         return Err(budget.error());
     }
@@ -90,7 +102,7 @@ pub fn parse_sheet(
         Origin::Book => Urls::Book { href, base: None },
         Origin::UserAgent => Urls::Keep,
     };
-    let own = parse_text(&text, urls, &budget);
+    let own = parse_text(&text, urls, budget);
     drop(text);
     if budget.over() {
         return Err(budget.error());
@@ -98,7 +110,7 @@ pub fn parse_sheet(
     let mut r = Resolver {
         import,
         cache: HashMap::new(),
-        budget: &budget,
+        budget,
         origin,
         href,
         out: Sheet::default(),

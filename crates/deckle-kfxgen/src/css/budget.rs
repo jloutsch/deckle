@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! What one stylesheet and its imports may hold ([`MAX_STYLE_RULES`], [`MAX_STYLE_DECLS`]),
-//! charged as the text is read, so a sheet past either limit is refused before the rest of it
-//! is held in memory.
+//! What one book file's stylesheets and their imports may hold together ([`MAX_STYLE_RULES`],
+//! [`MAX_STYLE_DECLS`]), charged as the text is read, so a sheet past either limit is refused
+//! before the rest of it is held in memory.
 
 use std::cell::Cell;
 
@@ -14,7 +14,8 @@ use super::normalize::expanded_len;
 pub(crate) const TEXT_UNIT: usize = 64;
 
 /// The counts charged so far against [`MAX_STYLE_RULES`] and [`MAX_STYLE_DECLS`]. Shared by the
-/// parsers of one [`super::parse_sheet`] call, so each charge is made where the item is read.
+/// parsers of one [`super::parse_sheet`] call, so each charge is made where the item is read,
+/// and by all of a book file's sheets (`book::file_sheets`).
 #[derive(Default)]
 pub(crate) struct Budget {
     rules: Cell<usize>,

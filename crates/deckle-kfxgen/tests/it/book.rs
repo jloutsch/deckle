@@ -131,6 +131,50 @@ fn a_file_that_is_not_an_epub_is_an_error() {
     ));
 }
 
+const CONTAINER: &[u8] = br#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
+
+/// The stored zip of an EPUB with `opf` at `content.opf` and `files`.
+fn zip_of(opf: &[u8], files: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut entries: Vec<(&str, &[u8], u64)> = vec![
+        ("mimetype", b"application/epub+zip", 20),
+        ("META-INF/container.xml", CONTAINER, CONTAINER.len() as u64),
+        ("content.opf", opf, opf.len() as u64),
+    ];
+    entries.extend(files.iter().map(|&(n, d)| (n, d, d.len() as u64)));
+    fixtures::stored_zip(&entries)
+}
+
+/// [`zip_of`] written to a temp file.
+fn epub_of(opf: &[u8], files: &[(&str, &[u8])]) -> tempfile::NamedTempFile {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), zip_of(opf, files)).unwrap();
+    file
+}
+
+/// An OPF whose spine is `c.xhtml`, with `items` in its manifest too.
+fn opf_with(items: &str) -> String {
+    format!(
+        r#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">x</dc:identifier><dc:title>T</dc:title><dc:language>en</dc:language></metadata><manifest><item id="c" href="c.xhtml" media-type="application/xhtml+xml"/>{items}</manifest><spine><itemref idref="c"/></spine></package>"#
+    )
+}
+
+/// A page whose `<head>` holds `head`.
+fn page_with(head: &str) -> String {
+    format!(
+        r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title>{head}</head><body><p>Hi.</p></body></html>"#
+    )
+}
+
+/// The selectors of the book's own first-pass rules in its first file.
+fn book_selectors(book: &deckle_kfxgen::book::Book) -> Vec<String> {
+    book.files[0]
+        .first_pass_rules
+        .iter()
+        .filter(|r| r.origin == deckle_kfxgen::css::Origin::Book)
+        .map(|r| r.selector.clone())
+        .collect()
+}
+
 #[test]
 fn an_opf_that_is_not_utf8_names_the_file() {
     let opf = "<?xml version=\"1.0\"?><package xmlns=\"http://www.idpf.org/2007/opf\" \
@@ -138,16 +182,30 @@ fn an_opf_that_is_not_utf8_names_the_file() {
                Caf\u{e9}</dc:title></metadata><manifest/><spine/></package>";
     // Latin-1: é as one byte, which is not UTF-8.
     let latin1: Vec<u8> = opf.chars().map(|c| c as u8).collect();
-    const CONTAINER: &[u8] = br#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
-    let epub = fixtures::stored_zip(&[
-        ("mimetype", b"application/epub+zip", 20),
-        ("META-INF/container.xml", CONTAINER, CONTAINER.len() as u64),
-        ("content.opf", &latin1, latin1.len() as u64),
-    ]);
-    let file = tempfile::NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), epub).unwrap();
+    let file = epub_of(&latin1, &[]);
     match read_book(file.path()) {
         Err(Error::Encoding { file }) => assert_eq!(file, "content.opf"),
+        other => panic!("{:?}", other.map(|_| ())),
+    }
+}
+
+/// An OPF whose bytes fail the zip's checksum is a read error, not "not UTF-8".
+#[test]
+fn a_corrupt_opf_is_not_called_an_encoding_error() {
+    let opf = opf_with("");
+    let mut zip = zip_of(opf.as_bytes(), &[("c.xhtml", page_with("").as_bytes())]);
+    // Stored, so the OPF's bytes are in the zip as written: change one, keeping it UTF-8.
+    let at = zip
+        .windows(opf.len())
+        .position(|w| w == opf.as_bytes())
+        .unwrap()
+        + opf.find("<dc:title>T").unwrap()
+        + "<dc:title>".len();
+    zip[at] = b'U';
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), zip).unwrap();
+    match read_book(file.path()) {
+        Err(Error::Io(_)) => {}
         other => panic!("{:?}", other.map(|_| ())),
     }
 }
@@ -157,58 +215,106 @@ fn an_opf_that_is_not_utf8_names_the_file() {
 /// item it then holds as a stylesheet (`base.py` `OEB_STYLES`).
 #[test]
 fn stylesheets_are_the_items_calibres_manifest_holds_as_css() {
-    const CONTAINER: &[u8] = br#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
-    let opf = br#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">x</dc:identifier><dc:title>T</dc:title><dc:language>en</dc:language></metadata><manifest><item id="c" href="c.xhtml" media-type="application/xhtml+xml"/><item id="a" href="a.css" media-type="TEXT/CSS"/><item id="b" href="b.css" media-type=""/><item id="o" href="o.css" media-type="text/x-oeb1-css"/><item id="x" href="x.css" media-type="text/plain"/></manifest><spine><itemref idref="c"/></spine></package>"#;
-    let page = br#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title><link rel="stylesheet" href="a.css"/><link rel="stylesheet" href="b.css"/><link rel="stylesheet" href="o.css"/><link rel="stylesheet" href="x.css"/></head><body><p>Hi.</p></body></html>"#;
-    let entries: Vec<(&str, &[u8])> = vec![
-        ("mimetype", b"application/epub+zip"),
-        ("META-INF/container.xml", CONTAINER),
-        ("content.opf", opf),
-        ("c.xhtml", page),
-        ("a.css", b"p.a { color: red }"),
-        ("b.css", b"p.b { color: green }"),
-        ("o.css", b"p.o { color: blue }"),
-        ("x.css", b"p.x { color: gray }"),
-    ];
-    let entries: Vec<(&str, &[u8], u64)> = entries
-        .into_iter()
-        .map(|(n, d)| (n, d, d.len() as u64))
-        .collect();
-    let file = tempfile::NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), fixtures::stored_zip(&entries)).unwrap();
+    let opf = opf_with(
+        r#"<item id="a" href="a.css" media-type="TEXT/CSS"/><item id="b" href="b.css" media-type=""/><item id="o" href="o.css" media-type="text/x-oeb1-css"/><item id="x" href="x.css" media-type="text/plain"/>"#,
+    );
+    let page = page_with(
+        r#"<link rel="stylesheet" href="a.css"/><link rel="stylesheet" href="b.css"/><link rel="stylesheet" href="o.css"/><link rel="stylesheet" href="x.css"/>"#,
+    );
+    let file = epub_of(
+        opf.as_bytes(),
+        &[
+            ("c.xhtml", page.as_bytes()),
+            ("a.css", b"p.a { color: red }"),
+            ("b.css", b"p.b { color: green }"),
+            ("o.css", b"p.o { color: blue }"),
+            ("x.css", b"p.x { color: gray }"),
+        ],
+    );
     let book = read_book(file.path()).unwrap();
-    let selectors: Vec<&str> = book.files[0]
-        .first_pass_rules
-        .iter()
-        .filter(|r| r.origin == deckle_kfxgen::css::Origin::Book)
-        .map(|r| r.selector.as_str())
+    assert_eq!(book_selectors(&book), ["p.a", "p.b", "p.o"]);
+}
+
+/// `stylizer.py` `Stylizer.__init__`: a `<style>`'s `type` is one of `OEB_STYLES` as written,
+/// a `<link>`'s lower-cased.
+#[test]
+fn style_and_link_types_are_calibres() {
+    let opf = opf_with(
+        r#"<item id="a" href="a.css" media-type="text/css"/><item id="b" href="b.css" media-type="text/css"/>"#,
+    );
+    let page = page_with(
+        r#"<style type="text/x-oeb1-css">p.s1 { color: red }</style><style type="TEXT/CSS">p.s2 { color: red }</style><style type="text/plain">p.s3 { color: red }</style><link rel="stylesheet" type="TEXT/X-OEB-CSS" href="a.css"/><link rel="stylesheet" type="text/plain" href="b.css"/>"#,
+    );
+    let file = epub_of(
+        opf.as_bytes(),
+        &[
+            ("c.xhtml", page.as_bytes()),
+            ("a.css", b"p.l1 { color: red }"),
+            ("b.css", b"p.l2 { color: red }"),
+        ],
+    );
+    let book = read_book(file.path()).unwrap();
+    assert_eq!(book_selectors(&book), ["p.s1", "p.l1"]);
+}
+
+/// A stylesheet that is not UTF-8 is decoded as Calibre decodes it (`OEBBook.decode`), not
+/// skipped.
+#[test]
+fn a_latin1_stylesheet_is_read() {
+    let opf = opf_with(r#"<item id="a" href="a.css" media-type="text/css"/>"#);
+    let page = page_with(r#"<link rel="stylesheet" href="a.css"/>"#);
+    let css: Vec<u8> = "p.caf\u{e9} { color: red }"
+        .chars()
+        .map(|c| c as u8)
         .collect();
-    assert_eq!(selectors, ["p.a", "p.b", "p.o"]);
+    assert!(std::str::from_utf8(&css).is_err());
+    let file = epub_of(
+        opf.as_bytes(),
+        &[("c.xhtml", page.as_bytes()), ("a.css", &css)],
+    );
+    let book = read_book(file.path()).unwrap();
+    assert_eq!(book_selectors(&book), ["p.caf\u{e9}"]);
+}
+
+/// The limits on a file's CSS hold for all of its stylesheets together: one large sheet
+/// linked many times is refused once the file's links pass them, before the rest is read.
+#[test]
+fn many_links_to_a_large_sheet_are_too_large() {
+    // One rule that matches nothing, 100,000 declarations: under MAX_STYLE_DECLS alone, past
+    // it twice.
+    let mut css = String::from("x-none {");
+    for i in 0..100_000 {
+        css.push_str(&format!("a{i}: 1;"));
+    }
+    css.push('}');
+    let opf = opf_with(r#"<item id="a" href="a.css" media-type="text/css"/>"#);
+    let page = page_with(&r#"<link rel="stylesheet" href="a.css"/>"#.repeat(30));
+    let file = epub_of(
+        opf.as_bytes(),
+        &[("c.xhtml", page.as_bytes()), ("a.css", css.as_bytes())],
+    );
+    let start = std::time::Instant::now();
+    let got = read_book(file.path());
+    let took = start.elapsed();
+    match got {
+        Err(Error::TooLarge { what }) => assert!(what.starts_with("c.xhtml: "), "{what}"),
+        other => panic!("{:?}", other.map(|_| ())),
+    }
+    assert!(took < crate::support::COST_LIMIT, "took {took:?}");
 }
 
 /// A spine file past a limit stops the book with the file named, never a panic.
 #[test]
 fn a_file_past_a_limit_is_too_large_and_named() {
-    const CONTAINER: &[u8] = br#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
-    let opf = br#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">x</dc:identifier><dc:title>T</dc:title><dc:language>en</dc:language></metadata><manifest><item id="c" href="deep.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c"/></spine></package>"#;
+    let opf = opf_with("");
     // Not well-formed, so read as HTML, and nested past `MAX_DEPTH`.
     let page = format!(
         "<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>T</title></head><body>{}</body></html>",
         "<div>".repeat(deckle_limits::MAX_DEPTH * 2)
     );
-    let entries: Vec<(&str, &[u8], u64)> = [
-        ("mimetype", b"application/epub+zip".as_slice()),
-        ("META-INF/container.xml", CONTAINER),
-        ("content.opf", opf),
-        ("deep.xhtml", page.as_bytes()),
-    ]
-    .into_iter()
-    .map(|(n, d)| (n, d, d.len() as u64))
-    .collect();
-    let file = tempfile::NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), fixtures::stored_zip(&entries)).unwrap();
+    let file = epub_of(opf.as_bytes(), &[("c.xhtml", page.as_bytes())]);
     match read_book(file.path()) {
-        Err(Error::TooLarge { what }) => assert!(what.starts_with("deep.xhtml: "), "{what}"),
+        Err(Error::TooLarge { what }) => assert!(what.starts_with("c.xhtml: "), "{what}"),
         other => panic!("{:?}", other.map(|_| ())),
     }
 }

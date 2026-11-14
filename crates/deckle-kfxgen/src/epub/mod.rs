@@ -15,8 +15,8 @@ mod oeb;
 pub(crate) mod package;
 mod toc;
 
-pub(crate) use oeb::is_stylesheet;
 pub use oeb::oeb_view;
+pub(crate) use oeb::{OEB_STYLES, is_stylesheet};
 pub use package::read_package;
 
 use deckle_kfx::epub_zip::InspectError;
