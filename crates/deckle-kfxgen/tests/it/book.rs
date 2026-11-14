@@ -438,3 +438,24 @@ fn a_long_class_name_on_many_elements_is_too_large() {
         start.elapsed()
     );
 }
+
+/// Read as HTML, each repeated `<html>` start tag adds its attributes to the root: the
+/// attributes already there that each is compared with count against the file's budget, so
+/// many such tags stop instead of taking time that grows with their square.
+#[test]
+fn many_html_start_tags_stop() {
+    let tags: String = (0..30_000).map(|i| format!("<html a{i}=1>")).collect();
+    // Not XML: the paragraph is not closed.
+    let page = format!("<html><head><title>t</title></head><body><p>unclosed{tags}");
+    let file = epub_of(opf_with("").as_bytes(), &[("c.xhtml", page.as_bytes())]);
+    let start = std::time::Instant::now();
+    match read_book(file.path()) {
+        Err(Error::TooLarge { what }) => assert!(what.starts_with("c.xhtml: "), "{what}"),
+        other => panic!("{:?}", other.map(|_| ())),
+    }
+    assert!(
+        start.elapsed() < crate::support::COST_LIMIT,
+        "{:?}",
+        start.elapsed()
+    );
+}

@@ -1096,6 +1096,17 @@ impl TreeSink for Sink {
             return;
         }
         if let Kind::Element { attrs: have, .. } = &mut self.nodes.borrow_mut()[*target].kind {
+            // Each new attribute is compared with those already there: a repeated `<html>` or
+            // `<body>` tag costs what it scans, so many of them stop.
+            let used = self
+                .used
+                .get()
+                .saturating_add(have.len().saturating_mul(attrs.len()));
+            if used > self.budget {
+                self.stop(Error::TooLarge(self.budget));
+                return;
+            }
+            self.used.set(used);
             for a in attrs {
                 if !have.iter().any(|h| h.name == a.name) {
                     have.push(a);
