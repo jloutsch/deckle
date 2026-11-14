@@ -101,7 +101,10 @@ pub const MAX_SELECTOR_WORK: u64 = 100_000_000;
 /// cascades of each. The nine Gutenberg books take at most 21,828 (pg76), the 13 cascade
 /// fixture books at most 1,971, 200 chapters of an ordinary novel (`css_flatten`'s
 /// `NOVEL_CSS`) 310,000; one file of 20,000 elements and 2,000 rules of the kinds books use,
-/// about 12 million.
+/// about 12 million. At the limit, with the slowest kinds of step, a book takes about 20
+/// seconds before it is refused (40 files each just under [`MAX_SELECTOR_WORK`]: 6.6 s,
+/// because most of those steps are faster). Revisit with these figures if real books come
+/// near it.
 pub const MAX_BOOK_SELECTOR_WORK: u64 = 1_000_000_000;
 
 /// EPUB to KFX: declarations the two cascades of one book file (Calibre's first pass, and
