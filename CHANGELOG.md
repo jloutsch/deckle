@@ -42,6 +42,15 @@
   read: a 500 KB KPF of repeated tiny values used 4.6 GB. A long name used many times counts
   a value for every 64 bytes of each copy. The limit covers what is decoded, not the copies
   the conversion makes of parts of it afterwards (jloutsch/deckle#79).
+- **Adding a book again under a name that differs only in case keeps it.** On a Mac (or any
+  case-insensitive disk), adding `mini.epub` when the library held `Mini.epub` deleted the copy
+  just written, and a library scan then removed the loose file too, leaving no copy of the
+  book. The library now keeps the one file.
+- **Two different files with the same name are two books.** A text, Word, RTF or comic file
+  without its own identifier is known by its title and author, and a text file's title is its
+  name, so adding `home/notes.txt` replaced the book from `work/notes.txt`. Such a file now
+  updates a book only when it's the same file or the library's own copy; anything else is filed
+  as a new book. An EPUB with the publisher's identifier still updates its book in place.
 - **A second paper no longer deletes the first one's editions on a Kobo or PocketBook.** Its
   files (`deckle-daily-kid-courier-…`) were counted as the main paper's editions and took their
   places, so every one of the main paper's editions was removed, the newest too. Now only a
