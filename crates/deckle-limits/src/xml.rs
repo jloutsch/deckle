@@ -72,6 +72,8 @@ enum Verdict {
     Malformed,
     /// The declared encoding cannot be read the way the parser will decode it.
     Encoding,
+    /// A start tag has more attributes than the scan's `max_attributes`.
+    TooManyAttributes,
 }
 
 /// The text as code units: bytes for UTF-8 and other ASCII-compatible encodings, 16-bit units
@@ -183,6 +185,9 @@ struct Scan<U> {
     /// Whether an `<?xml … encoding=…?>` is checked against the units' encoding. Off for text
     /// that is already UTF-8, whatever it declares.
     check_encoding: bool,
+    /// The most attributes a start tag may have: each `=` outside a quoted run counts one.
+    /// `usize::MAX` for the depth check alone.
+    max_attributes: usize,
 }
 
 impl<U: Units> Scan<U> {
@@ -192,6 +197,7 @@ impl<U: Units> Scan<U> {
             u,
             n,
             check_encoding,
+            max_attributes: usize::MAX,
         }
     }
 
@@ -357,7 +363,10 @@ impl<U: Units> Scan<U> {
                 break;
             } else {
                 // quick-xml reads anything else after `<` as a start tag.
-                let (end, empty) = self.tag_end(i + 1)?;
+                let (end, empty, attributes) = self.tag_end(i + 1)?;
+                if attributes > self.max_attributes {
+                    return Err(Verdict::TooManyAttributes);
+                }
                 // A self-closing element is a level too, while it is parsed.
                 if depth + 1 > limit {
                     return Err(Verdict::TooDeep);
@@ -371,25 +380,31 @@ impl<U: Units> Scan<U> {
         Ok(())
     }
 
-    /// The `>` that ends the start tag whose name begins at `from`, and whether the tag closes
-    /// itself (`/>`). A quote opens a quoted run wherever it stands, as in quick-xml; in
-    /// well-formed XML it only stands at the start of a value, so unquoted values (`href=x`)
-    /// are ordinary text. A tag cut off by the end of the text ends there.
-    fn tag_end(&self, from: usize) -> Result<(usize, bool), Verdict> {
+    /// The `>` that ends the start tag whose name begins at `from`, whether the tag closes
+    /// itself (`/>`), and its `=` signs outside quoted runs: no fewer than the attributes
+    /// either parser reads in it, since each is `name="value"`. A quote opens a quoted run
+    /// wherever it stands, as in quick-xml; in well-formed XML it only stands at the start of
+    /// a value, so unquoted values (`href=x`) are ordinary text. A tag cut off by the end of
+    /// the text ends there.
+    fn tag_end(&self, from: usize) -> Result<(usize, bool, usize), Verdict> {
         let mut quote = None;
+        let mut equals = 0;
         for j in from..self.n {
             let c = self.u.at(j);
             match quote {
                 Some(q) if c == q => quote = None,
                 Some(_) => {}
                 None if c == u32::from(b'"') || c == u32::from(b'\'') => quote = Some(c),
-                None if c == u32::from(b'>') => return Ok((j, j > from && self.is(j - 1, b'/'))),
+                None if c == u32::from(b'>') => {
+                    return Ok((j, j > from && self.is(j - 1, b'/'), equals));
+                }
+                None if c == u32::from(b'=') => equals += 1,
                 None => {}
             }
         }
         match quote {
             Some(_) => Err(Verdict::Unterminated),
-            None => Ok((self.n, false)),
+            None => Ok((self.n, false, equals)),
         }
     }
 
@@ -489,6 +504,9 @@ pub enum XmlError {
     Malformed,
     /// `roxmltree` could not parse it.
     Parse(roxmltree::Error),
+    /// A start tag has more attributes than the limit given
+    /// ([`parse_xml_limiting_attributes`]).
+    TooManyAttributes(usize),
 }
 
 impl fmt::Display for XmlError {
@@ -502,6 +520,9 @@ impl fmt::Display for XmlError {
                 "this file has a comment, quoted value or declaration that is not closed",
             ),
             XmlError::Parse(e) => e.fmt(f),
+            XmlError::TooManyAttributes(max) => {
+                write!(f, "this file has a start tag of more than {max} attributes")
+            }
         }
     }
 }
@@ -534,11 +555,35 @@ pub fn parse_xml<'input>(
     text: &'input str,
     options: roxmltree::ParsingOptions<'input>,
 ) -> Result<roxmltree::Document<'input>, XmlError> {
+    parse_scanned(text, options, usize::MAX)
+}
+
+/// [`parse_xml`], and in the same scan a start tag of more than `max_attributes` attributes is
+/// refused ([`XmlError::TooManyAttributes`]): `roxmltree` compares each attribute of a tag with
+/// the ones before it, so a tag's time grows with the square of its attributes (80,000 took
+/// 30 s). Each `=` outside a quoted value counts one, which is never fewer than the attributes
+/// `roxmltree` reads before it stops.
+pub fn parse_xml_limiting_attributes<'input>(
+    text: &'input str,
+    options: roxmltree::ParsingOptions<'input>,
+    max_attributes: usize,
+) -> Result<roxmltree::Document<'input>, XmlError> {
+    parse_scanned(text, options, max_attributes)
+}
+
+fn parse_scanned<'input>(
+    text: &'input str,
+    options: roxmltree::ParsingOptions<'input>,
+    max_attributes: usize,
+) -> Result<roxmltree::Document<'input>, XmlError> {
     // `text` is UTF-8 whatever it starts with, so it is scanned as bytes.
-    match Scan::new(Bytes(text.as_bytes()), false).run(MAX_DEPTH) {
+    let mut scan = Scan::new(Bytes(text.as_bytes()), false);
+    scan.max_attributes = max_attributes;
+    match scan.run(MAX_DEPTH) {
         Verdict::Within => Ok(roxmltree::Document::parse_with_options(text, options)?),
         Verdict::TooDeep => Err(XmlError::TooDeep),
         Verdict::EntityMarkup => Err(XmlError::EntityMarkup),
+        Verdict::TooManyAttributes => Err(XmlError::TooManyAttributes(max_attributes)),
         Verdict::Unterminated | Verdict::Malformed | Verdict::Encoding => Err(XmlError::Malformed),
     }
 }
@@ -1415,5 +1460,36 @@ mod tests {
             MAX_DEPTH
         ));
         assert!(!xml_depth_over("<rss>é[x]é]</rss>".as_bytes(), MAX_DEPTH));
+    }
+
+    fn tag(n: usize, value: &str) -> String {
+        let attrs: String = (0..n).map(|i| format!(" a{i}=\"{value}\"")).collect();
+        format!("<r><p{attrs}/></r>")
+    }
+
+    /// [`parse_xml_limiting_attributes`] of `text`, its tree dropped.
+    fn limited(text: &str, max: usize) -> Result<(), XmlError> {
+        parse_xml_limiting_attributes(text, roxmltree::ParsingOptions::default(), max).map(|_| ())
+    }
+
+    #[test]
+    fn a_tag_past_the_attribute_limit_is_refused_by_the_limiting_parse_only() {
+        assert_eq!(limited(&tag(4, ""), 4), Ok(()));
+        assert_eq!(limited(&tag(5, ""), 4), Err(XmlError::TooManyAttributes(4)));
+        // `parse_xml` is unchanged.
+        let five = tag(5, "");
+        assert!(parse_xml(&five, roxmltree::ParsingOptions::default()).is_ok());
+    }
+
+    #[test]
+    fn equals_signs_in_quoted_values_are_not_attributes() {
+        assert_eq!(limited(&tag(2, "a=b c=d e=f"), 2), Ok(()));
+        assert_eq!(limited(&tag(2, "x'='y"), 2), Ok(()));
+    }
+
+    #[test]
+    fn attributes_count_per_tag() {
+        let many = format!("<r>{}</r>", "<p a=\"1\" b=\"2\"/>".repeat(100));
+        assert_eq!(limited(&many, 2), Ok(()));
     }
 }

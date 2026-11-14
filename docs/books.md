@@ -82,6 +82,8 @@ the limit, instead of slowing the computer or crashing. Real books are far insid
 | EPUB, KPF: the whole archive, unpacked | 1 GB |
 | Text produced by a file's own entities | 16 MB |
 | EPUB to KFX: one document or XML file in the book (a chapter, the contents, an XML item), before it is read | 32 MB |
+| EPUB to KFX: all the documents and XML files a book reads, together (at the limit: about 770 MB and 3 seconds; 1.9 GB and 4 seconds for files that are not XML) | 256 MB per book |
+| EPUB to KFX: attributes in one tag, read as XML | 256 |
 | EPUB to KFX: elements and runs of text in one book file (read as HTML, attributes count too) | 500,000 |
 | EPUB to KFX: elements and attributes in all of a book's files together (every file is held until the book is styled; about 1.1 GB at the limit) | 2 million per book |
 | CSS rules in one book file (a rule for each selector of a list), and classes Calibre's flattening gives one book file | 50,000 |

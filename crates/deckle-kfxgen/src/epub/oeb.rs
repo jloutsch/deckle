@@ -11,7 +11,9 @@ use std::sync::LazyLock;
 
 use deckle_kfx::epub_zip::{EpubReader, InspectError};
 use deckle_limits::roxmltree::{self, Document};
-use deckle_limits::{MAX_BOOK_DOM_NODES, MAX_DEPTH, MAX_DOM_NODES, XmlError};
+use deckle_limits::{
+    MAX_BOOK_CONTENT_BYTES, MAX_BOOK_DOM_NODES, MAX_DEPTH, MAX_DOM_NODES, XmlError,
+};
 use regex::Regex;
 
 use super::package::{
@@ -331,8 +333,8 @@ fn sheet_refs(text: &str) -> (Vec<String>, Vec<String>) {
 
 /// `f` of the XML file `file`'s `text` parsed ([`package::parse_with`]), or None when
 /// `deckle_limits::parse_xml` refuses it (too deep, an entity with markup) or it is not
-/// well-formed. [`Error::TooLarge`] past [`MAX_CONTENT_FILE_BYTES`](deckle_limits) or
-/// [`MAX_DOM_NODES`] nodes.
+/// well-formed. [`Error::TooLarge`] past `deckle_limits::MAX_CONTENT_FILE_BYTES`,
+/// [`MAX_DOM_NODES`] nodes or a tag of more than `MAX_TAG_ATTRIBUTES` attributes.
 fn read_xml<R>(file: &str, text: &str, f: impl FnOnce(&Document) -> R) -> Result<Option<R>, Error> {
     super::check_size(file, text.len())?;
     match package::parse_with(text, f) {
@@ -341,6 +343,7 @@ fn read_xml<R>(file: &str, text: &str, f: impl FnOnce(&Document) -> R) -> Result
             "{file}: {}",
             dom::Error::TooManyNodes(MAX_DOM_NODES)
         ))),
+        Err(e @ XmlError::TooManyAttributes(_)) => Err(Error::TooLarge(format!("{file}: {e}"))),
         Err(_) => Ok(None),
     }
 }
@@ -411,6 +414,9 @@ struct Book<'z> {
     /// The elements and attributes of every document read so far, counted against
     /// [`MAX_BOOK_DOM_NODES`].
     nodes: usize,
+    /// The bytes of the nav, the NCX and every document read so far, counted against
+    /// [`MAX_BOOK_CONTENT_BYTES`].
+    bytes: usize,
 }
 
 impl Book<'_> {
@@ -439,12 +445,25 @@ impl Book<'_> {
         }
     }
 
+    /// Counts `len` bytes read against [`MAX_BOOK_CONTENT_BYTES`].
+    fn charge_bytes(&mut self, len: usize) -> Result<(), Error> {
+        self.bytes = self.bytes.saturating_add(len);
+        if u64::try_from(self.bytes).map_or(true, |b| b > MAX_BOOK_CONTENT_BYTES) {
+            return Err(Error::TooLarge(format!(
+                "this book's files are larger than {} MiB together",
+                MAX_BOOK_CONTENT_BYTES / (1024 * 1024)
+            )));
+        }
+        Ok(())
+    }
+
     /// The links of the document at `href`, read the first time it is asked for: as a
     /// document (`html`, `base.py` `_parse_xhtml`: `dom::parse`, which reads HTML that is not
     /// XML), or as XML (`_parse_xml`). None when it cannot be read: `dom::parse` refuses it
     /// (too deep, entities past their limit), or XML that `deckle_limits::parse_xml` refuses
     /// or is not well-formed or UTF-8. [`Error::TooLarge`] for a file past
-    /// [`MAX_CONTENT_FILE_BYTES`](deckle_limits) or [`MAX_DOM_NODES`] nodes, or past
+    /// `deckle_limits::MAX_CONTENT_FILE_BYTES`, [`MAX_DOM_NODES`] nodes or a tag of more than
+    /// `MAX_TAG_ATTRIBUTES` attributes, or past [`MAX_BOOK_CONTENT_BYTES`] or
     /// [`MAX_BOOK_DOM_NODES`] with the documents read before it.
     fn doc(&mut self, href: &str, html: bool) -> Result<Option<DocInfo>, Error> {
         let name = unquote(href);
@@ -455,9 +474,14 @@ impl Book<'_> {
             match self.read_bytes(&name)? {
                 Some(b) => {
                     super::check_size(&name, b.len())?;
+                    self.charge_bytes(b.len())?;
                     match dom::parse(&b) {
                         Ok(d) => Some((d.held(), doc_info(&d))),
-                        Err(e @ (dom::Error::TooLarge(_) | dom::Error::TooManyNodes(_))) => {
+                        Err(
+                            e @ (dom::Error::TooLarge(_)
+                            | dom::Error::TooManyNodes(_)
+                            | dom::Error::TooManyAttributes(_)),
+                        ) => {
                             return Err(Error::TooLarge(format!("{name}: {e}")));
                         }
                         Err(_) => None,
@@ -467,10 +491,14 @@ impl Book<'_> {
             }
         } else {
             match self.read(&name)? {
-                Some(text) => read_xml(&name, &text, |doc| {
-                    let d = dom::from_xml(doc);
-                    (d.held(), doc_info(&d))
-                })?,
+                Some(text) => {
+                    super::check_size(&name, text.len())?;
+                    self.charge_bytes(text.len())?;
+                    read_xml(&name, &text, |doc| {
+                        let d = dom::from_xml(doc);
+                        (d.held(), doc_info(&d))
+                    })?
+                }
                 None => None,
             }
         };
@@ -1680,7 +1708,12 @@ pub fn oeb_view(pkg: &Package, zip: &mut EpubReader) -> Result<Oeb, Error> {
         names,
         docs: BTreeMap::new(),
         nodes: 0,
+        bytes: 0,
     };
+    // The nav and the NCX are read with the package.
+    for text in [&pkg.nav_text, &pkg.ncx_text].into_iter().flatten() {
+        book.charge_bytes(text.len())?;
+    }
 
     // `epub_input.py` `convert`.
     let mut input = Input::new(opf, &opf_dir);

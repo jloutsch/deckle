@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Timelike};
 use deckle_kfx::epub_zip::{EpubReader, InspectError, percent_decode};
 use deckle_limits::roxmltree::{Document, Node, ParsingOptions};
-use deckle_limits::{MAX_DOM_NODES, XmlError};
+use deckle_limits::{MAX_DOM_NODES, MAX_TAG_ATTRIBUTES, XmlError};
 
 use super::{Error, GuideRef, Item, Metadata, Package, SpineRef, oeb};
 
@@ -39,15 +39,22 @@ pub(crate) fn parse_options<'a>() -> ParsingOptions<'a> {
 /// ([`recover_end_tags`]). Otherwise the parser's error.
 pub(crate) fn parse_with<R>(text: &str, f: impl FnOnce(&Document) -> R) -> Result<R, XmlError> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    match deckle_limits::parse_xml(text, parse_options()) {
+    let parse = |text| {
+        deckle_limits::parse_xml_limiting_attributes(text, parse_options(), MAX_TAG_ATTRIBUTES)
+    };
+    match parse(text) {
         Ok(doc) => Ok(f(&doc)),
         Err(XmlError::Parse(e)) => {
             let Some(fixed) = recover_end_tags(text) else {
                 return Err(XmlError::Parse(e));
             };
-            match deckle_limits::parse_xml(&fixed, parse_options()) {
+            match parse(&fixed) {
                 Ok(doc) => Ok(f(&doc)),
-                Err(refused @ (XmlError::TooDeep | XmlError::EntityMarkup)) => Err(refused),
+                Err(
+                    refused @ (XmlError::TooDeep
+                    | XmlError::EntityMarkup
+                    | XmlError::TooManyAttributes(_)),
+                ) => Err(refused),
                 Err(_) => Err(XmlError::Parse(e)),
             }
         }

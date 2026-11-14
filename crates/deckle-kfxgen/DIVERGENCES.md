@@ -352,9 +352,19 @@ name 100 MB. The port refuses a file whose entities would make more than 16 MB
 
 Calibre reads every document and XML file of a book whatever its size. The port refuses the
 book (`book::Error::TooLarge`) when one it reads is larger than
-`deckle_limits::MAX_CONTENT_FILE_BYTES` (32 MiB) or holds more than `MAX_DOM_NODES` nodes, and
-when the documents it reads hold more than `MAX_BOOK_DOM_NODES` elements and attributes
-together. The nine Gutenberg books' largest file is 70 KB and their largest book holds 7,718.
+`deckle_limits::MAX_CONTENT_FILE_BYTES` (32 MiB), holds more than `MAX_DOM_NODES` nodes, or has
+a start tag of more than `MAX_TAG_ATTRIBUTES` (256) attributes in the scan before the XML parse,
+and when the documents it reads hold more than `MAX_BOOK_DOM_NODES` elements and attributes or
+`MAX_BOOK_CONTENT_BYTES` (256 MiB) together. The nine Gutenberg books' largest file is 70 KB,
+their largest book holds 7,718 elements and attributes and reads 989 KB, and no tag has more than
+7 attributes.
+
+Known gap: a tag the XML scan does not see is not counted when `html5ever` reads the file in the
+HTML fallback, and `html5ever` compares each attribute with the ones before it. A `<p>` of
+80,000 attributes after `<script><x y="</script>` (the scan reads one quoted value, `html5ever`
+ends the script and reads the `<p>`) takes 12 s in a release build; 80,000 in a plain tag took
+18 s before the scan counted them. `book::a_many_attribute_tag_read_as_html_is_a_known_gap`
+records the cost; the outcome note's "Before phase 4" lists the options.
 
 ## Calibre steps the element tree leaves out
 

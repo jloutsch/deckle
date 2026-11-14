@@ -19,7 +19,7 @@ mod xml;
 #[cfg(feature = "xml")]
 pub use roxmltree;
 #[cfg(feature = "xml")]
-pub use xml::{XmlError, parse_xml};
+pub use xml::{XmlError, parse_xml, parse_xml_limiting_attributes};
 
 #[cfg(feature = "state")]
 pub mod state_file;
@@ -155,6 +155,21 @@ pub const MAX_BOOK_DOM_NODES: usize = 2_000_000;
 /// is 70 KB (pg23). At the limit a file of one paragraph of text peaked at 302 MB read as XML
 /// and 432 MB read as HTML; one of attributes, read as XML, 774 MB.
 pub const MAX_CONTENT_FILE_BYTES: u64 = 32 * MB;
+
+/// EPUB to KFX: the documents and XML files a book reads together (its spine documents, the
+/// files they link, the nav, the NCX, XML items), each counted once as it is read. The nine
+/// Gutenberg books read at most 989 KB (pg98). Under the limit, 8 files of 31 MiB of text read
+/// to a 772 MB peak in 2.6 s as XML, and 1.85 GB in 4.2 s read as HTML (release build).
+pub const MAX_BOOK_CONTENT_BYTES: u64 = 256 * MB;
+
+/// EPUB to KFX: the attributes of one start tag read as XML, refused in the scan before the
+/// file is parsed (`parse_xml_limiting_attributes`): `roxmltree` compares each attribute
+/// with the ones before it, so a tag's time grows with the square of its attributes (80,000
+/// took 30 s). The nine Gutenberg books and the fixtures have at most 7 in a tag. A 31 MiB
+/// file of 256-attribute tags is refused by `MAX_BOOK_DOM_NODES` after 1.2 s at 685 MB.
+/// Known gap: a tag the XML scan does not see, read by `html5ever` in the HTML fallback, is
+/// not counted (80,000 attributes: 12 s).
+pub const MAX_TAG_ATTRIBUTES: usize = 256;
 
 /// Largest reservation made from a size a file declares (rule 1 of the size-limits design):
 /// `Vec::with_capacity(declared.min(MAX_RESERVE))`.

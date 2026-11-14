@@ -684,3 +684,84 @@ fn attributes_count_against_the_book_node_limit() {
     let what = too_large(&file);
     assert!(what.starts_with("this book's files "), "{what}");
 }
+/// A start tag of `n` attributes.
+fn tag_of(n: usize) -> String {
+    let attrs: String = (0..n).map(|i| format!(r#" a{i}="""#)).collect();
+    format!("<p{attrs}>x</p>")
+}
+
+/// A start tag of more than `MAX_TAG_ATTRIBUTES` attributes is refused before it is parsed, in
+/// a document read as XML, one read as HTML, and an XML item; one of exactly that many is read.
+#[test]
+fn a_tag_of_too_many_attributes_is_too_large() {
+    let max = deckle_limits::MAX_TAG_ATTRIBUTES;
+    let body = |tag: &str| {
+        format!(
+            r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title></head><body>{tag}</body></html>"#
+        )
+    };
+    let small = page_with("");
+    for page in [
+        body(&tag_of(max + 1)),
+        // Not XML: the paragraph is not closed.
+        format!(
+            "<html><head><title>T</title></head><body><p>unclosed{}",
+            tag_of(max + 1)
+        ),
+    ] {
+        let file = epub_of(opf_with("").as_bytes(), &[("c.xhtml", page.as_bytes())]);
+        let what = too_large(&file);
+        assert!(what.starts_with("c.xhtml: "), "{what}");
+    }
+    let xml = format!("<r>{}</r>", tag_of(max + 1));
+    let file = epub_of(
+        opf_with_xml(&["x.xml"]).as_bytes(),
+        &[("c.xhtml", small.as_bytes()), ("x.xml", xml.as_bytes())],
+    );
+    let what = too_large(&file);
+    assert!(what.starts_with("x.xml: "), "{what}");
+
+    let page = body(&tag_of(max));
+    let file = epub_of(opf_with("").as_bytes(), &[("c.xhtml", page.as_bytes())]);
+    read_book(file.path()).unwrap();
+}
+
+/// Known gap (DIVERGENCES.md, "Files too large to read"): a tag the XML scan does not see, read
+/// by `html5ever` in the HTML fallback, is not counted. Here the scan reads `y="…"` as one
+/// quoted value, while `html5ever` ends the script at `</script>` and reads a `<p>` of `N`
+/// attributes, comparing each with the ones before it: 80,000 took 18 s (release). This
+/// records the cost; run it with `--ignored --nocapture`.
+#[test]
+#[ignore = "known gap: records the cost of a many-attribute tag read as HTML"]
+fn a_many_attribute_tag_read_as_html_is_a_known_gap() {
+    const N: usize = 20_000;
+    let attrs: String = (0..N).map(|i| format!(" a{i}=1")).collect();
+    let page = format!(
+        r#"<html><head><title>T</title></head><body><script><x y="</script><p{attrs}>"</script></body></html>"#
+    );
+    let file = epub_of(opf_with("").as_bytes(), &[("c.xhtml", page.as_bytes())]);
+    let start = std::time::Instant::now();
+    let got = read_book(file.path());
+    eprintln!(
+        "{N} attributes read as HTML: {:?}, {:?}",
+        start.elapsed(),
+        got.map(|_| ())
+    );
+}
+
+/// The documents and XML files a book reads count against `MAX_BOOK_CONTENT_BYTES` together:
+/// XML items each under `MAX_CONTENT_FILE_BYTES` are refused once they pass it.
+#[test]
+fn content_files_count_against_the_book_size_limit() {
+    let per_file = usize::try_from(deckle_limits::MAX_CONTENT_FILE_BYTES).unwrap() - 1024;
+    let n = usize::try_from(deckle_limits::MAX_BOOK_CONTENT_BYTES).unwrap() / per_file + 1;
+    let xml = format!("<r>{}</r>", "w".repeat(per_file));
+    let names: Vec<String> = (0..n).map(|i| format!("x{i}.xml")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let page = page_with("");
+    let mut entries: Vec<(&str, &[u8])> = vec![("c.xhtml", page.as_bytes())];
+    entries.extend(refs.iter().map(|n| (*n, xml.as_bytes())));
+    let file = epub_of(opf_with_xml(&refs).as_bytes(), &entries);
+    let what = too_large(&file);
+    assert!(what.starts_with("this book's files "), "{what}");
+}

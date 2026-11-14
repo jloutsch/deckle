@@ -537,11 +537,14 @@ fn declared_legacy_encodings_decode() {
 
 #[test]
 fn formatting_rebuilt_with_many_attributes_stops() {
-    // One `<b>` of 6,000 attributes, left open, which the HTML algorithm copies, attributes
-    // and all, into each of 6,000 paragraphs: 36 million attributes from 95 KB. Unbounded, it
-    // took 90 s in a debug build (13 s at 3,000 by 3,000, too close to the limit).
-    let attrs: String = (0..6000).map(|i| format!(" a{i}=v")).collect();
-    let src = format!("<html><body><p><b{attrs}>x</p>{}", "<p>x</p>".repeat(6000));
+    // One `<b>` of 250 attributes (under `MAX_TAG_ATTRIBUTES`), left open, which the HTML
+    // algorithm copies, attributes and all, into each of 150,000 paragraphs: 37.5 million
+    // attributes from 1.2 MB. Unbounded, 36 million took 90 s in a debug build.
+    let attrs: String = (0..250).map(|i| format!(" a{i}=v")).collect();
+    let src = format!(
+        "<html><body><p><b{attrs}>x</p>{}",
+        "<p>x</p>".repeat(150_000)
+    );
     let start = std::time::Instant::now();
     let r = dom::parse(src.as_bytes());
     assert!(

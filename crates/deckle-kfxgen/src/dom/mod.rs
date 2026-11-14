@@ -48,6 +48,10 @@ pub enum Error {
     /// Read as XML, it holds more than [`deckle_limits::MAX_DOM_NODES`] nodes.
     #[error("this file holds more than {0} elements and runs of text")]
     TooManyNodes(usize),
+    /// Read as XML, a start tag has more than [`deckle_limits::MAX_TAG_ATTRIBUTES`] attributes
+    /// (`deckle_limits::parse_xml_limiting_attributes`).
+    #[error("this file has a start tag of more than {0} attributes")]
+    TooManyAttributes(usize),
     /// Read as HTML (it is not XML `deckle_limits::parse_xml` reads), its elements nest more
     /// than `MAX_DEPTH` deep. Calibre falls back to libxml2's HTML parser there
     /// (DIVERGENCES.md, "XHTML that is not well-formed").

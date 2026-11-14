@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::LazyLock;
 
 use deckle_limits::roxmltree::{Document, Node, ParsingOptions};
-use deckle_limits::{MAX_DEPTH, MAX_DOM_NODES, XmlError};
+use deckle_limits::{MAX_DEPTH, MAX_DOM_NODES, MAX_TAG_ATTRIBUTES, XmlError};
 use html5ever::interface::{ElementFlags, NodeOrText, QuirksMode, TreeSink};
 use html5ever::tendril::{StrTendril, TendrilSink};
 use html5ever::{Attribute, QualName, local_name, ns};
@@ -554,11 +554,14 @@ fn xml_tree(data: &str, pre: &str) -> Result<Option<Dom>, Error> {
         nodes_limit: u32::try_from(MAX_DOM_NODES).unwrap_or(u32::MAX),
         ..Default::default()
     };
-    let doc = match deckle_limits::parse_xml(data, options) {
+    let doc = match deckle_limits::parse_xml_limiting_attributes(data, options, MAX_TAG_ATTRIBUTES)
+    {
         Ok(doc) => doc,
         Err(XmlError::Parse(deckle_limits::roxmltree::Error::NodesLimitReached)) => {
             return Err(Error::TooManyNodes(MAX_DOM_NODES));
         }
+        // Past it the file is refused: read as HTML the tag would cost as much.
+        Err(XmlError::TooManyAttributes(max)) => return Err(Error::TooManyAttributes(max)),
         Err(_) => return Ok(None),
     };
     let dom = from_xml(&doc);
