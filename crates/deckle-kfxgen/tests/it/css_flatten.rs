@@ -23,7 +23,7 @@ use crate::support::{BOOKS, Book};
 /// with its `DIVERGENCES.md` section: (book, file, path, section).
 const ALLOWED: &[(&str, &str, &[u32], &str)] = &[];
 
-fn read(path: &std::path::Path) -> Value {
+pub(crate) fn read(path: &std::path::Path) -> Value {
     serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
 }
 
@@ -38,17 +38,17 @@ fn timed<T>(what: &str, f: impl FnOnce() -> T) -> T {
 }
 
 /// One flattened spine file.
-struct File {
-    href: String,
+pub(crate) struct File {
+    pub(crate) href: String,
     /// The dump's name for it.
-    nnn: String,
-    dom: Dom,
-    flat: Flat,
+    pub(crate) nnn: String,
+    pub(crate) dom: Dom,
+    pub(crate) flat: Flat,
 }
 
 /// A fixture book's spine, flattened in spine order as `CSSFlattener.flatten_spine` does, then
 /// its fake margins removed; and the units its files used together.
-fn flatten_book(name: &str) -> (Vec<File>, usize) {
+pub(crate) fn flatten_book(name: &str) -> (Vec<File>, usize) {
     let mut book = Book::open(name);
     // `files.json` numbers the spine in order (checked against `oeb.json` below).
     let mut order: Vec<(String, String)> = book
@@ -116,7 +116,7 @@ fn class_set(class: Option<&str>) -> Option<BTreeSet<String>> {
     class.map(|c| c.split_ascii_whitespace().map(str::to_owned).collect())
 }
 
-fn path_of(v: &Value) -> Vec<u32> {
+pub(crate) fn path_of(v: &Value) -> Vec<u32> {
     v.as_array()
         .unwrap()
         .iter()
@@ -124,7 +124,7 @@ fn path_of(v: &Value) -> Vec<u32> {
         .collect()
 }
 
-fn find(dom: &Dom, path: &[u32]) -> Option<NodeId> {
+pub(crate) fn find(dom: &Dom, path: &[u32]) -> Option<NodeId> {
     let mut n = dom.root();
     for &i in path {
         n = *dom.children(n).get(i as usize)?;
@@ -133,7 +133,7 @@ fn find(dom: &Dom, path: &[u32]) -> Option<NodeId> {
 }
 
 /// Path → (local name, class attribute) of every element of a `dom/` dump.
-fn dump_elements(xhtml: &str) -> BTreeMap<Vec<u32>, (String, Option<String>)> {
+pub(crate) fn dump_elements(xhtml: &str) -> BTreeMap<Vec<u32>, (String, Option<String>)> {
     let doc = deckle_limits::parse_xml(xhtml, ParsingOptions::default()).unwrap();
     let mut out = BTreeMap::new();
     let mut stack = vec![(doc.root_element(), Vec::new())];
@@ -247,12 +247,12 @@ fn every_cascade_fixture_specified_matches_kfxgens_stylizer() {
     assert!(most_units * 10 <= MAX_BOOK_CASCADE_DECLS, "{most_units}");
 }
 
-fn fixtures_dir(name: &str) -> std::path::PathBuf {
+pub(crate) fn fixtures_dir(name: &str) -> std::path::PathBuf {
     deckle_kfx::fixtures::kfxgen(&format!("cascade/{name}"))
 }
 
 /// One page, its `<head>` holding `css`, flattened alone.
-fn flat_page(html_attrs: &str, body: &str, css: &str) -> (Dom, Flat) {
+pub(crate) fn flat_page(html_attrs: &str, body: &str, css: &str) -> (Dom, Flat) {
     let src = format!(
         "<html xmlns=\"http://www.w3.org/1999/xhtml\"{html_attrs}><head><title>T</title></head><body>{body}</body></html>"
     );
@@ -272,7 +272,7 @@ fn flat_page(html_attrs: &str, body: &str, css: &str) -> (Dom, Flat) {
     (dom, flat)
 }
 
-fn body(dom: &Dom) -> NodeId {
+pub(crate) fn body(dom: &Dom) -> NodeId {
     dom.children(dom.root())
         .iter()
         .copied()

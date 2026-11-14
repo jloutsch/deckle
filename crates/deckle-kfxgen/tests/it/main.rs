@@ -7,6 +7,7 @@ mod css_flatten;
 mod css_normalize;
 mod css_select;
 mod css_sheet;
+mod css_style;
 mod dom;
 mod epub;
 mod generate_boxes;

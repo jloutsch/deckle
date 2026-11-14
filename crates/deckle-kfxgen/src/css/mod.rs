@@ -42,6 +42,7 @@ mod normalize;
 mod select;
 mod selector;
 mod sheet;
+mod style;
 mod value;
 
 pub use cascade::{Cascaded, cascade};
@@ -54,6 +55,7 @@ pub use select::{
     DocIndex, MAX_SELECTOR_BYTES, Parsed, Selector, TooLarge, parse_selector, select,
 };
 pub use sheet::parse_sheet;
+pub use style::{Styles, Value};
 pub use value::{parse_style_attr, serialize_value};
 
 /// A rule's declarations: property names in lower case, each once, in the order css_parser
@@ -142,7 +144,7 @@ impl Sheet {
 /// verbatim (`NOTICE`). Calibre reads it without its preprocessor (`html_css_stylesheet`).
 pub const HTML_CSS: &str = include_str!("html.css");
 
-/// Why a stylesheet was not read.
+/// Why a stylesheet was not read, or why an element has no value for a property.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// It and its imports pass [`deckle_limits::MAX_STYLE_RULES`] rules or
@@ -160,4 +162,8 @@ pub enum Error {
     /// [`deckle_limits::MAX_BOOK_CASCADE_DECLS`] units together: the limit passed.
     #[error("the CSS of this book gives the elements of its files more than {0} declarations")]
     BookCascade(usize),
+    /// A style value Calibre has no default for was asked of an element that has none:
+    /// Calibre raises `KeyError` ([`Styles::inherited`]).
+    #[error("CSS property {prop} has no value and no default")]
+    NoDefault { prop: String },
 }

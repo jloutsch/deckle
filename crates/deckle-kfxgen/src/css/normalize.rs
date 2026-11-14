@@ -19,6 +19,10 @@ pub struct Profile {
     /// The base font size, in points.
     pub fbase: f64,
     pub dpi: f64,
+    /// The screen in pixels (`width`, `height`): what `Style.width` and `Style.height` give
+    /// where a size does not read, as they are, not in points.
+    pub width_px: f64,
+    pub height_px: f64,
     pub width_pts: f64,
     pub height_pts: f64,
     /// The font-size keywords, `xx-small` to `xx-large`, in points.
@@ -33,6 +37,8 @@ pub struct Profile {
 pub const DEFAULT_PROFILE: Profile = Profile {
     fbase: 12.0,
     dpi: 100.0,
+    width_px: 1600.0,
+    height_px: 1200.0,
     width_pts: 1152.0,
     height_pts: 864.0,
     fnames: [
@@ -263,7 +269,7 @@ fn border_parts(prefix: &str) -> [String; 3] {
 
 /// The items of a value css_parser wrote, as its `PropertyValue` lists them: each top-level
 /// value (a function or `url()` whole), without the commas and slashes between them.
-fn primitives(value: &str) -> Vec<String> {
+pub(crate) fn primitives(value: &str) -> Vec<&str> {
     let mut input = ParserInput::new(value);
     let mut p = Parser::new(&mut input);
     let mut out = Vec::new();
@@ -285,7 +291,7 @@ fn primitives(value: &str) -> Vec<String> {
         ) {
             let _ = p.parse_nested_block(|_| Ok::<(), cssparser::ParseError<'_, ()>>(()));
         }
-        out.push(p.slice_from(start).to_owned());
+        out.push(p.slice_from(start));
     }
     out
 }
@@ -297,11 +303,12 @@ fn normalize_edge(name: &str, value: &str) -> Vec<(String, String)> {
     items.truncate(4);
     let values: [String; 4] = match items.as_slice() {
         [] => return Vec::new(),
-        [a] => [a.clone(), a.clone(), a.clone(), a.clone()],
-        [v, h] => [v.clone(), h.clone(), v.clone(), h.clone()],
-        [t, h, b] => [t.clone(), h.clone(), b.clone(), h.clone()],
-        [t, r, b, l, ..] => [t.clone(), r.clone(), b.clone(), l.clone()],
-    };
+        [a] => [a, a, a, a],
+        [v, h] => [v, h, v, h],
+        [t, h, b] => [t, h, b, h],
+        [t, r, b, l, ..] => [t, r, b, l],
+    }
+    .map(|v| (*v).to_owned());
     let names: [String; 4] = match name.split_once('-') {
         Some((l, r)) => ["top", "right", "bottom", "left"].map(|e| format!("{l}-{e}-{r}")),
         None => ["top", "right", "bottom", "left"].map(|e| format!("{name}-{e}")),
@@ -329,7 +336,7 @@ fn simple_composition(
         .collect();
     for item in primitives(value).iter().rev() {
         if let Some(slot) = style.iter_mut().find(|(k, _)| validates(k, item)) {
-            slot.1 = item.clone();
+            slot.1 = (*item).to_owned();
         }
     }
     style
@@ -380,6 +387,13 @@ static LIST_STYLE_POSITION: LazyLock<Regex> = LazyLock::new(|| pattern("inside|o
 static LIST_STYLE_IMAGE: LazyLock<Regex> = LazyLock::new(|| {
     pattern(r#"url\(\s*(?:"(?:\\"|[^"])*"|'(?:\\'|[^'])*'|(?:\\\)|[^)])+)\s*\)|none|inherit"#)
 });
+
+/// Calibre's `validate_color` (`stylizer.py`): css_parser's CSS 2.1 profile reads `value` as
+/// a `color`. That profile's pattern is the one above (checked in Calibre 9.18); Python's `$`
+/// also matches before a final line feed.
+pub(crate) fn is_color(value: &str) -> bool {
+    BORDER_COLOR.is_match(value.strip_suffix('\n').unwrap_or(value))
+}
 
 /// css_parser's `profile.validate(name, value)` for the parts Calibre's simple normalizers
 /// fill.

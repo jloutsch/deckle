@@ -71,6 +71,11 @@ src/calibre/ebooks/oeb/transforms/page_margin.py, src/calibre/ebooks/oeb/stylize
 src/calibre/customize/profiles.py (`fnums`). Class names are made ASCII with the deunicode crate
 (BSD-3-Clause) where calibre uses its own transliteration.
 
+src/css/style.rs ports calibre 9.18.0's style values, under the same notice:
+src/calibre/ebooks/oeb/stylizer.py (`Style`, `validate_color`), src/calibre/ebooks/__init__.py
+(`unit_convert`, `UNIT_RE`) and src/calibre/customize/profiles.py (`fsizes`, the screen size).
+The colour pattern is css_parser's CSS 2.1 `color`, read from calibre.
+
 The tables in src/css/defaults.rs are calibre's (`DEFAULTS`, `INHERITED`). src/css also
 follows the behaviour of css_parser 1.1.1, the CSS library calibre runs (a fork of cssutils,
 licensed under the GNU Lesser General Public License v3 or later); no css_parser code is

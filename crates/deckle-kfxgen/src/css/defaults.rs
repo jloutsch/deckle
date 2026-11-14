@@ -153,10 +153,12 @@ pub static INHERITED: &[&str] = &[
     "text-shadow",
 ];
 
-/// The value of `name` in [`DEFAULTS`].
+/// The value of `name` in [`DEFAULTS`], `""` where it has none.
 pub(crate) fn default_of(name: &str) -> &'static str {
-    DEFAULTS
-        .iter()
-        .find(|(k, _)| *k == name)
-        .map_or("", |(_, v)| v)
+    default_value(name).unwrap_or("")
+}
+
+/// `DEFAULTS[name]`: None where Calibre raises `KeyError`.
+pub(crate) fn default_value(name: &str) -> Option<&'static str> {
+    DEFAULTS.iter().find(|(k, _)| *k == name).map(|(_, v)| *v)
 }

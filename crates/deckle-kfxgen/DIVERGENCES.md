@@ -587,3 +587,12 @@ within its own block only.
 then lacks. The port works out again the styles of the elements the flattener gave that class.
 An element the flattener does not walk, whose own `class` attribute happens to name a class the
 flattener made and edited, keeps the margin in the port.
+
+## Numbers and names in style values
+
+`css::Styles` reads a number in a style value as Python's `float()` does, but for `_` between
+digits and digits outside ASCII, which it does not read (the same reader as "A negative line
+height"): where Calibre reads `1_0` as 10 pixels, the port gives the text back. And it answers a
+property by its CSS name only. Calibre's `Style[name]` first turns the name into a Python
+attribute name (`_toDOMname`), so `fontSize` or `font-Size` also reach the font size; kfxgen asks
+by CSS names.

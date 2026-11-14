@@ -212,7 +212,7 @@
 - Create: `crates/deckle-kfxgen/src/css/{normalize.rs, font_shorthand.rs, defaults.rs}`, `tests/it/css_normalize.rs`
 
 **Interfaces:**
-- Produces: `pub fn normalize(decls: Decls, profile: &Profile) -> Decls;`, `pub struct Profile { pub fbase: f64, pub dpi: f64, pub width_pts: f64, pub height_pts: f64, pub fnames: [(&'static str, f64); 7], pub fnums: [f64; 7] }`, `pub const DEFAULT_PROFILE: Profile` (fbase 12, dpi 100, 1152 × 864, `xx-small 5, x-small 7, small 9, medium 12, large 13.5, x-large 17, xx-large 20`, fnums `5, 9, 12, 13.5, 17, 20, 22`), `pub static DEFAULTS: &[(&str, &str)]`, `pub static INHERITED: &[&str]` (both copied from `oeb/normalize_css.py` and `oeb/stylizer.py:63`).
+- Produces: `pub fn normalize(decls: Decls, profile: &Profile) -> Decls;`, `pub struct Profile { pub fbase: f64, pub dpi: f64, pub width_px: f64, pub height_px: f64, pub width_pts: f64, pub height_pts: f64, pub fnames: [(&'static str, f64); 7], pub fnums: [f64; 7] }`, `pub const DEFAULT_PROFILE: Profile` (fbase 12, dpi 100, 1600 × 1200 px, 1152 × 864 pt, `xx-small 5, x-small 7, small 9, medium 12, large 13.5, x-large 17, xx-large 20`, fnums `5, 9, 12, 13.5, 17, 20, 22`), `pub static DEFAULTS: &[(&str, &str)]`, `pub static INHERITED: &[&str]` (both copied from `oeb/normalize_css.py` and `oeb/stylizer.py:63`).
 - Expands `margin`, `padding`, `border`, `border-{top,right,bottom,left}`, `border-style`, `border-width`, `border-color`, `list-style`, `font` (port of `tinycss/fonts3.py parse_font`; unset parts take `DEFAULTS`). Does **not** expand `background`, `text-decoration`, `outline`.
 - A keyword `font-size` becomes `format!("{:.1}rem", fnames[k] / fbase)`; the keyword test is case-sensitive. `-epub-x` is also written as `-webkit-x` and `x`.
 
@@ -323,15 +323,21 @@
 **Interfaces:**
 - Produces:
   ```rust
-  pub enum Value { Pt(f64), Text(String) }
+  pub enum Value { Pt(f64), Text(String), Absent }   // Absent: Python's None (background-color unset)
   pub struct Styles<'a> { /* dom, flat, profile, caches */ }
   impl<'a> Styles<'a> {
-      pub fn get(&self, n: NodeId, prop: &str) -> Option<&str>;             // Style.get: own declared value
-      pub fn inherited(&self, n: NodeId, prop: &str) -> Result<&str, Error>; // Style._get; Err(NoDefault) where Calibre raises KeyError
-      pub fn computed(&self, n: NodeId, prop: &str) -> Result<Value, Error>; // Style[prop]
-      pub fn pseudo(&self, n: NodeId, name: &str) -> Option<&Decls>;
+      pub fn new(dom: &'a Dom, flat: &'a Flat, profile: &'a Profile) -> Styles<'a>;
+      pub fn get(&self, n: NodeId, prop: &str) -> Option<&'a str>;              // Style.get: own declared value
+      pub fn inherited(&self, n: NodeId, prop: &str) -> Result<&'a str, Error>; // Style._get; Err(Error::NoDefault { prop }) where Calibre raises KeyError
+      pub fn computed(&self, n: NodeId, prop: &str) -> Result<Value, Error>;    // Style[prop]
+      pub fn pseudo(&self, n: NodeId, name: &str) -> Option<&'a Decls>;        // Style._pseudo_classes[name], unfiltered
   }
+  // `Error` is `css::Error`, with the new variant `NoDefault { prop: String }`.
+  // `Profile` gains `width_px`, `height_px` (Calibre's `profile.width`/`height`, 1600 × 1200):
+  // `Style.width`/`height` fall back to them, in pixels, where a size does not read.
   ```
+  *As built (Task 10):* `Value::Absent`, `Styles::new`, the `'a` lifetimes and the two
+  `Profile` fields were added; the dumps hold `null` for `background-color` on most elements.
 - Ports `oeb/stylizer.py:518-944` and `unit_convert` (`ebooks/__init__.py:258`): unitless and `px` × 72/dpi; `in` × 72; `pt` as is; `em` × font size; `ex`/`en` × font size × 0.5; `pc` × 12; `mm` × 2.8346457; `cm` × 28.346457; `rem` × 12; `%` of the base; unparseable returned as `Text`. `font-size`: keywords from `fnames`; `smaller`/`larger` by the table, else ÷ or × 1.2; `%` and `em` of the parent; negative becomes `smaller`; unparseable inherits. `line-height`: `normal` is 1.2 × font size, a number × font size, and with no declaration the **parent's computed pt**. `width`/`height`: the attribute beats CSS, `%` of the parent, the root is `width_pts`/`height_pts`. Margins and padding `%` of the parent's width. `color` falls back to `black`. `initial` and `unset` come back as text.
 - Caches are per node; parent lookups are loops, not recursion.
 
@@ -368,7 +374,7 @@
   pub fn read_book(path: &Path) -> Result<Book, Error>;
   pub fn manifest_bytes(path: &Path, href: &str) -> Result<Vec<u8>, Error>;
   ```
-- `Error` (thiserror): `Io`, `Zip`, `Xml`, `Encoding { file }`, `TooLarge { what }`, `Drm`, `NoDefault { prop }`.
+- `Error` (thiserror): `Io`, `Zip`, `Xml`, `Encoding { file }`, `TooLarge { what }`, `Drm`, `NoDefault { prop }` (from `css::Error::NoDefault { prop }`, which `Styles::inherited` and `Styles::computed` return).
 
 **Amended after Task 1 (the dumps are the reference; where a line above disagrees, these win):**
 - `kfxgen_models.sh --corpus` runs its conversions with `TZ=UTC` for the `cascade/` dump, as `--cascade` does (script change in this task). A corpus book has its own `cascade/ua_rules.json`.

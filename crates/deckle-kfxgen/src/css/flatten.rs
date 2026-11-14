@@ -29,6 +29,7 @@ use cssparser::{Parser, ParserInput};
 use deckle_limits::{MAX_BOOK_CASCADE_DECLS, MAX_STYLE_RULES};
 
 use super::cascade::{Spent, Units, decl_units, run};
+use super::style::{py_float, unit_number};
 use super::value::{declarations, write_value};
 use super::{Cascaded, Decls, Error, Origin, Profile, Rule, normalize};
 use crate::dom::{Dom, NodeId, XHTML_NS, py_space};
@@ -719,58 +720,10 @@ fn is_negative_length(value: &str) -> bool {
     if value == "normal" {
         return false;
     }
-    if let Some(v) = py_float(value) {
-        return v < 0.0;
+    match py_float(value) {
+        Some(v) => v < 0.0,
+        None => unit_number(value).is_some_and(|(v, _)| v < 0.0),
     }
-    // `UNIT_RE = r'^(-*[0-9]*[.]?[0-9]*)\s*(%|em|ex|en|px|mm|cm|in|pt|pc|rem|q)$'`.
-    let num_end = {
-        let b = value.as_bytes();
-        let mut i = 0;
-        while i < b.len() && b[i] == b'-' {
-            i += 1;
-        }
-        while i < b.len() && b[i].is_ascii_digit() {
-            i += 1;
-        }
-        if i < b.len() && b[i] == b'.' {
-            i += 1;
-        }
-        while i < b.len() && b[i].is_ascii_digit() {
-            i += 1;
-        }
-        i
-    };
-    let (num, rest) = value.split_at(num_end);
-    let unit = rest.trim_start_matches(py_space);
-    let unit = unit.strip_suffix('\n').unwrap_or(unit);
-    const UNITS: [&str; 12] = [
-        "%", "em", "ex", "en", "px", "mm", "cm", "in", "pt", "pc", "rem", "q",
-    ];
-    if num.is_empty() || !UNITS.contains(&unit) {
-        return false;
-    }
-    // `float(m.group(1))`, 0 where it does not read (`--5`).
-    py_float(num).is_some_and(|v| v < 0.0)
-}
-
-/// Python's `float()` of a string, but for digits outside ASCII and `_` between digits.
-fn py_float(s: &str) -> Option<f64> {
-    let t = s.trim_matches(py_space);
-    let unsigned = t.strip_prefix(['+', '-']).unwrap_or(t);
-    // Rust reads `inf`, `infinity` and `nan` in any case, as Python does; it also reads
-    // forms Python does not.
-    let ok = unsigned.eq_ignore_ascii_case("inf")
-        || unsigned.eq_ignore_ascii_case("infinity")
-        || unsigned.eq_ignore_ascii_case("nan")
-        || (!unsigned.is_empty()
-            && unsigned
-                .bytes()
-                .all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'e' | b'E' | b'+' | b'-'))
-            && unsigned.bytes().any(|b| b.is_ascii_digit()));
-    if !ok {
-        return None;
-    }
-    t.parse::<f64>().ok()
 }
 
 /// `is_drop_cap` in `flatten_node`: a left float with a font size around one character, or
