@@ -120,9 +120,9 @@ impl ClassNamer {
     }
 
     /// Counts against [`MAX_BOOK_CASCADE_DECLS`] a file's first-pass `rules` and `font_face`
-    /// rules, which the book keeps: one unit a rule and [`decl_units`] for each declaration,
-    /// the declarations the selectors of a list share counted once. [`Error::BookCascade`] past
-    /// the limit.
+    /// rules, which the book keeps: one unit a rule and one more for each 64 bytes of its
+    /// selector, and [`decl_units`] for each declaration, the declarations the selectors of a
+    /// list share counted once. [`Error::BookCascade`] past the limit.
     pub(crate) fn charge_kept(&mut self, rules: &[Rule], font_face: &[Decls]) -> Result<(), Error> {
         let mut seen: HashSet<*const Decls> = HashSet::new();
         let shared = rules
@@ -133,7 +133,10 @@ impl ClassNamer {
             .chain(font_face.iter().map(Vec::as_slice))
             .flat_map(|d| d.iter().map(|(k, v)| decl_units(k, v)))
             .sum::<usize>()
-            + rules.len()
+            + rules
+                .iter()
+                .map(|r| 1 + r.selector.len() / 64)
+                .sum::<usize>()
             + font_face.len();
         self.units = self.units.saturating_add(units);
         if self.units > MAX_BOOK_CASCADE_DECLS {
