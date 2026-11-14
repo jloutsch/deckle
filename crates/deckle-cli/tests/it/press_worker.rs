@@ -251,6 +251,23 @@ fn press_worker_real_child_publishes_and_restart_does_not_refetch() {
     assert!(!counted.exists(), "restart must not build again");
     assert_eq!(std::fs::read_dir(f.root.join("jobs")).unwrap().count(), 0);
 }
+/// A folder opened so its times can be set: Windows opens a folder only with backup semantics,
+/// and setting a time needs write-attributes access.
+fn open_dir_for_times(dir: &std::path::Path) -> std::fs::File {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_WRITE_ATTRIBUTES: u32 = 0x100;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        std::fs::OpenOptions::new()
+            .access_mode(FILE_WRITE_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(dir)
+            .unwrap()
+    }
+    #[cfg(not(windows))]
+    std::fs::File::open(dir).unwrap()
+}
 #[test]
 fn press_worker_removes_stale_job_folders_at_start() {
     let f = fixture("TEST HANG");
@@ -273,10 +290,7 @@ fn press_worker_removes_stale_job_folders_at_start() {
     std::fs::write(recent.join("job.json"), b"{").unwrap();
     let two_days_ago = std::time::SystemTime::now() - Duration::from_secs(2 * 24 * 3600);
     for dir in [&held, &damaged] {
-        std::fs::File::open(dir)
-            .unwrap()
-            .set_modified(two_days_ago)
-            .unwrap();
+        open_dir_for_times(dir).set_modified(two_days_ago).unwrap();
     }
     let mut w = PressSupervisor::with_options(f.options.clone());
     // The status still says building from the first run; wait for the sweep itself.
@@ -728,6 +742,28 @@ fn press_worker_poisoned_snapshot_reopens_before_recovering() {
     std::fs::remove_dir(blocked).unwrap();
     until(&f, &mut w, PressState::Published);
     assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
+}
+#[test]
+fn press_worker_failed_journal_write_while_registering_is_retried_at_once() {
+    // A journal write that fails while a folder is registered is the journal's, not the
+    // folder's: once the write can go, the folder works on the next tick, not after the
+    // minute a refused folder move waits.
+    let f = fixture("Registration write");
+    let blocked = f.root.join("journal/journal.backup.json.tmp");
+    std::fs::create_dir_all(&blocked).unwrap();
+    let mut w = PressSupervisor::with_options(f.options.clone());
+    let end = Instant::now() + Duration::from_secs(15);
+    let mut observed = false;
+    while Instant::now() < end {
+        if w.tick(std::slice::from_ref(&f.cfg), Utc::now()).is_err() {
+            observed = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(observed, "the failed journal write should surface");
+    std::fs::remove_dir(blocked).unwrap();
+    until(&f, &mut w, PressState::Published);
 }
 #[test]
 fn press_worker_private_state_cannot_be_placed_in_shared_export() {

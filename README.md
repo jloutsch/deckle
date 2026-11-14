@@ -66,10 +66,13 @@ finish. Deckle sets one each morning:
 - **The front page is the cover.** Masthead, date, weather and the lead headlines, so your
   reader's library tile is today's paper. Ten masthead faces to choose from.
 - **Whole stories, with photos.** Each story is pulled in full, the way Reader View does it, with
-  photos turned grayscale for e-ink. Nothing opens a browser. A paywalled story runs as a brief.
+  photos turned grayscale for e-ink, or kept in color for a Colorsoft. Nothing opens a browser. A paywalled story runs as a brief.
 - **Your town and what you follow.** Weather, local news for your town and any other place, each
   RSS or Atom feed as its own section, today's events from your calendars, and **interests**: a
   topic ("Rust", your team) searched every morning and kept only when a headline names it.
+- **News in your language.** Each Google News search and topic can read another country's
+  edition (Italy in Italian, Brazil in Portuguese, …), and On this day can come from another
+  language's Wikipedia.
 - **The reading you saved.** Save an article with the bookmarklet, a link dropped in the Inbox
   folder or an iPhone Shortcut, and it prints the next morning, whole.
 - **The back pages.** A mini crossword whose theme answers are yesterday's headlines, a word
@@ -316,6 +319,10 @@ Converting and sending a book is offline. Deckle goes online only for:
   <img src="docs/screenshots/readme/settings-online.jpg" width="720" alt="Settings, Online and privacy: each optional lookup with what it sends and where, and the two that always run, with what they carry">
 </p>
 
+KOReader over Wi-Fi (off until you turn it on) is a server, not a lookup: it listens on every
+network interface over plain HTTP, and its key file is as good as its password. Keep it at home
+or on Tailscale ([docs/daily.md](docs/daily.md#koreader-over-wi-fi)).
+
 The app lists all of it on one page, **Settings → Online & privacy**. A book sent with features
 carries an ASIN, so the Kindle itself may ask Amazon about it. That's the Kindle, not Deckle.
 Sending cover-first avoids it.
@@ -387,7 +394,8 @@ pnpm tauri build                                   # installers in target/releas
 ```
 
 The app ships with the PDFium library it needs; a source build of the CLI gets it with
-`tools/fetch-pdfium.sh` (or `DECKLE_PDFIUM`). Releases: [docs/release.md](docs/release.md). Word
+`tools/fetch-pdfium.sh` (or `DECKLE_PDFIUM`), once per machine: every checkout and worktree
+finds that copy. Releases: [docs/release.md](docs/release.md). Word
 Wise database builder: [data/wordwise/README.md](data/wordwise/README.md).
 
 ## Built with AI

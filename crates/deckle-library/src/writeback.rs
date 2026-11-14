@@ -890,7 +890,9 @@ impl Paths {
             log: log_path(library_json),
             // A damaged library.json reads as no library here; the Library page says why.
             library: library_root(
-                &crate::LibraryConfig::load(library_json).unwrap_or_default(),
+                &crate::LibraryConfig::load(library_json)
+                    .unwrap_or_default()
+                    .usable(),
                 home,
             ),
         }

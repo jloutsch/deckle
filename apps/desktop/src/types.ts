@@ -303,6 +303,9 @@ export type SectionKind = "reading" | "weather" | "local" | "interests" | "feeds
 export interface InterestConfig {
   name: string;
   query?: string;
+  hl?: string;
+  gl?: string;
+  ceid?: string;
   also?: string[];
   not?: string[];
   feeds?: string[];
@@ -324,6 +327,9 @@ export interface FeedConfig {
   url: string;
   urls?: string[];
   topic?: string;
+  hl?: string;
+  gl?: string;
+  ceid?: string;
   full_text?: boolean | "lead";
   max_items: number;
 }
@@ -352,7 +358,7 @@ export interface DailyConfig {
   photos: boolean;
   max_photos: number;
   sections: SectionKind[];
-  local: { google_news: string; feeds: string[]; max_items: number; max_age_hours: number; places?: PlaceNews[] };
+  local: { google_news: string; hl?: string; gl?: string; ceid?: string; feeds: string[]; max_items: number; max_age_hours: number; places?: PlaceNews[] };
   /** `[[interests]]`; absent while there are none. */
   interests?: InterestConfig[];
   feeds: FeedConfig[];
@@ -360,6 +366,7 @@ export interface DailyConfig {
   learning?: LearningConfig;
   lottery: { games: string[] };
   horoscope: { signs: string[] };
+  onthisday?: { language?: string };
   reading: { inbox: string; max_items: number; long_read_words: number };
   /** Absent while it's untouched (the backend leaves the defaults out). */
   email?: EmailConfig;
@@ -521,6 +528,9 @@ export interface ExportReport {
 export interface PlaceNews {
   name: string;
   google_news: string;
+  hl?: string;
+  gl?: string;
+  ceid?: string;
   feeds: string[];
   /** Stories; `[local] max_items` when absent. */
   max_items?: number;
@@ -1113,7 +1123,8 @@ export interface PuzzleBookRequest {
   words: string;
   quotes: string;
   picture: string | null;
-  seed: number | null;
+  /** As text: a seed is a 64-bit number, more than a JavaScript number holds. */
+  seed: string | null;
   date: string;
   /** Where the theme words come from (Puzzles tab design §2). */
   theme: PuzzleTheme;
@@ -1151,7 +1162,7 @@ export type PuzzleDto =
 export interface PuzzlePreview {
   title: string;
   subtitle: string;
-  seed: number;
+  seed: string;
   date: string;
   pages: number;
   warnings: string[];
@@ -1170,7 +1181,7 @@ export interface MadePuzzleBook {
   title: string;
   subtitle: string;
   date: string;
-  seed: number;
+  seed: string;
   pages: number;
   puzzles: number;
   bytes: number;

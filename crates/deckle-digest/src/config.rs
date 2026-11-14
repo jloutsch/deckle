@@ -116,6 +116,8 @@ pub struct Config {
     pub learning: LearningConfig,
     pub lottery: LotteryConfig,
     pub horoscope: HoroscopeConfig,
+    #[serde(skip_serializing_if = "OnThisDayConfig::is_default")]
+    pub onthisday: OnThisDayConfig,
     pub reading: ReadingConfig,
     /// What `digest watch` does when a Kindle connects (auto-sync design §3).
     pub sync: SyncConfig,
@@ -134,6 +136,9 @@ pub struct Config {
     /// while it's untouched.
     #[serde(skip_serializing_if = "DayConfig::is_default")]
     pub day: DayConfig,
+    /// What fetches may reach on your own network. Left out of a save while it's untouched.
+    #[serde(skip_serializing_if = "FetchConfig::is_default")]
+    pub fetch: FetchConfig,
     /// The puzzle page (puzzle design §6). Left out of a save while it's untouched.
     #[serde(skip_serializing_if = "PuzzleConfig::is_default")]
     pub puzzle: PuzzleConfig,
@@ -175,6 +180,10 @@ pub struct Config {
     /// Keep the photos in color whatever the exports say (`digest build --bundle`).
     #[serde(skip)]
     pub force_color: bool,
+    /// A Kindle with a color screen has been seen (the device registry), so the Kindle's paper
+    /// keeps its photos in color unless `[sync] photos` says otherwise (color Kindle design §2).
+    #[serde(skip)]
+    pub color_kindle: bool,
     /// What the Kindles shared (tests); the default is `shelf.json` beside `digest.toml`.
     #[serde(skip)]
     pub shelf_path: Option<PathBuf>,
@@ -292,6 +301,8 @@ impl Default for Config {
             learning: LearningConfig::default(),
             lottery: LotteryConfig::default(),
             horoscope: HoroscopeConfig::default(),
+            onthisday: OnThisDayConfig::default(),
+            fetch: FetchConfig::default(),
             reading: ReadingConfig::default(),
             sync: SyncConfig::default(),
             email: EmailConfig::default(),
@@ -310,6 +321,7 @@ impl Default for Config {
             press_path: None,
             puzzle_path: None,
             force_color: false,
+            color_kindle: false,
             shelf_path: None,
             reader: String::new(),
             kindle: String::new(),
@@ -325,6 +337,15 @@ impl Default for Config {
 pub struct LocalConfig {
     /// A Google News search, e.g. "Moore County NC". Empty: none.
     pub google_news: String,
+    /// Google News language override. None: en-US.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hl: Option<String>,
+    /// Google News country override. None: US.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gl: Option<String>,
+    /// Google News edition override. None: US:en.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ceid: Option<String>,
     /// Local paper RSS/Atom feeds, merged with the search.
     pub feeds: Vec<String>,
     pub max_items: usize,
@@ -344,6 +365,15 @@ pub struct PlaceNews {
     /// A Google News search. Empty: the name, as typed.
     #[serde(default)]
     pub google_news: String,
+    /// Google News language override. None: en-US.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hl: Option<String>,
+    /// Google News country override. None: US.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gl: Option<String>,
+    /// Google News edition override. None: US:en.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ceid: Option<String>,
     /// Local paper RSS/Atom feeds, merged with the search.
     #[serde(default)]
     pub feeds: Vec<String>,
@@ -365,6 +395,9 @@ impl Default for LocalConfig {
     fn default() -> Self {
         LocalConfig {
             google_news: String::new(),
+            hl: None,
+            gl: None,
+            ceid: None,
             feeds: Vec::new(),
             max_items: 12,
             max_age_hours: 72,
@@ -435,10 +468,14 @@ impl Topic {
 
     /// The Google News topic feed. Google answers this with a 302 to a `/rss/topics/<id>`
     /// feed; the fetcher (ureq) follows redirects.
-    pub fn url(self) -> String {
+    pub fn url(self, hl: Option<&str>, gl: Option<&str>, ceid: Option<&str>) -> String {
+        use crate::fetch::encode;
         format!(
-            "https://news.google.com/rss/headlines/section/topic/{}?hl=en-US&gl=US&ceid=US:en",
-            self.slug()
+            "https://news.google.com/rss/headlines/section/topic/{}?hl={}&gl={}&ceid={}",
+            self.slug(),
+            encode(hl.filter(|s| !s.is_empty()).unwrap_or("en-US")),
+            encode(gl.filter(|s| !s.is_empty()).unwrap_or("US")),
+            encode(ceid.filter(|s| !s.is_empty()).unwrap_or("US:en")).replace("%3A", ":")
         )
     }
 }
@@ -511,6 +548,15 @@ pub struct FeedConfig {
     /// A Google News topic, merged in ahead of `url` and `urls`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub topic: Option<Topic>,
+    /// Google News language override. None: en-US.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hl: Option<String>,
+    /// Google News country override. None: US.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gl: Option<String>,
+    /// Google News edition override. None: US:en.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ceid: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub full_text: Option<FullText>,
     /// 0 means unset: [`Config::parse`] makes it 5 for a topic entry, else 10.
@@ -522,7 +568,9 @@ impl FeedConfig {
     /// Every feed URL for this section: the topic's, then `url`, then `urls`, without repeats.
     pub fn sources(&self) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
-        let first = self.topic.map(Topic::url);
+        let first = self
+            .topic
+            .map(|t| t.url(self.hl.as_deref(), self.gl.as_deref(), self.ceid.as_deref()));
         let one = Some(self.url.trim().to_owned()).filter(|u| !u.is_empty());
         for u in first
             .into_iter()
@@ -560,6 +608,15 @@ pub struct InterestConfig {
     pub name: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub query: String,
+    /// Google News language override. None: en-US.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hl: Option<String>,
+    /// Google News country override. None: US.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gl: Option<String>,
+    /// Google News edition override. None: US:en.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ceid: Option<String>,
     /// More searches, merged; a story naming one is relevant.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub also: Vec<String>,
@@ -659,6 +716,34 @@ impl Default for LotteryConfig {
         LotteryConfig {
             games: vec!["powerball".into(), "megamillions".into()],
         }
+    }
+}
+
+/// `[fetch]`: the Daily fetches only public addresses, so a feed can't make this machine read
+/// a page on your network. A feed, calendar or subscription you configured at a private
+/// address or a local name (`nas.local`) is reached as is; anything else goes here.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FetchConfig {
+    /// Origins on your network the Daily may fetch, e.g. `["http://nas.local:8080"]`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub allow_private: Vec<String>,
+}
+
+impl FetchConfig {
+    pub fn is_default(&self) -> bool {
+        self.allow_private.is_empty()
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        for u in &self.allow_private {
+            if crate::fetch::Origin::of(u).is_none() {
+                return Err(format!(
+                    "[fetch] allow_private: {u:?} isn't an http:// or https:// address"
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -775,6 +860,21 @@ pub struct HoroscopeConfig {
     pub signs: Vec<String>,
 }
 
+/// Language settings for Wikipedia's "On This Day" section.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OnThisDayConfig {
+    /// A Wikipedia language code, e.g. "it". None: English.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+}
+
+impl OnThisDayConfig {
+    pub fn is_default(&self) -> bool {
+        *self == OnThisDayConfig::default()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ReadingConfig {
@@ -821,6 +921,10 @@ pub struct SyncConfig {
     /// so it's only written to the file when turned off.
     #[serde(skip_serializing_if = "is_true")]
     pub cookbook: bool,
+    /// The Kindles' paper photos: in color or gray for every Kindle. Unset follows the Kindles
+    /// Deckle has seen: color once one with a color screen has been (color Kindle design §2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub photos: Option<Photos>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub devices: BTreeMap<String, DeviceSync>,
 }
@@ -834,6 +938,7 @@ impl Default for SyncConfig {
             readership: true,
             shelf: true,
             cookbook: true,
+            photos: None,
             devices: BTreeMap::new(),
         }
     }
@@ -1768,7 +1873,7 @@ feeds = []
 
 impl Config {
     pub fn parse(text: &str) -> Result<Self, String> {
-        let mut cfg: Config = toml::from_str(text).map_err(|e| e.to_string())?;
+        let mut cfg: Config = toml::from_str(text).map_err(|e| toml_error(text, &e))?;
         cfg.normalize();
         cfg.normalize_subscriptions()?;
         cfg.normalize_subscribed()?;
@@ -1777,6 +1882,8 @@ impl Config {
         cfg.llm.validate()?;
         cfg.schedule.validate()?;
         validate_exports(&cfg.export)?;
+        cfg.fetch.validate()?;
+        crate::fetch::allow_config(&cfg);
         Ok(cfg)
     }
 
@@ -1876,6 +1983,48 @@ impl Config {
     }
 }
 
+/// A TOML error a person can be shown: where it is and what's wrong, without the line itself.
+/// The parsers' own messages quote the damaged line, and a line can hold a secret such as the
+/// calendar's private address (GHSA-h56r-2j2r-9j78).
+pub(crate) fn toml_error(text: &str, e: &dyn TomlProblem) -> String {
+    match e.span() {
+        Some(span) => {
+            let before = &text[..span.start.min(text.len())];
+            let line = before.matches('\n').count() + 1;
+            let column = before.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+            format!(
+                "TOML error at line {line}, column {column}: {}",
+                e.message()
+            )
+        }
+        None => format!("TOML error: {}", e.message()),
+    }
+}
+
+/// What [`toml_error`] needs from either parser's error.
+pub(crate) trait TomlProblem {
+    fn message(&self) -> &str;
+    fn span(&self) -> Option<std::ops::Range<usize>>;
+}
+
+impl TomlProblem for toml::de::Error {
+    fn message(&self) -> &str {
+        toml::de::Error::message(self)
+    }
+    fn span(&self) -> Option<std::ops::Range<usize>> {
+        toml::de::Error::span(self)
+    }
+}
+
+impl TomlProblem for toml_edit::TomlError {
+    fn message(&self) -> &str {
+        toml_edit::TomlError::message(self)
+    }
+    fn span(&self) -> Option<std::ops::Range<usize>> {
+        toml_edit::TomlError::span(self)
+    }
+}
+
 /// Writes `cfg` into the `digest.toml` at `path`, keeping what a person wrote: comments, key
 /// order and every value that didn't change stay as they are. A missing file starts from
 /// [`STARTER`] (Daily design §5c).
@@ -1905,7 +2054,7 @@ pub fn save(path: &Path, cfg: &Config) -> Result<(), String> {
     };
     let mut doc: toml_edit::DocumentMut = text
         .parse()
-        .map_err(|e| format!("{}: {e}", path.display()))?;
+        .map_err(|e| format!("{}: {}", path.display(), toml_error(&text, &e)))?;
     let mut new = toml_edit::ser::to_document(cfg).map_err(|e| e.to_string())?;
     // Another paper's file never holds the household settings it inherits (many papers §3),
     // and stays as short as it was written: a key it lacks is added only when it isn't the
@@ -2044,6 +2193,16 @@ impl Config {
                 .iter()
                 .any(|e| e.photos == Photos::Color || e.format == ExportFormat::Bundle)
             || (self.remarkable.enabled && self.remarkable.photos() == Photos::Color)
+            || self.kindle_photos() == Photos::Color
+    }
+
+    /// The photos in the Kindle's paper (the edition's EPUB and the Kindle's PDF): `[sync]
+    /// photos` when set, else color once a color Kindle has been seen.
+    pub fn kindle_photos(&self) -> Photos {
+        self.sync.photos.unwrap_or(match self.color_kindle {
+            true => Photos::Color,
+            false => Photos::Gray,
+        })
     }
 
     /// The edition bundles the build makes: one with the long reads, one without, as the
@@ -2060,9 +2219,11 @@ impl Config {
         out
     }
 
-    /// The PDF a Kindle that takes the paper as a PDF gets: a Scribe's screen, gray photos.
-    pub const KINDLE_PDF: (crate::pdf::Screen, Photos) =
-        (crate::pdf::Screen::KindleScribe, Photos::Gray);
+    /// The PDF a Kindle that takes the paper as a PDF gets: a Scribe's screen, the Kindle's
+    /// photos.
+    pub fn kindle_pdf(&self) -> (crate::pdf::Screen, Photos) {
+        (crate::pdf::Screen::KindleScribe, self.kindle_photos())
+    }
 
     /// The PDF editions the build makes: one per screen and photos an export folder, the
     /// reMarkable or a Kindle taking the paper as a PDF asks for.
@@ -2077,7 +2238,7 @@ impl Config {
             out.push((self.remarkable.screen, self.remarkable.photos()));
         }
         if self.sync.any_pdf_paper() || (self.email.enabled && self.email.pdf) {
-            out.push(Self::KINDLE_PDF);
+            out.push(self.kindle_pdf());
         }
         out.sort_by_key(|(s, p)| (format!("{s:?}"), *p == Photos::Color));
         out.dedup();
@@ -2131,6 +2292,30 @@ pub fn default_path() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+
+    /// GHSA-h56r-2j2r-9j78: a damaged line is never quoted, since it can hold a secret such as
+    /// the calendar's private address. The error names the file, line and column instead.
+    #[test]
+    fn a_damaged_line_is_named_not_quoted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("digest.toml");
+        std::fs::write(
+            &path,
+            "[calendar]\nurl = \"https://calendar.example/private/FAKESECRET-ics\n",
+        )
+        .unwrap();
+        let load = Config::load(&path).unwrap_err();
+        let save = save(&path, &Config::default()).unwrap_err();
+        for err in [&load, &save] {
+            assert!(!err.contains("FAKESECRET"), "{err}");
+            assert!(err.contains("digest.toml"), "{err}");
+            assert!(err.contains("line 2, column"), "{err}");
+        }
+        // A damaged value further in on a later line.
+        let err = Config::parse("name = \"Paper\"\n\n  bad = = 1\n").unwrap_err();
+        assert!(err.contains("line 3, column 9"), "{err}");
+        assert!(!err.contains("bad"), "{err}");
+    }
     use super::*;
 
     #[test]
@@ -2354,7 +2539,7 @@ mod tests {
         let f = feed("[[feeds]]\nname = \"Sports\"\ntopic = \"SPORTS\"\n").unwrap();
         assert_eq!(f.max_items, 5);
         assert_eq!(f.full(false), FullText::Lead);
-        assert_eq!(f.sources(), [Topic::Sports.url()]);
+        assert_eq!(f.sources(), [Topic::Sports.url(None, None, None)]);
     }
 
     #[test]
@@ -2367,12 +2552,26 @@ mod tests {
         assert_eq!(
             f.sources(),
             [
-                Topic::World.url(),
+                Topic::World.url(None, None, None),
                 "https://a.example/f".into(),
                 "https://b.example/f".into()
             ]
         );
         assert_eq!(f.max_items, 7);
+    }
+
+    #[test]
+    fn topic_feed_i18n() {
+        let f = feed(
+            "[[feeds]]\nname = \"Technology\"\ntopic = \"TECHNOLOGY\"\n\
+            hl = \"it\"\ngl = \"IT\"\nceid = \"IT:it\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            f.sources(),
+            [Topic::Technology.url(Some("it"), Some("IT"), Some("IT:it"))]
+        );
     }
 
     #[test]
@@ -2461,7 +2660,7 @@ mod tests {
         assert!(text.contains("topic = \"SPORTS\""), "{text}");
         let back = Config::load(&path).unwrap();
         let f = back.feeds.iter().find(|f| f.name == "Sports").unwrap();
-        assert_eq!(f.sources(), vec![Topic::Sports.url()]);
+        assert_eq!(f.sources(), vec![Topic::Sports.url(None, None, None)]);
         assert_eq!(f.max_items, 5);
         assert_eq!(f.full(true), FullText::Lead);
         assert_eq!(back, cfg);
@@ -2594,10 +2793,42 @@ mod tests {
     }
 
     #[test]
+    fn a_color_kindle_gets_the_paper_in_color() {
+        let mut c = Config::default();
+        assert_eq!(c.kindle_photos(), Photos::Gray);
+        assert!(!c.wants_color());
+        // a color Kindle seen: the Kindle's paper, its PDF and the fetch keep color
+        c.color_kindle = true;
+        assert_eq!(c.kindle_photos(), Photos::Color);
+        assert!(c.wants_color());
+        c.sync.set_device_paper("G000AAAA", PaperFormat::Pdf);
+        assert_eq!(
+            c.pdfs_wanted(),
+            [(crate::pdf::Screen::KindleScribe, Photos::Color)]
+        );
+        // `[sync] photos` wins either way, and is only written when set
+        c.sync.photos = Some(Photos::Gray);
+        assert_eq!(c.kindle_photos(), Photos::Gray);
+        assert!(!c.wants_color());
+        let text = toml::to_string(&c.sync).unwrap();
+        assert!(text.contains("photos = \"gray\""), "{text}");
+        let back: SyncConfig = toml::from_str(&text).unwrap();
+        assert_eq!(back.photos, Some(Photos::Gray));
+        c.color_kindle = false;
+        c.sync.photos = Some(Photos::Color);
+        assert_eq!(c.kindle_photos(), Photos::Color);
+        assert!(
+            !toml::to_string(&SyncConfig::default())
+                .unwrap()
+                .contains("photos")
+        );
+    }
+
+    #[test]
     fn a_kindle_can_take_the_paper_as_a_pdf() {
         let mut c = Config::default();
         assert!(!c.sync.any_pdf_paper());
-        assert!(!c.pdfs_wanted().contains(&Config::KINDLE_PDF));
+        assert!(!c.pdfs_wanted().contains(&c.kindle_pdf()));
         c.sync.set_device_paper("G000AAAA", PaperFormat::Pdf);
         assert_eq!(c.sync.for_device("G000AAAA").paper, PaperFormat::Pdf);
         // the same Kindle by its pre-serial id, and another Kindle keeps the book
@@ -2605,7 +2836,7 @@ mod tests {
             c.sync.for_device("Kindle/Kindle#G000BBBB").paper,
             PaperFormat::Book
         );
-        assert!(c.pdfs_wanted().contains(&Config::KINDLE_PDF));
+        assert!(c.pdfs_wanted().contains(&c.kindle_pdf()));
         let text = toml::to_string(&c.sync).unwrap();
         assert!(text.contains("paper = \"pdf\""), "{text}");
         let back: SyncConfig = toml::from_str(&text).unwrap();
@@ -2615,9 +2846,9 @@ mod tests {
         assert!(c.sync.devices.is_empty());
         // an emailed PDF wants it too, while the email is on
         c.email.pdf = true;
-        assert!(!c.pdfs_wanted().contains(&Config::KINDLE_PDF));
+        assert!(!c.pdfs_wanted().contains(&c.kindle_pdf()));
         c.email.enabled = true;
-        assert!(c.pdfs_wanted().contains(&Config::KINDLE_PDF));
+        assert!(c.pdfs_wanted().contains(&c.kindle_pdf()));
         let text = toml::to_string(&c.email).unwrap();
         assert!(text.contains("pdf = true"), "{text}");
         assert!(
@@ -3129,12 +3360,23 @@ mod tests {
     }
 
     #[test]
+    fn on_this_day_stays_out_of_the_file_until_set() {
+        let text = toml::to_string(&Config::default()).unwrap();
+        assert!(!text.contains("[onthisday]"), "{text}");
+        let mut c = Config::default();
+        c.onthisday.language = Some("it".into());
+        let text = toml::to_string(&c).unwrap();
+        assert!(text.contains("[onthisday]\nlanguage = \"it\""), "{text}");
+    }
+
+    #[test]
     fn topic_urls() {
         assert_eq!(
-            Topic::Technology.url(),
+            Topic::Technology.url(None, None, None),
             "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-US&gl=US&ceid=US:en"
         );
-        let urls: std::collections::BTreeSet<String> = Topic::ALL.iter().map(|t| t.url()).collect();
+        let urls: std::collections::BTreeSet<String> =
+            Topic::ALL.iter().map(|t| t.url(None, None, None)).collect();
         assert_eq!(urls.len(), 8);
     }
 

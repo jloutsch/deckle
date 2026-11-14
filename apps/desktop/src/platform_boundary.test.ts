@@ -18,7 +18,7 @@ test("only transport.ts and platform/desktop.ts import @tauri-apps", () => {
 });
 
 // Tauri's dialog plugin turns window.confirm and window.alert into async functions, so on the
-// desktop `!window.confirm(...)` is always false and a removal runs without asking (#88).
+// desktop `!window.confirm(...)` is always false and a removal runs without asking (jloutsch/deckle#88).
 // Questions go through platform.confirm, which waits for the answer on both hosts.
 test("no view calls window.confirm or window.alert", () => {
   const HOST = new Set(["./platform.ts", "./platform/desktop.ts", "./platform/web.ts"]);

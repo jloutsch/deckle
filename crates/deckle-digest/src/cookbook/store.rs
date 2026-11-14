@@ -195,7 +195,13 @@ impl Store {
     pub fn config(&self) -> Result<BookConfig, String> {
         let path = self.config_path();
         match std::fs::read_to_string(&path) {
-            Ok(text) => toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display())),
+            Ok(text) => toml::from_str(&text).map_err(|e| {
+                format!(
+                    "{}: {}",
+                    path.display(),
+                    crate::config::toml_error(&text, &e)
+                )
+            }),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BookConfig::default()),
             Err(e) => Err(format!("{}: {e}", path.display())),
         }
@@ -212,9 +218,13 @@ impl Store {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(e) => return Err(format!("{}: {e}", path.display())),
         };
-        let mut doc: toml_edit::DocumentMut = text
-            .parse()
-            .map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e| {
+            format!(
+                "{}: {}",
+                path.display(),
+                crate::config::toml_error(&text, &e)
+            )
+        })?;
         let mut new = toml_edit::ser::to_document(cfg).map_err(|e| e.to_string())?;
         spread_tables(new.as_table_mut());
         // An empty endpoint or model isn't serialized: clearing one must still remove it.
@@ -304,10 +314,23 @@ impl Store {
         Ok(out)
     }
 
+    /// The recipe in `path`. Its id is the file's name, whatever the file says inside: the id
+    /// builds the paths it is written back to and its pictures' (#76: an inner id of
+    /// `../../x` wrote outside the cookbook, and a copy's edits went over the original).
     fn read(path: &Path) -> Result<Option<Saved>, String> {
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        if !is_id(stem) {
+            return Err(format!("{}: not a recipe file name", path.display()));
+        }
         match std::fs::read_to_string(path) {
-            Ok(text) => serde_json::from_str(&text)
-                .map(Some)
+            Ok(text) => serde_json::from_str::<Saved>(&text)
+                .map(|mut saved| {
+                    saved.id = stem.to_owned();
+                    Some(saved)
+                })
                 .map_err(|e| format!("{}: {e}", path.display())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(format!("{}: {e}", path.display())),

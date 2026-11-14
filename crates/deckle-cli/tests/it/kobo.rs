@@ -216,6 +216,9 @@ fn a_paper_the_kobo_refuses_fails_the_run_and_is_named() {
 fn epub_outbox(home: &Path) -> PathBuf {
     if cfg!(target_os = "macos") {
         home.join("Library/Caches/deckle/outbox-epub")
+    } else if cfg!(target_os = "windows") {
+        // `LOCALAPPDATA` is `home` in these tests.
+        home.join("deckle/outbox-epub")
     } else {
         home.join("cache/deckle/outbox-epub")
     }

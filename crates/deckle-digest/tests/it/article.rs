@@ -64,7 +64,7 @@ fn a_stub_page_is_not_a_story() {
     assert!(extract(html, "https://example.com/a").is_none());
 }
 
-/// A story with emphasis nested 20,000 deep still prints its text (nesting-depth design, #86):
+/// A story with emphasis nested 20,000 deep still prints its text (nesting-depth design, jloutsch/deckle#86):
 /// past the limit the writer stops descending and writes the rest flat. The count sits inside
 /// the recursion, so this runs on an 8 MiB stack: the limit, not the stack, must stop it.
 #[test]

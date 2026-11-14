@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// platform.confirm resolves to the answer, never to a Promise that reads as yes (#88).
+// platform.confirm resolves to the answer, never to a Promise that reads as yes (jloutsch/deckle#88).
 import { afterEach, expect, test, vi } from "vitest";
 
 const nativeConfirm = vi.hoisted(() => vi.fn<(message: string, options?: unknown) => Promise<boolean>>());

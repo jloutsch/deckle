@@ -1,7 +1,7 @@
 {
   "name": "deckle-desktop",
   "private": true,
-  "version": "0.13.0",
+  "version": "0.15.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -27,6 +27,6 @@
     "@vitejs/plugin-react": "6.0.1",
     "typescript": "5.9.3",
     "vite": "8.3.4",
-    "vitest": "3.2.4"
+    "vitest": "4.1.11"
   }
 }

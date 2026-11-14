@@ -1345,12 +1345,15 @@ pub fn bind_books(
     author: Option<String>,
 ) -> Result<BookRow, String> {
     let dir = deckle_core::wordwise::default_cache_dir().join("bound");
-    bind_row(&paths, &title, author, &dir, &deckle_digest::Http)
+    let net = deckle_digest::Http::typed(paths.iter().map(String::as_str));
+    bind_row(&paths, &title, author, &dir, &net)
 }
 
 /// Fetches and builds web articles; see [`article_rows`].
 pub fn import_articles(targets: Vec<String>) -> Vec<BookRow> {
-    article_rows(&targets, &deckle_digest::Http, &deckle_cli::articles_dir())
+    // Addresses typed into the app may be on this network; links inside them may not.
+    let net = deckle_digest::Http::typed(targets.iter().map(String::as_str));
+    article_rows(&targets, &net, &deckle_cli::articles_dir())
 }
 
 pub fn list_devices(state: &AppState) -> Vec<DeviceRow> {
@@ -1461,8 +1464,13 @@ pub fn plan_books(state: &AppState, books: Vec<RunRequest>, target: RunTarget) -
 }
 
 pub fn previewer_status(state: &AppState) -> PreviewerStatus {
+    previewer_status_at(&state.settings_file)
+}
+
+/// [`previewer_status`] from the settings file alone, for a caller off the main thread.
+pub fn previewer_status_at(settings_file: &Path) -> PreviewerStatus {
     // Only shown: with a damaged file the Previewer is looked for in the usual places.
-    let settings = load_settings_from(&state.settings_file).unwrap_or_default();
+    let settings = load_settings_from(settings_file).unwrap_or_default();
     match previewer::locate(settings.previewer_path.as_deref().map(Path::new)) {
         Ok(p) => PreviewerStatus {
             found: true,
@@ -1522,9 +1530,12 @@ pub fn get_settings_masked(state: &AppState) -> ShownSettings {
     s
 }
 
-/// [`set_settings`] for the web app: a key that comes back as [`MASKED_KEY`] keeps the saved one.
+/// [`set_settings`] for the web app: a key that comes back as [`MASKED_KEY`] keeps the saved one,
+/// and the Previewer's location is always the saved one. The server runs that program, so a
+/// browser must not choose it; set it in `settings.json` on the server.
 pub fn set_settings_masked(state: &AppState, mut settings: Settings) -> Result<(), String> {
     let saved = load_settings_from(&state.settings_file)?;
+    settings.previewer_path = saved.previewer_path.clone();
     let keep = |k: &mut String, saved: &str| {
         if k == MASKED_KEY {
             *k = saved.to_owned();

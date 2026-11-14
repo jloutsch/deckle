@@ -291,7 +291,7 @@ pub fn shelf_on(
         )
     });
     let sources = Sources::gather(
-        &LibraryConfig::load(config).unwrap_or_default(),
+        &LibraryConfig::load(config).unwrap_or_default().usable(),
         home().as_deref(),
     );
     let mut books: Vec<DeviceBookRow> = sort(shelved, &sources, |b| {

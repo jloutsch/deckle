@@ -240,8 +240,11 @@ impl Store {
         deckle_core::state_file::rebuildable(&self.readers_path()).value
     }
 
-    /// Changes `readers.json` (the server is its only writer).
+    /// Changes `readers.json` (the server is its only writer). One change at a time: a reader
+    /// reconnecting overlaps its old session's last write.
     pub fn update(&self, f: impl FnOnce(&mut Readers)) {
+        static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _one = WRITING.lock().unwrap_or_else(|e| e.into_inner());
         let mut r = self.readers();
         f(&mut r);
         if r.log.len() > LOG_KEEP {

@@ -94,6 +94,9 @@ fn write_identity_in_place(path: &Path, dir: &Path, id: Uuid) -> Result<Uuid, Pr
     fs::File::open(dir)
         .and_then(|d| d.sync_all())
         .map_err(|_| storage())?;
+    // Windows has no directory sync.
+    #[cfg(not(unix))]
+    let _ = dir;
     Ok(id)
 }
 
@@ -152,6 +155,8 @@ fn resolve_binding(
         .paper_id
         .filter(|id| !id.is_nil())
         .ok_or_else(unsupported)?;
+    // In the web UI's server, only a folder it may use.
+    crate::inbox::saved_path("[[exports]] dir", &export.dir).map_err(|_| storage())?;
     let root = fs::canonicalize(root_path(&export.dir)).map_err(|_| storage())?;
     if !root.is_dir() {
         return Err(storage());

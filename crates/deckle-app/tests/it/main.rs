@@ -4,5 +4,7 @@
 mod dispatch;
 mod press;
 // Unix only (see the module).
+mod programs;
+mod roots;
 #[cfg(unix)]
 mod state_files;

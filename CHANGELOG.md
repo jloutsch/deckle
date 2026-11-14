@@ -2,126 +2,6 @@
 
 ## Unreleased
 
-- **Long older Kindle books in other alphabets import.** A MOBI 6 book with no page breaks,
-  more than about 200 KB of text and letters outside ASCII (Cyrillic, Greek, accented Latin)
-  failed to import; it's now cut into parts between paragraphs as English
-  books are.
-- **A send no longer removes a different book from the Kindle.** Two books can get the same
-  Deckle ASIN, and sending one removed the other, with its notes and highlights. Deckle now
-  removes an older copy only when its title and author match too; another book with the same
-  ASIN stays, and the send says so.
-- **A second paper no longer deletes the first one's editions on a Kobo or PocketBook.** Its
-  files (`deckle-daily-kid-courier-…`) were counted as the main paper's editions and took their
-  places, so every one of the main paper's editions was removed, the newest too. Now only a
-  paper's own dated editions count toward its `keep`, and each paper on the reader is pruned
-  by its own, as on a Kindle.
-- **Adding a book again under a name that differs only in case keeps it.** On a Mac (or any
-  case-insensitive disk), adding `mini.epub` when the library held `Mini.epub` deleted the copy
-  just written, and a library scan then removed the loose file too, leaving no copy of the
-  book. The library now keeps the one file.
-- **Two different files with the same name are two books.** A text, Word, RTF or comic file
-  without its own identifier is known by its title and author, and a text file's title is its
-  name, so adding `home/notes.txt` replaced the book from `work/notes.txt`. Such a file now
-  updates a book only when it's the same file or the library's own copy; anything else is filed
-  as a new book. An EPUB with the publisher's identifier still updates its book in place.
-- **A hostile zip can no longer crash Deckle or fill its memory.** An EPUB, KPF or CBZ whose
-  entries claim an impossible size (a 1 KB file declaring 2^60 bytes aborted the app) or unpack
-  past a limit is now refused with an error that names the limit: 256 MB for one file inside, 1
-  GB for a whole book, 4 GB for a comic. Real books are far inside them; the limits are in
-  [docs/books.md](docs/books.md#size-limits).
-- **A hostile MOBI or AZW3 can no longer hang or crash an import.** Counts in the file are held
-  to what it holds (an index claiming four billion entries took minutes; a string length
-  panicked), its text stops unpacking at its stated length, at most 256 MB, and its fonts at 32
-  MB each and 256 MB together.
-- **Word documents, CBRs and text files have limits too.** A `.docx` that unpacks past 50 MB,
-  pictures included, is refused. A CBR is now read through bsdtar as a stream, each page at
-  most 256 MB and the comic 4 GB, instead of unpacked whole to a temp folder first; a page
-  with an absolute path, a `..` or a link is refused. A text file with more than 10,000
-  headings keeps the rest in its last chapter.
-- **Huge pages and pictures no longer exhaust memory.** A PDF page box wider than the PDF
-  specification allows (a 2 KB file asked for 20 GB and aborted) is laid out as 14,400 pt wide,
-  and a page rendered as a picture is held to 100 megapixels, rendered smaller when it's bigger;
-  one rendered page is kept while its figures are cut, not every page of the book.
-  A picture in a book, a chosen cover or a web photo over 100 megapixels is refused before it
-  is decoded. Comic pages keep `image`'s own 512 MiB limit on one decode; fitting a page to a
-  screen can briefly take about twice that.
-- **A hostile KFX or KPF is held to limits as it is read.** A symbol table claiming more
-  than a million symbols, an entity table whose rows add up to more than the file, and
-  positions or page ranges past what the book's text can hold (one a character, one an
-  element) are each refused. Pictures and fonts in the book hold no positions, so padding
-  them doesn't raise the limit. A book that decodes to more than 5,000,000 values (about
-  2.5 times the largest real book seen; about 1.6 GB of decoded tree) is refused as it is
-  read: a 500 KB KPF of repeated tiny values used 4.6 GB. A long name used many times counts
-  a value for every 64 bytes of each copy. The limit covers what is decoded, not the copies
-  the conversion makes of parts of it afterwards (issue #79).
-- **A file nested too deep is refused instead of crashing Deckle.** An EPUB, Word, OpenDocument,
-  RTF, FictionBook or Kindle file nested more than 256 levels deep (tags in tags, RTF groups in
-  groups; real books stay under 30), or a KFX or KPF whose data nests more than 128 deep, used
-  to overflow the stack and close the app or the server. It's now refused with "this file is
-  nested more than 256 levels deep" (128 for KFX). A comic's ComicInfo.xml nested that deep is
-  ignored, as an unreadable one is. A story for The Daily nested that deep still prints: past
-  the limit its text is set plain, in the EPUB and in the PDF edition. A feed nested that deep
-  is reported as unreadable, like any feed that won't parse, and so is a feed whose XML
-  declaration made the feed reader stop the whole edition (a second declaration naming
-  another encoding): it now costs that feed only.
-- **A failed re-send keeps the book already on the reader.** Sending a book again to a Kindle
-  that mounts as a drive, a folder, or putting a kept copy back emptied the old file before
-  writing the new one, so a full drive or a pulled cable left half a book under its name. The
-  new copy is now written beside the old one under a hidden `.part` name and swapped in only
-  when it's whole, as Kobo and PocketBook deliveries already were. A `.part` file a pulled
-  cable leaves is removed on a later delivery once it's an hour old. A re-send needs room for
-  one more copy for that moment (#74).
-- **Re-sending to an MTP Kindle checks the room first.** A book sent again to a Kindle Scribe,
-  Colorsoft or 2024 Paperwhite deleted the copy there and then sent the new one, so a full
-  Kindle ended up with neither. Now a send that won't fit is refused before anything is
-  deleted, and the message says the old copy is as it was. A Kindle that can rename over MTP
-  gets the new copy beside the old one and swapped in; whether any Kindle can is not known
-  yet, so the others still delete first, and a cable pulled mid-send there still loses the old
-  copy (the error now says so) and can leave a partial file under the book's name until the
-  book is sent again. Details in [docs/devices.md](docs/devices.md) (#74).
-- **A download from an MTP Kindle that stops short is an error.** A cable pulled while a book
-  or its reading position was read off the Kindle returned the bytes so far as the whole file,
-  so a kept copy could be cut off. Now it fails and says how much came (#32).
-- **Put back can't leave a Kindle with neither copy.** It removed the upgraded book first and
-  then copied the kept one in, so a failed copy left nothing. Now the kept book goes in first,
-  then the upgraded one comes out, then the kept reading position and notes go in (last,
-  because a `.kfx` and an `.azw3` of one name share a `.sdr` folder). If any step fails, the
-  upgrade stays in the list to try again, and the message says what's on the Kindle (#33).
-- **One bad outbox entry no longer stops the push.** An entry that couldn't be sent (an empty
-  prepared book, a file the Kindle refused) stopped every push at that entry, so nothing after
-  it went, ever. Now the rest go, and the push prints `not sent: <name>: <why>` for it on every
-  push while it waits in the outbox; this holds for Kindles, Kobos and PocketBooks. A reader
-  unplugged mid-push, or one that can't be written to at all, stops it with one message instead
-  of one per entry (one locked book on it costs only that book), and a reader mounted at a fixed folder that's been unplugged gets nothing
-  written into that folder, whether by a push, a send, a put back or a restore. `digest push`
-  fails only when the push stopped, and `digest run` only when its own edition didn't go, so the
-  scheduler no longer prints the paper again all day for another book's sake; the Daily tab
-  lists what wasn't sent under the run's result. A run still counts as failed while any connected
-  reader hasn't got the edition, even if another has, and the scheduler's re-run then sends it
-  again, replacing the copy, to the readers that already have it. A failed prune after the deliveries is a warning beside them, not an error that hid
-  them. A book and a PDF with the same name now both go; only a paper's dated edition queued in
-  both forms sends just one, and if that one fails the other goes in its place. A book whose
-  X-Ray, Word Wise or thumbnail couldn't be written is now counted as delivered with a warning,
-  so `kindle upgrade` and `library reprocess` no longer say the old copy is still there when
-  the new one replaced it (#75).
-- **A fresh-paper folder can move to another paper.** Reconnecting a folder to a different
-  paper, or to a paper deleted and made again, used to stop fresh-paper requests for every
-  paper. Once the old paper's last request finishes, Deckle now removes its fresh editions and
-  request statuses from the folder and connects the new one. A problem with one folder no
-  longer holds up the others. ([daily.md](docs/daily.md#a-folder-belongs-to-another-producer))
-- **Starting the app and the watcher together on a new computer works every time.** The
-  private `producer.json` appears only once it is complete, so the second one to start reads
-  it instead of failing. If an older version left it empty, the message now says to delete it.
-  On a disk without hard links (FAT, some network drives) the file is written in place, and a
-  crash during that first write leaves it empty, with the same message.
-- **Refused requests no longer pile up.** A refused fresh-paper request is forgotten after
-  three days instead of thirty, leaving its status in the folder, and is never queued again. A
-  request first seen long after it expired gets one `expired` status. Statuses are rewritten
-  only when they change, plus once every five minutes. A folder holding 1,000 finished
-  requests leaves new ones unanswered, and the watcher log says so, until older ones age out.
-- **Finished fresh-paper build folders are removed.** Each build left a folder in Deckle's
-  private `press/jobs`; it's now removed when the build is recorded, and old ones are cleared
-  when the watcher starts.
 - **A settings file that doesn't read is kept, not replaced.** A `settings.json` cut short by a
   crash, or changed by hand with a stray comma, used to load as the defaults, and the next save
   wrote the defaults over your API keys and per-book presets. Deckle now keeps a copy beside it
@@ -158,10 +38,224 @@
   readers seen and the wireless readers list and shelf rules keep a copy of a damaged file and
   start again; one that can't be read at all is never replaced. See
   [how it works](docs/how-it-works.md).
+
+## 0.15.0 — news in your language, and safer servers and fetching
+
+- **A fresh-paper folder can move to another paper.** Reconnecting a folder to a different
+  paper, or to a paper deleted and made again, used to stop fresh-paper requests for every
+  paper. Once the old paper's last request finishes, Deckle now removes its fresh editions and
+  request statuses from the folder and connects the new one. A problem with one folder no
+  longer holds up the others. ([daily.md](docs/daily.md#a-folder-belongs-to-another-producer))
+- **Starting the app and the watcher together on a new computer works every time.** The
+  private `producer.json` appears only once it is complete, so the second one to start reads
+  it instead of failing. If an older version left it empty, the message now says to delete it.
+  On a disk without hard links (FAT, some network drives) the file is written in place, and a
+  crash during that first write leaves it empty, with the same message.
+- **Refused requests no longer pile up.** A refused fresh-paper request is forgotten after
+  three days instead of thirty, leaving its status in the folder, and is never queued again. A
+  request first seen long after it expired gets one `expired` status. Statuses are rewritten
+  only when they change, plus once every five minutes. A folder holding 1,000 finished
+  requests leaves new ones unanswered, and the watcher log says so, until older ones age out.
+- **Finished fresh-paper build folders are removed.** Each build left a folder in Deckle's
+  private `press/jobs`; it's now removed when the build is recorded, and old ones are cleared
+  when the watcher starts.
+- **A failed re-send keeps the book already on the reader.** Sending a book again to a Kindle
+  that mounts as a drive, a folder, or putting a kept copy back emptied the old file before
+  writing the new one, so a full drive or a pulled cable left half a book under its name. The
+  new copy is now written beside the old one under a hidden `.part` name and swapped in only
+  when it's whole, as Kobo and PocketBook deliveries already were. A `.part` file a pulled
+  cable leaves is removed on a later delivery once it's an hour old. A re-send needs room for
+  one more copy for that moment (jloutsch/deckle#74).
+- **Re-sending to an MTP Kindle checks the room first.** A book sent again to a Kindle Scribe,
+  Colorsoft or 2024 Paperwhite deleted the copy there and then sent the new one, so a full
+  Kindle ended up with neither. Now a send that won't fit is refused before anything is
+  deleted, and the message says the old copy is as it was. A Kindle that can rename over MTP
+  gets the new copy beside the old one and swapped in; whether any Kindle can is not known
+  yet, so the others still delete first, and a cable pulled mid-send there still loses the old
+  copy (the error now says so) and can leave a partial file under the book's name until the
+  book is sent again. Details in [docs/devices.md](docs/devices.md) (jloutsch/deckle#74).
+- **A download from an MTP Kindle that stops short is an error.** A cable pulled while a book
+  or its reading position was read off the Kindle returned the bytes so far as the whole file,
+  so a kept copy could be cut off. Now it fails and says how much came (jloutsch/deckle#32).
+- **Put back can't leave a Kindle with neither copy.** It removed the upgraded book first and
+  then copied the kept one in, so a failed copy left nothing. Now the kept book goes in first,
+  then the upgraded one comes out, then the kept reading position and notes go in (last,
+  because a `.kfx` and an `.azw3` of one name share a `.sdr` folder). If any step fails, the
+  upgrade stays in the list to try again, and the message says what's on the Kindle (jloutsch/deckle#33).
+- **One bad outbox entry no longer stops the push.** An entry that couldn't be sent (an empty
+  prepared book, a file the Kindle refused) stopped every push at that entry, so nothing after
+  it went, ever. Now the rest go, and the push prints `not sent: <name>: <why>` for it on every
+  push while it waits in the outbox; this holds for Kindles, Kobos and PocketBooks. A reader
+  unplugged mid-push, or one that can't be written to at all, stops it with one message instead
+  of one per entry (one locked book on it costs only that book), and a reader mounted at a fixed folder that's been unplugged gets nothing
+  written into that folder, whether by a push, a send, a put back or a restore. `digest push`
+  fails only when the push stopped, and `digest run` only when its own edition didn't go, so the
+  scheduler no longer prints the paper again all day for another book's sake; the Daily tab
+  lists what wasn't sent under the run's result. A run still counts as failed while any connected
+  reader hasn't got the edition, even if another has, and the scheduler's re-run then sends it
+  again, replacing the copy, to the readers that already have it. A failed prune after the deliveries is a warning beside them, not an error that hid
+  them. A book and a PDF with the same name now both go; only a paper's dated edition queued in
+  both forms sends just one, and if that one fails the other goes in its place. A book whose
+  X-Ray, Word Wise or thumbnail couldn't be written is now counted as delivered with a warning,
+  so `kindle upgrade` and `library reprocess` no longer say the old copy is still there when
+  the new one replaced it (jloutsch/deckle#75).
+- **A file nested too deep is refused instead of crashing Deckle.** An EPUB, Word, OpenDocument,
+  RTF, FictionBook or Kindle file nested more than 256 levels deep (tags in tags, RTF groups in
+  groups; real books stay under 30), or a KFX or KPF whose data nests more than 128 deep, used
+  to overflow the stack and close the app or the server. It's now refused with "this file is
+  nested more than 256 levels deep" (128 for KFX). A comic's ComicInfo.xml nested that deep is
+  ignored, as an unreadable one is. A story for The Daily nested that deep still prints: past
+  the limit its text is set plain, in the EPUB and in the PDF edition. A feed nested that deep
+  is reported as unreadable, like any feed that won't parse, and so is a feed whose XML
+  declaration made the feed reader stop the whole edition (a second declaration naming
+  another encoding): it now costs that feed only.
+- **A hostile zip can no longer crash Deckle or fill its memory.** An EPUB, KPF or CBZ whose
+  entries claim an impossible size (a 1 KB file declaring 2^60 bytes aborted the app) or unpack
+  past a limit is now refused with an error that names the limit: 256 MB for one file inside, 1
+  GB for a whole book, 4 GB for a comic. Real books are far inside them; the limits are in
+  [docs/books.md](docs/books.md#size-limits).
+- **A hostile MOBI or AZW3 can no longer hang or crash an import.** Counts in the file are held
+  to what it holds (an index claiming four billion entries took minutes; a string length
+  panicked), its text stops unpacking at its stated length, at most 256 MB, and its fonts at 32
+  MB each and 256 MB together.
+- **Word documents, CBRs and text files have limits too.** A `.docx` that unpacks past 50 MB,
+  pictures included, is refused. A CBR is now read through bsdtar as a stream, each page at
+  most 256 MB and the comic 4 GB, instead of unpacked whole to a temp folder first; a page
+  with an absolute path, a `..` or a link is refused. A text file with more than 10,000
+  headings keeps the rest in its last chapter.
+- **Huge pages and pictures no longer exhaust memory.** A PDF page box wider than the PDF
+  specification allows (a 2 KB file asked for 20 GB and aborted) is laid out as 14,400 pt wide,
+  and a page rendered as a picture is held to 100 megapixels, rendered smaller when it's bigger;
+  one rendered page is kept while its figures are cut, not every page of the book.
+  A picture in a book, a chosen cover or a web photo over 100 megapixels is refused before it
+  is decoded. Comic pages keep `image`'s own 512 MiB limit on one decode; fitting a page to a
+  screen can briefly take about twice that.
+- **A hostile KFX or KPF is held to limits as it is read.** A symbol table claiming more
+  than a million symbols, an entity table whose rows add up to more than the file, and
+  positions or page ranges past what the book's text can hold (one a character, one an
+  element) are each refused. Pictures and fonts in the book hold no positions, so padding
+  them doesn't raise the limit. A book that decodes to more than 5,000,000 values (about
+  2.5 times the largest real book seen; about 1.6 GB of decoded tree) is refused as it is
+  read: a 500 KB KPF of repeated tiny values used 4.6 GB. A long name used many times counts
+  a value for every 64 bytes of each copy. The limit covers what is decoded, not the copies
+  the conversion makes of parts of it afterwards (jloutsch/deckle#79).
 - **The desktop app asks again before removing or replacing.** Remove on a Kobo, PocketBook or
   reMarkable deleted the chosen books at once, and sending a puzzle book that was already there
   replaced it, ink and all, without asking "Replace it?". Both now show the question and wait for
-  the answer (#88). The web app always asked.
+  the answer (jloutsch/deckle#88). The web app always asked.
+- **Adding a book again under a name that differs only in case keeps it.** On a Mac (or any
+  case-insensitive disk), adding `mini.epub` when the library held `Mini.epub` deleted the copy
+  just written, and a library scan then removed the loose file too, leaving no copy of the
+  book. The library now keeps the one file.
+- **Two different files with the same name are two books.** A text, Word, RTF or comic file
+  without its own identifier is known by its title and author, and a text file's title is its
+  name, so adding `home/notes.txt` replaced the book from `work/notes.txt`. Such a file now
+  updates a book only when it's the same file or the library's own copy; anything else is filed
+  as a new book. An EPUB with the publisher's identifier still updates its book in place.
+- **A second paper no longer deletes the first one's editions on a Kobo or PocketBook.** Its
+  files (`deckle-daily-kid-courier-…`) were counted as the main paper's editions and took their
+  places, so every one of the main paper's editions was removed, the newest too. Now only a
+  paper's own dated editions count toward its `keep`, and each paper on the reader is pruned
+  by its own, as on a Kindle.
+- **A send no longer removes a different book from the Kindle.** Two books can get the same
+  Deckle ASIN, and sending one removed the other, with its notes and highlights. Deckle now
+  removes an older copy only when its title and author match too; another book with the same
+  ASIN stays, and the send says so.
+- **Long older Kindle books in other alphabets import.** A MOBI 6 book with no page breaks,
+  more than about 200 KB of text and letters outside ASCII (Cyrillic, Greek, accented Latin)
+  failed to import; it's now cut into parts between paragraphs as English
+  books are.
+- **The bookmarklets ask before they save.** Save to paper and Save recipe now open a small
+  Deckle window showing what they'll save, and save when you press **Save**. Before, the
+  bookmarklet carried a key the page you clicked it on could read, and with it any page could
+  add to your reading. Bookmarklets you already have keep working
+  ([docs/daily.md](docs/daily.md)).
+- **calibre's wireless connection can't be held by a silent device.** A reader now takes the
+  connection only once it has finished connecting (10 seconds at most), so a device that
+  connects and says nothing no longer keeps every reader out. A wrong password slows that
+  address, the same reader reconnecting after a Wi-Fi drop takes over its old session, and a
+  reader's book list and the readers remembered are capped. A password is still optional; the
+  card now says what it protects ([docs/daily.md](docs/daily.md#calibres-wireless-connection-books-over-wi-fi)).
+- **The web app keeps to its folders.** Every path it sends, and every folder saved in its
+  settings, now has to lie in `/config`, `/data` or `DECKLE_WEB_ROOTS`, as the file browser
+  always did; before, a signed-in browser could list, copy or delete files elsewhere on the
+  server. It also never writes into `/config/deckle`
+  ([docs/docker.md](docs/docker.md#files-uploads-and-downloads)).
+- **A saved page's pictures stay in its own folder, links followed.** A link in a saved page's
+  folder could still point a recipe or story picture at any file on the computer; links are now
+  followed before the folder is checked.
+- **The Daily fetches only public addresses.** A feed's link, a page's image or a redirect can no
+  longer point at your router, a NAS or a service on this computer and have it printed in the
+  paper. Feeds, calendars and subscriptions you set up on your own network keep working; anything
+  else there goes in `[fetch] allow_private`
+  ([docs/daily.md](docs/daily.md#feeds-on-your-own-network)).
+- **Wrong passwords slow only the address that sends them.** The web UI and KOReader over
+  Wi-Fi now let each address get its password wrong five times, then make it wait, doubling up
+  to five minutes. Someone guessing can no longer keep you out of the web UI, and the reader
+  server, which didn't slow guessing at all, now does. Behind a reverse proxy, set
+  `DECKLE_WEB_TRUSTED_PROXIES` so each client is counted on its own
+  ([docs/docker.md](docs/docker.md#the-password)).
+- **The web app no longer chooses programs for the server.** The calibredb path is shown but
+  can't be changed from a browser, and the Kindle Previewer location is always the one saved on
+  the server. Set either in the server's files
+  ([docs/docker.md](docs/docker.md#whats-off-in-the-container)).
+- **The web UI answers only to names you use.** It now refuses requests under a public host
+  name you haven't listed, so a web page can't reach a server on your network by pointing its
+  own name at it. Addresses, `localhost`, `tower`, `tower.local` and the like work as before; a
+  public name you use goes in `DECKLE_WEB_HOSTS`
+  ([docs/docker.md](docs/docker.md#the-names-it-answers-to)).
+- **A mistake in `digest.toml` is named, not quoted.** The error gives the file, line and column
+  and what's wrong, without the line itself, which could hold your calendar's private address
+  and end up in a bug report. The same goes for `cookbook.toml`.
+- **A `.kpf` can't make a conversion take gigabytes.** A structure the book names many times
+  was copied in each time; the copies now count toward the same limit as the rest of the book,
+  and a book past it is refused. Page numbers no longer copy the book's text, at four bytes a
+  character for every place that names it; they read it where it is.
+- **One deeply nested page can't hold up the paper.** A story, recipe or publisher page nested
+  thousands of levels deep took minutes to hours to read, and the edition waited for it. Past
+  256 levels, a page is now read flat, its text kept.
+- **News in your language.** Local, each other place, each interest and each Google News topic
+  can read another country's edition of Google News: pick Deutschland, España, France, Italia or
+  Brasil under the section in the Daily tab, or set `hl`, `gl` and `ceid` by hand. On this day
+  can come from another language's Wikipedia (`[onthisday] language = "it"`). Leaving them
+  alone keeps the US English edition and English Wikipedia
+  ([docs/daily.md](docs/daily.md#news-in-another-language)). Thanks to [@antoblu99](https://github.com/antoblu99).
+- **The window opens faster.** At launch Deckle was starting Kindle Previewer twice to read its
+  version, asking the system about each plugged-in reader, and counting the library, all before
+  the window could draw. These now run in the background, and Previewer is started once per
+  install instead of at every check. The device check every few seconds no longer stutters the
+  window either.
+- **Eleven fixes from a review of the whole project.** Thanks to [@jloutsch](https://github.com/jloutsch),
+  who found and reproduced each one.
+  - Removing a book from a Kobo or PocketBook no longer deletes the highlights of another
+    format of the same name, and takes a KEPUB's own sidecar; a backup now copies a KEPUB's.
+  - A reMarkable backup keeps documents that share a name (`Notebook.tar`,
+    `Notebook (2).tar`) instead of writing one over the other and reporting both copied.
+  - "Make again" on a puzzle book makes the same book: its seed lost its last digits on the
+    way to the window. A different book never takes the name of one already there, and the
+    same book keeps the iPad bundles it was sent as.
+  - KOReader over Wi-Fi: today's paper always downloads, even when newer editions of other
+    papers fill the recent list (it answered 404).
+  - A Kitchen Book recipe saved from a page takes a picture only from the page's own folder,
+    as the paper's stories do, and a recipe file's name is its id, whatever the file says
+    inside.
+  - No more crashes on a footnote with `&amp;` before a curly quote, a KOReader backup with a
+    date out of range, or a clippings line that is a bare "- ".
+  - Highlights: a byte-order mark before any title no longer splits one book in two, a title
+    like `1984` or `True` is quoted in the note's frontmatter, and a book with tens of
+    thousands of highlights groups in a moment.
+  - X-Ray: "Drake" no longer loses its "Dr" before it's matched to "Francis Drake", names are
+    merged the same way on every run, and a book with thousands of names is read in seconds
+    instead of a minute.
+  - The Books tab opens quickly with a large calibre library (20,000 books took two minutes).
+
+## 0.14.0 — the paper in color on a Colorsoft, and two-column PDFs read in order
+
+- **The paper in color on a Colorsoft.** Once Deckle has seen a Kindle with a color screen (a
+  Colorsoft or a Scribe Colorsoft), the paper keeps its photos in color, as the Kindle book and as
+  the Scribe PDF; they were always gray before. A gray Kindle gets the same paper and shows them
+  in gray. `photos = "color"` or `"gray"` under `[sync]` settles it by hand
+  ([docs/daily.md](docs/daily.md#photos-on-a-color-kindle)).
 - **Two-column PDFs read one column, then the other.** A journal's tight gutter (about 1.3 em,
   as in *Nature Communications*) is now found, so a left-column line is no longer glued to the
   right-column line beside it. Citations set as superscripts ("generations⁵³⁻⁵⁵") stay in

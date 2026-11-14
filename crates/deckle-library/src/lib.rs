@@ -242,7 +242,8 @@ impl Library {
     pub fn configured(config: &Path) -> Option<(Library, LibraryConfig)> {
         let cfg = LibraryConfig::load(config)
             .inspect_err(|e| eprintln!("library: {e}"))
-            .ok()?;
+            .ok()?
+            .usable();
         let root = cfg.root.clone()?;
         Some((Library::new(root), cfg))
     }

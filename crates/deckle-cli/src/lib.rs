@@ -524,7 +524,11 @@ fn dispatch(cli: cli::Cli) -> Result<ExitCode, String> {
             title,
             author,
             out,
-        } => bind_cmd(json, &inputs, title, author, out, &deckle_digest::Http),
+        } => {
+            // Web addresses typed here may be on this network; links inside them may not.
+            let net = deckle_digest::Http::typed(inputs.iter().filter_map(|p| p.to_str()));
+            bind_cmd(json, &inputs, title, author, out, &net)
+        }
         cli::Command::Save {
             targets,
             title,
@@ -734,7 +738,10 @@ fn dispatch(cli: cli::Cli) -> Result<ExitCode, String> {
             }
             let reports: Vec<_> = epubs
                 .iter()
-                .map(|e| run_input(e, &opts, &deckle_digest::Http))
+                .map(|e| {
+                    let net = deckle_digest::Http::typed(e.to_str());
+                    run_input(e, &opts, &net)
+                })
                 .collect();
             let failed = reports.iter().filter(|r| r.error.is_some()).count();
             emit(json, &reports, || {
@@ -962,7 +969,7 @@ fn queue_one(
 ) -> Result<String, String> {
     let arg = input.to_string_lossy();
     let source = if deckle_digest::web_book::is_article(&arg) {
-        import_article(&arg, &deckle_digest::Http, &articles_dir())
+        import_article(&arg, &deckle_digest::Http::typed([&*arg]), &articles_dir())
             .map_err(|e| format!("import: {e}"))?
             .path
     } else {
@@ -2100,7 +2107,8 @@ fn originals() -> deckle_library::sources::Sources {
         .unwrap_or_else(|e| {
             eprintln!("warning: {e}");
             Default::default()
-        });
+        })
+        .usable();
     let found =
         deckle_library::sources::Sources::gather(&cfg, deckle_library::sources::home().as_deref());
     for w in &found.warnings {
@@ -2817,14 +2825,21 @@ fn load_digest_config(path: &Path) -> Result<deckle_digest::Config, String> {
 }
 
 /// The paper `--paper` names (many papers §3): `None` or `main` is digest.toml's.
+/// Its Kindle paper is in color once a color Kindle has been seen (color Kindle design §2).
 fn paper_config(path: &Path, paper: Option<&str>) -> Result<deckle_digest::Config, String> {
-    match paper {
-        None => load_digest_config(path),
+    let mut cfg = match paper {
+        None => load_digest_config(path)?,
         Some(slug) => {
             load_digest_config(path)?;
-            deckle_digest::papers::load_one(path, slug)
+            deckle_digest::papers::load_one(path, slug)?
         }
-    }
+    };
+    cfg.color_kindle = deckle_core::screens::any_color_kindle(
+        // A damaged devices file reads as no color Kindle seen; nothing is saved here.
+        &deckle_core::devices::DeviceRegistry::load(&deckle_core::devices::default_registry_file())
+            .unwrap_or_default(),
+    );
+    Ok(cfg)
 }
 
 /// Every paper, main first. What was skipped is said on stderr.
@@ -3416,7 +3431,7 @@ fn digest(
             // `[email] pdf`: the Scribe's PDF, which its pen writes on, instead of the EPUB
             let attach = match cfg.email.pdf {
                 true => {
-                    let (screen, photos) = deckle_digest::Config::KINDLE_PDF;
+                    let (screen, photos) = cfg.kindle_pdf();
                     match built.pdf(screen, photos) {
                         Some(p) => p.to_path_buf(),
                         None => {
@@ -3751,7 +3766,12 @@ fn digest(
                 save_jars_noted(&net);
                 r
             } else {
-                digest_lint(json, &page, &deckle_digest::Http, &[])
+                digest_lint(
+                    json,
+                    &page,
+                    &deckle_digest::Http::typed([page.as_str()]),
+                    &[],
+                )
             }
         }
         cli::DigestCommand::Subscribe {
@@ -3902,22 +3922,28 @@ fn digest(
                 Ok(Some(token)) => {
                     // Save recipe drops its link file in the Inbox's Recipes folder, where
                     // the scan below adds it to the cookbook.
-                    let recipes = deckle_digest::inbox::expand_home(&cfg.reading.inbox)
-                        .join(deckle_digest::inbox::RECIPES_FOLDER);
-                    std::thread::spawn(move || {
-                        if let Err(e) = deckle_digest::bookmarklet::serve(reading, token, recipes) {
+                    match deckle_digest::inbox::saved_path("[reading] inbox", &cfg.reading.inbox) {
+                        Ok(inbox) => {
+                            let recipes = inbox.join(deckle_digest::inbox::RECIPES_FOLDER);
+                            std::thread::spawn(move || {
+                                if let Err(e) =
+                                    deckle_digest::bookmarklet::serve(reading, token, recipes)
+                                {
+                                    eprintln!(
+                                        "bookmarklet: can't listen on {}:{}: {e}",
+                                        deckle_digest::bookmarklet::bind_address(),
+                                        deckle_digest::bookmarklet::PORT
+                                    );
+                                }
+                            });
                             eprintln!(
-                                "bookmarklet: can't listen on {}:{}: {e}",
+                                "bookmarklet: listening on {}:{}",
                                 deckle_digest::bookmarklet::bind_address(),
                                 deckle_digest::bookmarklet::PORT
                             );
                         }
-                    });
-                    eprintln!(
-                        "bookmarklet: listening on {}:{}",
-                        deckle_digest::bookmarklet::bind_address(),
-                        deckle_digest::bookmarklet::PORT
-                    );
+                        Err(e) => eprintln!("bookmarklet: off: {e}"),
+                    }
                 }
                 Ok(None) => {}
                 Err(e) => eprintln!("bookmarklet: no token: {e}"),
@@ -4757,7 +4783,7 @@ fn queue_kindle_pdf(
     if !cfg.sync.any_pdf_paper() {
         return None;
     }
-    let (screen, photos) = deckle_digest::Config::KINDLE_PDF;
+    let (screen, photos) = cfg.kindle_pdf();
     let Some(pdf) = built.pdf(screen, photos) else {
         return Some("the Kindle's PDF of the paper wasn't built".into());
     };
@@ -5428,7 +5454,8 @@ fn send_to_reader(
             let arg = input.to_string_lossy();
             let r = (|| {
                 let source = if deckle_digest::web_book::is_article(&arg) {
-                    import_article(&arg, &deckle_digest::Http, &articles_dir())?.path
+                    import_article(&arg, &deckle_digest::Http::typed([&*arg]), &articles_dir())?
+                        .path
                 } else {
                     input.clone()
                 };
@@ -5508,7 +5535,8 @@ fn send_to_remarkable(
             let arg = input.to_string_lossy();
             let r = (|| {
                 let source = if deckle_digest::web_book::is_article(&arg) {
-                    import_article(&arg, &deckle_digest::Http, &articles_dir())?.path
+                    import_article(&arg, &deckle_digest::Http::typed([&*arg]), &articles_dir())?
+                        .path
                 } else {
                     input.clone()
                 };
@@ -6692,7 +6720,13 @@ fn reading_queue(cfg: &deckle_digest::Config) -> deckle_digest::reading::Reading
 /// outbox (design §10). Says so when it found anything. Recipes for the cookbook are added
 /// only with `recipes` (the watcher): fetching a backlog of them must not hold up a build.
 fn scan_inbox(cfg: &deckle_digest::Config, recipes: bool) {
-    let dir = deckle_digest::inbox::expand_home(&cfg.reading.inbox);
+    let dir = match deckle_digest::inbox::saved_path("[reading] inbox", &cfg.reading.inbox) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("inbox: {e}");
+            return;
+        }
+    };
     let outbox = deckle_core::queue::Queue::new(deckle_core::queue::Queue::default_dir());
     let kindles: Vec<(String, String)> = cfg
         .sync
@@ -6789,9 +6823,10 @@ fn save(
     let queue = ReadingQueue::new(ReadingQueue::default_path());
     if bookmarklet {
         let dir = queue.path.parent().unwrap_or(Path::new("."));
-        let token = deckle_digest::bookmarklet::token(dir).map_err(|e| e.to_string())?;
+        // The listener's token, made if it's new; the bookmarklets don't carry it.
+        deckle_digest::bookmarklet::token(dir).map_err(|e| e.to_string())?;
         if page {
-            println!("{}", deckle_digest::bookmarklet::install_page(&token));
+            println!("{}", deckle_digest::bookmarklet::install_page());
             return Ok(ExitCode::SUCCESS);
         }
         println!(
@@ -6799,8 +6834,8 @@ fn save(
              They work while `deckle digest watch` is running.\n\n\
              Save to paper (an article for tomorrow's Daily):\n{}\n\n\
              Save recipe (a recipe for the cookbook):\n{}",
-            deckle_digest::bookmarklet::javascript(&token),
-            deckle_digest::bookmarklet::recipe_javascript(&token)
+            deckle_digest::bookmarklet::javascript(),
+            deckle_digest::bookmarklet::recipe_javascript()
         );
         return Ok(ExitCode::SUCCESS);
     }
@@ -6880,6 +6915,23 @@ mod tests {
     use deckle_digest::reading::Outcome;
 
     #[test]
+    fn watcher_errors_carry_their_own_label_once() {
+        let mut said = None;
+        let press = || Err::<(), _>("fresh-paper folder /x: request history full".to_owned());
+        assert_eq!(
+            once_line("press", &mut said, press()).as_deref(),
+            Some("press: fresh-paper folder /x: request history full")
+        );
+        assert_eq!(once_line("press", &mut said, press()), None, "said once");
+        assert_eq!(once_line("press", &mut said, Ok(())), None);
+        let mut said = None;
+        assert_eq!(
+            once_line("cookbook", &mut said, Err("no recipes".into())).as_deref(),
+            Some("cookbook: no recipes")
+        );
+    }
+
+    #[test]
     fn only_a_stop_or_the_runs_own_edition_fails_the_run() {
         let flush = |delivered: &[&str], failed: &[&str], stopped: bool| DigestOutcome {
             flush: Some(deckle_core::queue::FlushReport {
@@ -6950,23 +7002,6 @@ mod tests {
         let code = send_to_reader(&[epub], &reader, &Default::default(), true).unwrap();
         assert_eq!(code, ExitCode::from(EXIT_FAILURE));
         assert!(std::fs::read_dir(reader.root()).unwrap().next().is_none());
-    }
-
-    #[test]
-    fn watcher_errors_carry_their_own_label_once() {
-        let mut said = None;
-        let press = || Err::<(), _>("fresh-paper folder /x: request history full".to_owned());
-        assert_eq!(
-            once_line("press", &mut said, press()).as_deref(),
-            Some("press: fresh-paper folder /x: request history full")
-        );
-        assert_eq!(once_line("press", &mut said, press()), None, "said once");
-        assert_eq!(once_line("press", &mut said, Ok(())), None);
-        let mut said = None;
-        assert_eq!(
-            once_line("cookbook", &mut said, Err("no recipes".into())).as_deref(),
-            Some("cookbook: no recipes")
-        );
     }
 
     #[test]
