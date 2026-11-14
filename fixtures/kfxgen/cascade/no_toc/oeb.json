@@ -1,0 +1,68 @@
+{
+ "spine": [
+  {
+   "href": "OEBPS/one.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/two.xhtml",
+   "linear": true
+  }
+ ],
+ "page_progression_direction": null,
+ "manifest": [
+  {
+   "id": "one",
+   "href": "OEBPS/one.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "two",
+   "href": "OEBPS/two.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "page_css",
+   "href": "page_styles.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "css",
+   "href": "stylesheet.css",
+   "media_type": "text/css"
+  }
+ ],
+ "toc": [
+  {
+   "title": "Chapter One",
+   "href": "OEBPS/one.xhtml#calibre_toc_2",
+   "children": []
+  },
+  {
+   "title": "Part Two",
+   "href": "OEBPS/two.xhtml#calibre_toc_3",
+   "children": []
+  }
+ ],
+ "auto_generated_toc": true,
+ "guide": [],
+ "metadata": {
+  "title": [
+   "No Contents"
+  ],
+  "creator": [
+   "Fixture Author"
+  ],
+  "description": [],
+  "language": [
+   "eng"
+  ],
+  "publisher": [],
+  "date": [],
+  "cover": []
+ },
+ "raw": {
+  "opfname": "OEBPS/content.opf",
+  "sha256": "4d4f633276b5ea0aea7118c64850cfae1121c36c2e1c26c60f57210c7092652d"
+ }
+}

@@ -1,0 +1,106 @@
+{
+ "spine": [
+  {
+   "href": "contents.xhtml",
+   "linear": true
+  },
+  {
+   "href": "c1.xhtml",
+   "linear": true
+  },
+  {
+   "href": "c2.xhtml",
+   "linear": true
+  },
+  {
+   "href": "c3.xhtml",
+   "linear": true
+  }
+ ],
+ "page_progression_direction": null,
+ "manifest": [
+  {
+   "id": "f1",
+   "href": "c1.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "f2",
+   "href": "c2.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "f3",
+   "href": "c3.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "f0",
+   "href": "contents.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "page_css",
+   "href": "page_styles.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "css",
+   "href": "stylesheet.css",
+   "media_type": "text/css"
+  }
+ ],
+ "toc": [
+  {
+   "title": "Contents",
+   "href": "contents.xhtml",
+   "children": []
+  },
+  {
+   "title": "Two",
+   "href": "c2.xhtml",
+   "children": []
+  },
+  {
+   "title": "One",
+   "href": "c1.xhtml",
+   "children": []
+  },
+  {
+   "title": "Three",
+   "href": "c3.xhtml#t",
+   "children": []
+  },
+  {
+   "title": "Three again",
+   "href": "c3.xhtml#t",
+   "children": []
+  }
+ ],
+ "auto_generated_toc": false,
+ "guide": [],
+ "metadata": {
+  "title": [
+   "N523 kfxgen - Navigation"
+  ],
+  "creator": [
+   "First Writer",
+   "Second Writer"
+  ],
+  "description": [
+   "<p>A test book with an <b>HTML</b> description.</p>"
+  ],
+  "language": [
+   "eng"
+  ],
+  "publisher": [],
+  "date": [
+   "2021-03-04T00:00:00+00:00"
+  ],
+  "cover": []
+ },
+ "raw": {
+  "opfname": "content.opf",
+  "sha256": null
+ }
+}

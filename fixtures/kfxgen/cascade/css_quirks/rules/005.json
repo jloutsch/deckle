@@ -1,0 +1,13 @@
+{
+ "font_face": [],
+ "rules": [
+  [1, "p.fw", {"font-weight": "medium"}, [], [1, 0, 0, 1, 1, 83]],
+  [1, "span.il", {"display": "in-line"}, [], [1, 0, 0, 1, 1, 84]],
+  [1, "span.sup", {"vertical-align": "sup"}, [], [1, 0, 0, 1, 1, 85]],
+  [1, "p.bad", {"margin-left": "foo", "height": "10 px"}, [], [1, 0, 0, 1, 1, 86]],
+  [1, "p.big", {"text-indent": "3em"}, [], [1, 0, 0, 1, 1, 88]],
+  [1, "p.note3", {"text-indent": "4em"}, [], [1, 0, 0, 1, 1, 89]],
+  [1, "p.ps:hover", {"color": "red"}, [], [1, 0, 0, 2, 1, 87]]
+ ],
+ "ua_rules": 180
+}

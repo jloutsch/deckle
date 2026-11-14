@@ -5,6 +5,10 @@
 //! Source-line citations in comments (`:1234`) are at kfxgen `4b81651`, the previous pin,
 //! unless the comment names another commit.
 
+pub mod book;
+pub mod css;
+pub mod dom;
+pub mod epub;
 pub mod generate;
 pub mod load;
 pub mod pyvalue;

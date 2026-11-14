@@ -1,0 +1,11 @@
+{
+ "font_face": [],
+ "rules": [
+  [1, "html", {"writing-mode": "vertical-rl", "-webkit-writing-mode": "vertical-rl"}, [], [1, 0, 0, 0, 1, 83]],
+  [1, "p", {"margin-top": "0", "margin-right": "0", "margin-bottom": "0", "margin-left": "0", "text-indent": "1em"}, [], [1, 0, 0, 0, 1, 84]],
+  [1, "h1", {"margin-top": "0", "margin-right": "0", "margin-bottom": "0", "margin-left": "2em", "font-size": "1.4em"}, [], [1, 0, 0, 0, 1, 85]],
+  [1, ".up", {"text-orientation": "upright", "-webkit-text-orientation": "upright"}, [], [1, 0, 0, 1, 0, 86]],
+  [1, ".side", {"text-orientation": "sideways", "-webkit-text-orientation": "sideways"}, [], [1, 0, 0, 1, 0, 87]]
+ ],
+ "ua_rules": 180
+}

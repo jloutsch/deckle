@@ -19,7 +19,7 @@ mod xml;
 #[cfg(feature = "xml")]
 pub use roxmltree;
 #[cfg(feature = "xml")]
-pub use xml::{XmlError, parse_xml};
+pub use xml::{XmlError, parse_xml, parse_xml_limiting_attributes};
 
 #[cfg(feature = "state")]
 pub mod state_file;
@@ -71,6 +71,105 @@ pub const MAX_PDF_BYTES: u64 = 200 * MB;
 pub const MAX_EMBEDDED_IMAGE_BYTES: u64 = 10 * MB;
 /// A KOReader plugin archive, unpacked.
 pub const MAX_PLUGIN_BYTES: u64 = 20 * MB;
+/// EPUB to KFX: the text the entities a book file defines in its DOCTYPE expand to. A short
+/// value referenced many times multiplies: a 100 KB file can name 100 MB.
+pub const MAX_ENTITY_TEXT: u64 = 16 * MB;
+
+/// EPUB to KFX: CSS rules for one book file, counting a rule for each selector of a list, each
+/// `@font-face` and `@page` read, and each `@import` read or followed; and, apart, the classes
+/// Calibre's CSS flattening gives one book file.
+pub const MAX_STYLE_RULES: usize = 50_000;
+
+/// EPUB to KFX: what the CSS of one book file may hold besides its rules ([`MAX_STYLE_RULES`]),
+/// in units: one for each declaration read (each declaration a shorthand becomes, so `border`
+/// counts 12 and `margin` 4), one more for each 64 bytes of a declaration (times the
+/// declarations it becomes) or of a selector, and one for each 64 bytes of each stylesheet's
+/// text. Units are charged as the text is read, so a stylesheet is refused when it reaches
+/// the limit, before the rest of it is held in memory.
+pub const MAX_STYLE_DECLS: usize = 150_000;
+
+/// EPUB to KFX: steps matching the CSS selectors of one book file against it may take, in both
+/// cascades (the book's rules, then the flattened classes) together: one for
+/// each element a selector's compound is tested on, times the tests in that compound, one for
+/// each element a combinator moves through, and one more for each 64 bytes of an attribute
+/// value compared. The slowest kinds of step (a class test, `:has()`, `:nth-child(of)`: about
+/// 20 ns a step, measured on an M-series Mac) reach it in about 2 seconds in a release build;
+/// 2,000 rules of the kinds books use on a file of 20,000 elements take about 12 million.
+pub const MAX_SELECTOR_WORK: u64 = 100_000_000;
+
+/// EPUB to KFX: the steps of [`MAX_SELECTOR_WORK`] all a book's files take together, both
+/// cascades of each. The nine Gutenberg books take at most 21,828 (pg76), the 13 cascade
+/// fixture books at most 1,971, 200 chapters of an ordinary novel (`css_flatten`'s
+/// `NOVEL_CSS`) 310,000; one file of 20,000 elements and 2,000 rules of the kinds books use,
+/// about 12 million. At the limit, with the slowest kinds of step, a book takes about 20
+/// seconds before it is refused (40 files each just under [`MAX_SELECTOR_WORK`]: 6.6 s,
+/// because most of those steps are faster). Revisit with these figures if real books come
+/// near it.
+pub const MAX_BOOK_SELECTOR_WORK: u64 = 1_000_000_000;
+
+/// EPUB to KFX: declarations the two cascades of one book file (Calibre's first pass, and
+/// kfxgen's over the flattened classes) store for its elements, together, in units: one for
+/// each declaration copied into an element's styles, one more for each 64 bytes of it, and one
+/// for each set of rules found to match an element, and one for each 64 bytes of the class
+/// names the flattener writes into each element. Elements the same rules match share one
+/// copy, so a book's units grow with its distinct styles, not its elements. A `style`
+/// attribute counts its text, a unit for each 64 bytes, before it is read. At the limit the
+/// first cascade alone takes about 85 MB (81 to 83 MB measured at 480,000 units: 40,000
+/// elements of 11 declarations each of their own), both together up to about 120 MB (118 MB
+/// measured for 45,000 elements of a declaration each of their own, refused in the second),
+/// release build. Both cascades sharing the limit, a file fits about 12,000 to 25,000 elements
+/// each styled its own way (25,000 of one declaration each; fewer with more), and an element's
+/// pseudo-class declarations are counted for it in both cascades. The files of nine Gutenberg
+/// books use at most 1,495 in the first; the 49 cascade fixture files at most 1,049 in both.
+pub const MAX_CASCADE_DECLS: usize = 500_000;
+
+/// EPUB to KFX: the units of [`MAX_CASCADE_DECLS`] all a book's files use together, each
+/// file's two cascades counted, and the first-pass rules and `@font-face` rules each file
+/// keeps (a unit a rule, a unit a declaration and one more for each 64 bytes of it): a book's
+/// styles stay held until its last file is styled.
+/// About 135 bytes a unit stay held (121 to 134 measured over 2.7 to 3.8 million units, in
+/// books of 6 files of 24,000 elements styled their own way, 100 files of 6,000 elements of
+/// 2,000 styles each, and 1,500 files of 300 elements of 100 styles; release build), so at
+/// the limit a book's styles take about 400 MB besides its trees. Kept rules cost more a
+/// unit: 100 files each keeping 45,000 one-declaration rules were refused at 690 MB. Through
+/// `read_book`, the 13 cascade fixture books use at most 7,492 units and the nine Gutenberg
+/// books at most 51,196 (pg98); 200 chapters of an ordinary novel (`css_flatten`'s
+/// `NOVEL_CSS`, cascades only) use 135,800.
+pub const MAX_BOOK_CASCADE_DECLS: usize = 3_000_000;
+
+/// EPUB to KFX: the nodes of one book file's tree, refused while the file is parsed: read as
+/// XML (a document, the OPF, the nav, the NCX, an XML item), its elements, runs of text,
+/// comments and processing instructions (`roxmltree`'s `nodes_limit`); read as HTML, its
+/// elements and their attributes. The trees of nine Gutenberg books and the cascade fixtures
+/// hold at most 530 elements a file.
+pub const MAX_DOM_NODES: usize = 500_000;
+
+/// EPUB to KFX: the elements and attributes of all a book's files together, counted for every
+/// document read for its links and again for the trees held until the book is styled. The
+/// nine Gutenberg books hold at most 7,718 (pg76). A book of 2 million paragraphs, under the
+/// limit, peaked at 1.11 GB styled (2.2 s, release build).
+pub const MAX_BOOK_DOM_NODES: usize = 2_000_000;
+
+/// EPUB to KFX: one book file read as a document or as XML (a spine document, the nav, the
+/// NCX, an XML manifest item), refused before it is parsed. The nine Gutenberg books' largest
+/// is 70 KB (pg23). At the limit a file of one paragraph of text peaked at 302 MB read as XML
+/// and 432 MB read as HTML; one of attributes, read as XML, 774 MB.
+pub const MAX_CONTENT_FILE_BYTES: u64 = 32 * MB;
+
+/// EPUB to KFX: the documents and XML files a book reads together (its spine documents, the
+/// files they link, the nav, the NCX, XML items), each counted once as it is read. The nine
+/// Gutenberg books read at most 989 KB (pg98). Under the limit, 8 files of 31 MiB of text read
+/// to a 772 MB peak in 2.6 s as XML, and 1.85 GB in 4.2 s read as HTML (release build).
+pub const MAX_BOOK_CONTENT_BYTES: u64 = 256 * MB;
+
+/// EPUB to KFX: the attributes of one start tag read as XML, refused in the scan before the
+/// file is parsed (`parse_xml_limiting_attributes`): `roxmltree` compares each attribute
+/// with the ones before it, so a tag's time grows with the square of its attributes (80,000
+/// took 30 s). The nine Gutenberg books and the fixtures have at most 7 in a tag. A 31 MiB
+/// file of 256-attribute tags is refused by `MAX_BOOK_DOM_NODES` after 1.2 s at 685 MB.
+/// Known gap: a tag the XML scan does not see, read by `html5ever` in the HTML fallback, is
+/// not counted (80,000 attributes: 12 s).
+pub const MAX_TAG_ATTRIBUTES: usize = 256;
 
 /// Largest reservation made from a size a file declares (rule 1 of the size-limits design):
 /// `Vec::with_capacity(declared.min(MAX_RESERVE))`.

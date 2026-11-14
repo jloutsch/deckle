@@ -174,7 +174,8 @@ pub fn normalize(
     // Load every entry (order preserved).
     let mut order: Vec<String> = Vec::new();
     let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-    let mut budget = deckle_limits::Budget::new(epub.book_limit);
+    let (entry_limit, book_limit) = (epub.entry_limit(), epub.book_limit());
+    let mut budget = deckle_limits::Budget::new(book_limit);
     for i in 0..epub.zip.len() {
         let mut f = epub.zip.by_index(i)?;
         if f.is_dir() {
@@ -182,8 +183,8 @@ pub fn normalize(
         }
         let name = f.name()?.into_owned();
         let data = budget
-            .read(&mut f, epub.entry_limit)
-            .map_err(|e| crate::epub::io_error(e, epub.entry_limit))?;
+            .read(&mut f, entry_limit)
+            .map_err(|e| crate::epub::io_error(e, entry_limit))?;
         order.push(name.clone());
         files.insert(name, data);
     }

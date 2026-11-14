@@ -2,12 +2,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Rebuild fixtures/kfxgen/models: kfxgen's generator input (model.json, resources/) and what
 # kfxgen makes from it (expected.kfx), the reference for crates/deckle-kfxgen (native KFX
-# design, Oracles).
+# design, Oracles). With --cascade, rebuild fixtures/kfxgen/cascade instead: what Calibre
+# hands kfxgen (book view, trees, styles, first-pass rules; tools/ref/kfxgen_hook/book_dump.py).
 #
 #   tools/ref/kfxgen_models.sh                                   # the committed fixtures
 #   tools/ref/kfxgen_models.sh --refresh-sources                 # ... from kfxgen's test_books
+#   tools/ref/kfxgen_models.sh --cascade                         # the committed cascade dumps
 #   DECKLE_KFXGEN_CORPUS_OUT=gutenberg/models \
-#     tools/ref/kfxgen_models.sh --corpus gutenberg/*.epub       # a corpus, outside git
+#     tools/ref/kfxgen_models.sh --corpus gutenberg/*.epub       # a corpus, outside git;
+#                                                                # each book's cascade dump too
 #
 # Needs a kfxgen repo (KFXGEN, default ../kfxgen-public; only read) with its .venv, and calibre.
 # KFXGEN_REF is the kfxgen commit to take (default 0bc705d, the one the port targets); it must
@@ -27,6 +30,7 @@ PY="${KFXGEN_PYTHON:-$KFXGEN/.venv/bin/python}"
 EBOOK_CONVERT="${EBOOK_CONVERT:-ebook-convert}"
 CALIBRE_CUSTOMIZE="${CALIBRE_CUSTOMIZE:-calibre-customize}"
 OUT="$ROOT/fixtures/kfxgen/models"
+CASCADE="$ROOT/fixtures/kfxgen/cascade"
 SOURCES="$ROOT/fixtures/kfxgen/sources"
 HOOK="$ROOT/tools/ref/kfxgen_hook"
 
@@ -42,7 +46,8 @@ WORK="$(mktemp -d -t deckle-kfxgen-XXXXXX)"
 # The models are built beside OUT and take its place only when every one is made: a run
 # that fails leaves the committed fixtures as they were.
 BUILD="$OUT.new"
-trap 'rm -rf "$WORK" "$BUILD"' EXIT
+CASCADE_BUILD="$CASCADE.new"
+trap 'rm -rf "$WORK" "$BUILD" "$CASCADE_BUILD"' EXIT
 
 # The export, with the hook.
 TREE="$WORK/kfxgen"
@@ -57,18 +62,28 @@ find "$WORK/plugin" \( -name __pycache__ -o -name '*.pyc' -o -name .DS_Store \) 
 (cd "$WORK/plugin" && zip -rq "$WORK/kfxgen.zip" .)
 "$CALIBRE_CUSTOMIZE" -a "$WORK/kfxgen.zip" >/dev/null
 
-# calibre_model NAME EPUB DIR: dump NAME through ebook-convert into DIR/NAME, replay it, and
-# check the replay is ebook-convert's own output.
+# calibre_model NAME EPUB DIR [BOOK_DIR]: dump NAME through ebook-convert into DIR/NAME,
+# replay it, and check the replay is ebook-convert's own output. With BOOK_DIR, the same run
+# also writes the cascade dump there.
 calibre_model() {
-  local name="$1" epub="$2" dir="$3/$1"
+  local name="$1" epub="$2" dir="$3/$1" book="${4:-}"
   rm -rf "$dir"
-  if ! KFXGEN_DUMP_MODEL="$dir" "$EBOOK_CONVERT" "$epub" "$WORK/$name.kfx" >"$WORK/$name.log" 2>&1; then
+  # A run that also dumps the cascade is in UTC, as --cascade's (calibre_book) are: calibre
+  # turns a date with no time into midnight local time, written in UTC.
+  local zone=()
+  [ -z "$book" ] || zone=(TZ=UTC)
+  if ! env ${zone[@]+"${zone[@]}"} KFXGEN_DUMP_MODEL="$dir" KFXGEN_DUMP_BOOK="$book" \
+    "$EBOOK_CONVERT" "$epub" "$WORK/$name.kfx" >"$WORK/$name.log" 2>&1; then
     tail -20 "$WORK/$name.log" >&2
     echo "$name: ebook-convert failed" >&2
     exit 1
   fi
   [ -f "$dir/model.json" ] || {
     echo "$name: no model.json, so calibre did not run kfxgen" >&2
+    exit 1
+  }
+  [ -z "$book" ] || [ -f "$book/oeb.json" ] || {
+    echo "$name: no cascade oeb.json, so the book dump did not finish" >&2
     exit 1
   }
   "$PY" "$HOOK/generate_from_model.py" "$TREE" "$dir" "$dir/expected.kfx" >/dev/null
@@ -90,6 +105,16 @@ record_tools() {
   } >"$1/TOOLS"
 }
 
+# record_cascade_run DIR: the time zone and month of a run that dumped cascades, after
+# record_tools. A year-only dc:date takes day 15 of this month
+# (calibre.utils.date.parse_only_date).
+record_cascade_run() {
+  {
+    echo "TZ: UTC"
+    echo "month of the run: $(TZ=UTC date +%Y-%m)"
+  } >>"$1/TOOLS"
+}
+
 if [ "${1:-}" = "--corpus" ]; then
   shift
   : "${DECKLE_KFXGEN_CORPUS_OUT:?set DECKLE_KFXGEN_CORPUS_OUT to the folder for the models}"
@@ -105,10 +130,61 @@ if [ "${1:-}" = "--corpus" ]; then
   # it left; BOOKS lists the books of a run that made them all.
   rm -f "$DECKLE_KFXGEN_CORPUS_OUT"/{BOOKS,KFXGEN_COMMIT,TOOLS}
   for epub in "$@"; do
-    calibre_model "$(basename "$epub" .epub)" "$epub" "$DECKLE_KFXGEN_CORPUS_OUT"
+    name="$(basename "$epub" .epub)"
+    calibre_model "$name" "$epub" "$DECKLE_KFXGEN_CORPUS_OUT" "$DECKLE_KFXGEN_CORPUS_OUT/$name/cascade"
   done
   for epub in "$@"; do basename "$epub" .epub; done >"$DECKLE_KFXGEN_CORPUS_OUT/BOOKS"
   record_tools "$DECKLE_KFXGEN_CORPUS_OUT"
+  record_cascade_run "$DECKLE_KFXGEN_CORPUS_OUT"
+  exit 0
+fi
+
+# calibre_book NAME EPUB DIR: the cascade dump of NAME into DIR/NAME. Nothing else is kept.
+# In UTC: calibre turns a date with no time into midnight local time, written in UTC.
+calibre_book() {
+  local name="$1" epub="$2" dir="$3/$1"
+  rm -rf "$dir"
+  if ! TZ=UTC KFXGEN_DUMP_BOOK="$dir" "$EBOOK_CONVERT" "$epub" "$WORK/$name.kfx" >"$WORK/$name.log" 2>&1; then
+    tail -20 "$WORK/$name.log" >&2
+    echo "$name: ebook-convert failed" >&2
+    exit 1
+  fi
+  [ -f "$dir/oeb.json" ] || {
+    echo "$name: no oeb.json, so calibre did not run kfxgen or the dump did not finish" >&2
+    exit 1
+  }
+  echo "cascade $name: $(find "$dir" -type f | wc -l | tr -d ' ') files"
+}
+
+# The cascade fixtures (fixtures/kfxgen/README.md, cascade/): the sources built here, and
+# committed sources that between them hold lists, tables, pictures, notes, vertical and
+# right-to-left text and an embedded font. Kept under 1.5 MB.
+CASCADE_BUILT="css_quirks package_quirks no_toc fake_margins malformed"
+CASCADE_SOURCES="$CASCADE_BUILT lists notes vertical rtl fonts directions frames navigation"
+
+if [ "${1:-}" = "--cascade" ]; then
+  rm -rf "$CASCADE_BUILD"
+  mkdir -p "$CASCADE_BUILD"
+  "$PY" -I "$ROOT/tools/ref/make_css_quirks_epub.py" "$SOURCES/css_quirks.epub"
+  "$PY" -I "$ROOT/tools/ref/make_cascade_epubs.py" "$SOURCES"
+  for name in $CASCADE_SOURCES; do
+    calibre_book "$name" "$SOURCES/$name.epub" "$CASCADE_BUILD"
+  done
+  # Calibre's user-agent rules, once: every book's must be the same.
+  first="${CASCADE_SOURCES%% *}"
+  for name in $CASCADE_SOURCES; do
+    cmp -s "$CASCADE_BUILD/$first/ua_rules.json" "$CASCADE_BUILD/$name/ua_rules.json" || {
+      echo "$name: other user-agent rules than $first" >&2
+      exit 1
+    }
+  done
+  mv "$CASCADE_BUILD/$first/ua_rules.json" "$CASCADE_BUILD/ua_rules.json"
+  for name in $CASCADE_SOURCES; do rm -f "$CASCADE_BUILD/$name/ua_rules.json"; done
+  record_tools "$CASCADE_BUILD"
+  record_cascade_run "$CASCADE_BUILD"
+  rm -rf "$CASCADE"
+  mv "$CASCADE_BUILD" "$CASCADE"
+  du -sh "$CASCADE"
   exit 0
 fi
 
@@ -158,6 +234,8 @@ floats_697|floats_697/F697 kfxgen source.epub
 font_sizes|font_sizes/font-sizes-source.epub
 LIST
 for epub in "$SOURCES"/*.epub; do
+  # The sources --cascade builds are cascade sources only; models/ has no fixture of them.
+  case " $CASCADE_BUILT " in *" $(basename "$epub" .epub) "*) continue ;; esac
   calibre_model "$(basename "$epub" .epub)" "$epub" "$BUILD"
 done
 record_tools "$BUILD"

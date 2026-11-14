@@ -1,0 +1,7 @@
+{
+ "font_face": [],
+ "rules": [
+  [1, ".ib", {"display": "inline-block", "width": "2em"}, [], [1, 0, 0, 1, 0, 83]]
+ ],
+ "ua_rules": 180
+}

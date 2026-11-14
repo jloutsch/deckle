@@ -1,0 +1,9 @@
+{
+ "font_face": [
+  {"font-family": "\"Fixture Serif\"", "src": "url(OEBPS/LiberationSerif-Regular.ttf)"}
+ ],
+ "rules": [
+  [1, "p.lib", {"font-family": "\"Fixture Serif\", serif"}, [], [1, 0, 0, 1, 1, 84]]
+ ],
+ "ua_rules": 180
+}

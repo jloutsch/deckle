@@ -39,8 +39,8 @@ needs kfxgen `0bc705d` or later (the replay imports its `page_scale`), and stops
 `KFXGEN_REF` that doesn't contain it. It exports commit
 `KFXGEN_REF` (default `0bc705d`) of the kfxgen repo `KFXGEN` (default `../kfxgen-public`, only
 read) with `git archive`, puts the hook into the export
-(`tools/ref/kfxgen_hook/inject.py` adds a call at the top of `generate_full_book`, and stops if
-its anchor line has moved), and builds the Calibre plugin from that export. kfxgen's `convert`
+(`tools/ref/kfxgen_hook/inject.py` adds a call at the top of `generate_full_book`, and the two
+calls `cascade/` needs, and stops if an anchor line has moved), and builds the Calibre plugin from that export. kfxgen's `convert`
 runs the generator inside `page_width`, 480pt for a vertical-rl book (#754); that is not an
 argument, so the dump doesn't hold it, and every replay
 (`tools/ref/kfxgen_hook/generate_from_model.py`'s `generate`) sets it from `writing_mode` the same
@@ -96,7 +96,8 @@ hrefs, unreadable JPEGs). The books are `ARG_BOOKS` in that script, their other 
 | `split_title` | a title spelled over two paragraphs, and over two with a rule between (#64): kfxgen's heading takes the first block's style (#490) but not its small caps, transform, spacing and colour (#239); a title in one block, which gives them |
 
 **Calibre path** (`ebook-convert` with kfxgen, CSS applied): the source is
-`sources/<name>.epub`. For each, the script also checks that replaying the model gives exactly
+`sources/<name>.epub`, every one but `css_quirks`, `package_quirks`, `no_toc`, `fake_margins` and `malformed`,
+which are `cascade/` sources only. For each, the script also checks that replaying the model gives exactly
 the KFX `ebook-convert` wrote. The script builds from the committed sources. kfxgen's
 `test_books` is untracked in places, so no commit pins it: `kfxgen_models.sh --refresh-sources`
 copies the sources again from the kfxgen working tree and names each one that changed. The
@@ -167,8 +168,11 @@ on 2026-08-01), so a fresh download can differ from them: on 2026-11-11 `pg11-im
 test both start from whatever is in `gutenberg/`; it just isn't the same books byte for byte.
 To dump them:
 `DECKLE_KFXGEN_CORPUS_OUT=gutenberg/models tools/ref/kfxgen_models.sh --corpus gutenberg/*.epub`
-(28 s on an M-series Mac, 174 MB), which writes `KFXGEN_COMMIT`, `TOOLS` and `BOOKS` (the books
-it dumped) there too, once every book is made. The corpus test stops unless the folder holds
+(82 s on an M-series Mac on 2026-11-13, 186 MB; 28 s and 174 MB before each book also got its
+`cascade/` dump, which the same run writes to `<book>/cascade`), which writes `KFXGEN_COMMIT`,
+`TOOLS` and `BOOKS` (the books it dumped) there too, once every book is made. Its conversions run
+with `TZ=UTC`, as `--cascade`'s do, and `TOOLS` says so with the month of the run; each
+`<book>/cascade` holds its own `ua_rules.json`. The corpus test stops unless the folder holds
 exactly the books in `BOOKS`: a dump that failed leaves no list, and a book left from an earlier
 corpus isn't in it (delete its folder). Two dumps
 give the same `expected.kfx` for every book, but not always the same `model.json`: in two dumps of
@@ -176,6 +180,68 @@ pg74 the `images` argument held the same pictures in another order (pg76, pg86 a
 `model.json` also changed on a redump, their `expected.kfx` not). The port makes the same bytes
 from either order. `crates/deckle-kfxgen` makes every corpus book byte for
 byte: `DECKLE_KFXGEN_CORPUS=gutenberg/models cargo test -p deckle-kfxgen --test it corpus -- --ignored`.
+The same command also runs `corpus_cascade`, which reads each book with `book::read_book` and
+compares it with its `cascade/` dump as `book::read_book_matches_every_dump` compares the
+fixtures below; it reads the EPUBs from `DECKLE_KFXGEN_CORPUS_EPUBS`, else from the corpus
+folder's parent (`gutenberg/`), and refuses a corpus whose `TOOLS` is not Calibre 9.18.0 in UTC.
+
+## cascade/
+
+What Calibre hands kfxgen, dumped inside a real conversion by `tools/ref/kfxgen_hook/book_dump.py`
+(`KFXGEN_DUMP_BOOK`), the reference for phase 2's `epub` and `css` modules. kfxgen never sees the
+book's CSS: Calibre flattens it to one class per element first, and kfxgen builds its own
+`Stylizer` on the result. Rebuild with `tools/ref/kfxgen_models.sh --cascade` (under 40 s on an
+M-series Mac); two runs give the same bytes. `KFXGEN_COMMIT` and `TOOLS` are as in `models/`
+(calibre 9.18.0); `TOOLS` also says the dump ran with `TZ=UTC` (Calibre turns a date with no
+time into local midnight) and in which month (a year-only `dc:date` takes day 15 of the month
+of the run, so `package_quirks`'s date changes with it). The test harness refuses a dump whose
+`TOOLS` names another Calibre or no `TZ: UTC` (`tests/it/support.rs` `check_tools`).
+`tests/it/book.rs` `read_book_matches_every_dump` reads each source with `book::read_book` and
+compares the result with its dump at four levels: book view (`oeb.json`), element tree and
+first-pass rules (`dom/`, `rules/`), declared styles and classes (`styles/` `specified`,
+`pseudo`), computed values (`styles/` `computed`).
+
+`ua_rules.json` holds Calibre's user-agent rules (its `html.css`), the same for every file of
+every book (the dump and the script both check), and one folder per source,
+`sources/<name>.epub`:
+
+| File | What it holds |
+|---|---|
+| `oeb.json` | the book view kfxgen is given: `spine` (`href`, `linear`), `page_progression_direction`, `manifest` (`id`, `href`, `media_type`, sorted by href), `toc` (`title`, `href`, `children`), `auto_generated_toc`, `guide` (`type`, `href`, sorted by type), `metadata` (`title`, `creator`, `description`, `language`, `publisher`, `date`, `cover`, each a list), `raw` |
+| `files.json` | spine href → `NNN`, its place in the spine |
+| `dom/NNN.xhtml` | the file's tree as kfxgen gets it (flattened, chapter marks in, `data-kfxgen-*` marks in), written after kfxgen's Stylizer is built |
+| `styles/NNN.json` | `table`: distinct styles, each `specified` (`cssdict()`), `pseudo` (the pseudo-class dicts) and `computed` (`Style[prop]` for 34 properties; `{"error": "<exception>"}` if it raises, `{"number": "nan"}`, `"inf"` or `"-inf"` for what JSON can't hold); `nodes`: `[path, table index]` per element in document order, the path being element-child indexes from the root; `font_face` |
+| `rules/NNN.json` | Calibre's first-pass Stylizer, before flattening: `rules`, the book's rules as `[origin, selector, declarations, important, key]` in cascade order (`important` the sorted names of its `!important` properties, `key` Calibre's sort key `[origin, a, b, c, d, index]`); `ua_rules`, how many user-agent rules come before them (all of `ua_rules.json`, same form); `font_face` |
+
+The manifest is Calibre's after its transforms: the book's stylesheets are gone, Calibre's
+`stylesheet.css` and `page_styles*.css` are in. Two things in a dump are not as kfxgen has them:
+
+- `raw` is the EPUB's own OPF (`opfname`, its path in the EPUB, and `sha256`). The OPF kfxgen
+  reads is the one Calibre writes, `content.opf` at the unpacked root, which names an NCX made
+  from the nav under a random file name, so it differs on every run. When the book's own OPF is
+  that root `content.opf` (`notes`, `vertical`, `navigation`), Calibre writes over it and
+  `sha256` is `null`.
+- In `dom/`, an element's classes are sorted when Calibre gave it several (a class and
+  `pcalibre` classes). Calibre joins them from a Python set, so their order changes from run to
+  run, and its Python ignores `PYTHONHASHSEED`. kfxgen's own tree is not changed.
+
+| Source | Spine files | Size | Why |
+|---|---|---|---|
+| `css_quirks` | 7 | 274 KB | made by `tools/ref/make_css_quirks_epub.py`: one file per group of quirks the phase 2 tests name (`cleanups`, `sheet`, `shorthand`, `selectors`, `cascade`, `flatten`, `values`) |
+| `package_quirks` | 4 | 33 KB | made by `tools/ref/make_cascade_epubs.py`: an HTML cover page, a `linear="no"` file, a duplicate spine entry, a linked file the spine leaves out, a year-only date, `en-US`, an NCX entry with no label |
+| `no_toc` | 2 | 17 KB | the same script: no NCX and no nav, so Calibre makes the contents |
+| `fake_margins` | 2 | 20 KB | the same script: a margin `RemoveFakeMargins` removes, and one it keeps |
+| `malformed` | 4 | 29 KB | the same script: files Calibre does not read as plain XHTML: tags left open and an unquoted attribute (its HTML parser), DOCTYPE entities, HTML 4 in upper case, windows-1252 |
+| `lists` | 2 | 28 KB | lists |
+| `notes` | 6 | 62 KB | pop-up notes (`noteref`), notes lists |
+| `vertical` | 3 | 51 KB | vertical-rl Japanese, rtl spine, ruby |
+| `rtl` | 2 | 18 KB | Hebrew, `page-progression-direction="rtl"` |
+| `fonts` | 1 | 13 KB | an embedded font (`@font-face`) |
+| `directions` | 6 | 68 KB | tables, direction and language |
+| `frames` | 6 | 78 KB | figures, pictures, floats |
+| `navigation` | 4 | 37 KB | an NCX naming places inside chapters |
+
+747 KB in all, with `ua_rules.json` (19 KB).
 
 ## Phase 1 timings
 

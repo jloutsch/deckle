@@ -9,11 +9,25 @@ repository.workspace = true
 
 [dependencies]
 deckle-kfx.workspace = true
+deckle-limits = { workspace = true, features = ["xml"] }
+roxmltree.workspace = true
+html5ever.workspace = true
+# Encodings a document declares (src/dom/parse.rs).
+encoding_rs.workspace = true
+cssparser.workspace = true
+zip.workspace = true
 regex.workspace = true
 # float_roundtrip: without it serde_json reads some floats one ULP off kfxgen's.
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 sha2.workspace = true
+# Dates as Calibre reads them (src/epub/package.rs).
+chrono = { version = "0.4", default-features = false }
 thiserror.workspace = true
+# Class names in ASCII, as Calibre's `ascii_text` writes them (src/css/flatten.rs).
+deunicode.workspace = true
 
 [dev-dependencies]
+deckle-kfx = { workspace = true, features = ["testing"] }
+# The dumps' declarations in their written order (tests/it/css_sheet.rs).
+serde.workspace = true
 tempfile.workspace = true

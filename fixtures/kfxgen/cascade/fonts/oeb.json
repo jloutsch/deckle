@@ -1,0 +1,59 @@
+{
+ "spine": [
+  {
+   "href": "OEBPS/c1.xhtml",
+   "linear": true
+  }
+ ],
+ "page_progression_direction": null,
+ "manifest": [
+  {
+   "id": "x1",
+   "href": "OEBPS/LiberationSerif-Regular.ttf",
+   "media_type": "font/ttf"
+  },
+  {
+   "id": "c1",
+   "href": "OEBPS/c1.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "page_css",
+   "href": "page_styles.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "css",
+   "href": "stylesheet.css",
+   "media_type": "text/css"
+  }
+ ],
+ "toc": [
+  {
+   "title": "An embedded font",
+   "href": "OEBPS/c1.xhtml",
+   "children": []
+  }
+ ],
+ "auto_generated_toc": false,
+ "guide": [],
+ "metadata": {
+  "title": [
+   "Fonts"
+  ],
+  "creator": [
+   "Fixture Author"
+  ],
+  "description": [],
+  "language": [
+   "eng"
+  ],
+  "publisher": [],
+  "date": [],
+  "cover": []
+ },
+ "raw": {
+  "opfname": "OEBPS/content.opf",
+  "sha256": "c4958d4c3ac8af9fa83ef6428c1afa96a6aebacc075affc35e50a05bb5d1c095"
+ }
+}

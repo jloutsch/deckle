@@ -1,0 +1,20 @@
+{
+ "font_face": [
+  {"font-family": "\"Quirk\"", "font-weight": "bold", "font-style": "italic"}
+ ],
+ "rules": [
+  [1, "frameset", {"float": "right"}, ["float"], [1, 0, 0, 0, 1, 91]],
+  [1, "p.i1", {"color": "red"}, ["color"], [1, 0, 0, 1, 1, 83]],
+  [1, "p.i1", {"color": "blue"}, [], [1, 0, 0, 1, 1, 84]],
+  [1, "p.i2", {"color": "green"}, ["color"], [1, 0, 0, 1, 1, 85]],
+  [1, "p.e1", {"color": "olive"}, [], [1, 0, 0, 1, 1, 86]],
+  [1, "p.e1", {"color": "navy"}, [], [1, 0, 0, 1, 1, 87]],
+  [1, "p.cls", {"color": "maroon"}, [], [1, 0, 0, 1, 1, 89]],
+  [1, "p.order", {"color": "red"}, [], [1, 0, 0, 1, 1, 90]],
+  [1, "img.styled", {"width": "50%"}, [], [1, 0, 0, 1, 1, 92]],
+  [1, "p.order", {"color": "green"}, [], [1, 0, 0, 1, 1, 95]],
+  [1, "p.order", {"color": "blue"}, [], [1, 0, 0, 1, 1, 96]],
+  [1, "#id1", {"color": "teal"}, [], [1, 0, 1, 0, 0, 88]]
+ ],
+ "ua_rules": 180
+}

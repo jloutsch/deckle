@@ -101,18 +101,40 @@ normalized EPUB                                           unstamped book.kfx
 | Level | Input | Python side | Rust side | Pass |
 |---|---|---|---|---|
 | Generator | `model.json` dumped by kfxgen | kfxgen generator → KFX | `generate` → KFX | byte-identical |
-| Cascade | XHTML + CSS | Calibre `Stylizer` dump (`calibre-debug` script) | `css` | equal values for every property kfxgen reads |
+| Cascade | EPUB | kfxgen's own Stylizer, dumped inside the conversion (`tools/ref/kfxgen_models.sh --cascade`) | `epub`+`css` | the same book view, element trees, declared values, pseudo-class values and computed values |
 | Converter | normalized EPUB | kfxgen via `ebook-convert` → `model.json` | `epub`+`css`+`convert` → model | equal, except entries in `DIVERGENCES.md` |
 | End to end | 9 Gutenberg books + kfxgen `test_books` sources | kfxgen KFX | Deckle KFX | text retention ≥ kfxgen's; fragment histogram per type within listed tolerance; timing goal met |
 | Device | corpus sideloaded on a Kindle | — | — | opens, TOC, links, pop-ups, cover, X-Ray, Word Wise (user signs off) |
 
-The CSS properties the cascade must produce are the ones kfxgen reads (resolver at
-`converter.py:1030-1226`): font-size, line-height, font-family, font-weight, font-style,
-font-variant, text-transform, letter-spacing, text-align, text-indent, margin-*, padding-*,
-border-*-{width,style,color}, border-collapse, color, background(-color, -image, -repeat),
-float, clear, width, height, vertical-align, direction, unicode-bidi, writing-mode,
-text-orientation, text-emphasis-style, text-combine-upright, text-decoration, white-space,
-list-style-type, display, visibility, page-break-*/break-*, quotes, `::first-letter`.
+kfxgen never sees the book's CSS: Calibre's `CSSFlattener` replaces every `style` attribute,
+`<style>` and stylesheet with one class per element, and kfxgen builds its own `Stylizer` on that
+result (`font_table.py:460-472`). A Stylizer run on the original XHTML gives other values, so the
+oracle is a dump of kfxgen's Stylizer taken inside a real conversion
+(`tools/ref/kfxgen_hook/book_dump.py`, fixtures in `fixtures/kfxgen/cascade`).
+
+What the cascade must produce, per element, is what that Stylizer gives kfxgen's resolver
+(`converter.py:1030-1240`):
+
+- every declared property (`Style.get`, `cssdict()`) after flattening, and the pseudo-class
+  dicts (`:hover`, `:link`, `::first-letter` and the rest);
+- the computed value (`Style[prop]`) of: text-align, font-family, font-style, white-space,
+  list-style-type, border-collapse, border-{top,right,bottom,left}-{style,width,color},
+  font-size, line-height, width, height, margin-{top,right,bottom,left},
+  padding-{top,right,bottom,left}, text-indent, color, background-color, font-weight;
+- the first-pass rule list with its origin (user-agent or book), selector matching, and the
+  `@font-face` rules.
+
+kfxgen also reads files outside the OEB: the OPF Calibre rewrote (`container.opfname`,
+`content.opf` at the unpacked root: hrefs from the root, a manifest item for an NCX made from
+the nav under a random name) and, through its manifest, the book's own nav and NCX files.
+
+**Scope of phase 2.** It stops at Calibre's `Style` object. kfxgen's own resolver
+(`converter.py:1030-1240`), its `data-kfxgen-*` marks and its spine reorder are kfxgen code and
+belong to phase 3. Phase 2 supplies what they consume: `get`, the computed values, the pseudo
+dicts, the rule list with origin, selector matching, `@font-face` rules, and the text of the
+book's own OPF, nav and NCX. kfxgen reads some things (dates, the spine order, landmarks, page
+lists) from Calibre's rewritten OPF instead; phase 3 has to account for the differences
+(hrefs from the root, the added NCX item, the cover page and duplicates left out of the spine).
 
 It must also reproduce what kfxgen gets from Calibre's CSS flattening: Calibre's user-agent
 sheet (e.g. `hr { height: 2px }`), font-size keywords → rem via the input profile, `width`/
@@ -129,7 +151,7 @@ Estimates are my judgement from the code size, not measured.
 | Phase | Delivers | Size |
 |---|---|---|
 | 1. Generator | `model.json` → KFX, byte-identical to kfxgen on every fixture; math reported unsupported | 1–2 weeks |
-| 2. EPUB + cascade | spine/manifest/TOC reader; computed styles equal to Calibre's Stylizer on fixtures | 1–2 weeks |
+| 2. EPUB + cascade | spine/manifest/TOC reader; declared and computed styles equal to kfxgen's own Stylizer on fixtures, up to Calibre's `Style` | 1–2 weeks; the phase 2 plan puts it at about 4,000 to 5,000 lines of Rust plus tests (phase 1 was about 12,000) |
 | 3. Converter | DOM + styles → chapter model, in feature slices (text, headings/TOC, links/notes, lists, images, tables, boxes, fonts, vertical/RTL) | 3–5 weeks |
 | 4. Integration | converter setting, queue, finish path, CLI/app/Docker/docs changes; native opt-in ("built-in converter, beta") | about 1 week |
 | 5. Default | native becomes the default after device sign-off; Previewer optional, for fixed layout | days |

@@ -1,0 +1,8 @@
+{
+ "font_face": [],
+ "rules": [
+  [1, "ol", {"list-style-type": "decimal"}, [], [1, 0, 0, 0, 1, 84]],
+  [1, "ul.bare", {"list-style-type": "none", "list-style-position": "outside", "list-style-image": "none"}, [], [1, 0, 0, 1, 1, 83]]
+ ],
+ "ua_rules": 180
+}

@@ -21,3 +21,113 @@ kfxgen includes a modified subset of kfxlib, from the KFX Input/Output plugins f
 Parts of this crate follow kfxlib's behaviour as kfxgen uses it: how a decimal is written, the
 approximate locations and pages, and the count of `YJ_symbols` entries. The symbol names in
 src/generate/standard_symbols.rs are kfxgen's own (kfxgen's NOTICE), not kfxlib's.
+
+src/epub ports rules from calibre 9.18.0 (https://github.com/kovidgoyal/calibre, tag v9.18.0),
+how it reads an EPUB into the book view kfxgen is given:
+
+    calibre
+    Copyright (C) 2006-2026 Kovid Goyal and the calibre contributors
+    Licensed under the GNU General Public License v3.
+
+Files the port follows: src/calibre/ebooks/conversion/plugins/epub_input.py,
+src/calibre/ebooks/conversion/plumber.py, src/calibre/ebooks/oeb/base.py,
+src/calibre/ebooks/oeb/reader.py, src/calibre/ebooks/oeb/polish/upgrade.py,
+src/calibre/ebooks/oeb/transforms/flatcss.py, src/calibre/ebooks/oeb/transforms/guide.py,
+src/calibre/ebooks/oeb/transforms/metadata.py, src/calibre/ebooks/oeb/transforms/trimmanifest.py,
+src/calibre/ebooks/metadata/__init__.py, src/calibre/ebooks/metadata/opf2.py,
+src/calibre/ebooks/metadata/opf3.py, src/calibre/ebooks/metadata/book/base.py,
+src/calibre/utils/date.py,
+src/calibre/utils/localization.py and src/calibre/utils/xml_parse.py. The table of two-letter
+language codes in src/epub/package.rs is calibre's (`iso639['2to3']` in
+resources/localization/iso639.calibre_msgpack, built from the iso-codes package). The
+iso-codes data is licensed under the GNU Lesser General Public License v2.1, as calibre's
+COPYRIGHT file records for it (`Files: setup/iso*`).
+
+src/dom ports calibre 9.18.0's reading of a book's XHTML into a tree, under the same notice:
+src/calibre/ebooks/oeb/parse_utils.py, src/calibre/ebooks/oeb/base.py,
+src/calibre/ebooks/chardet.py, src/calibre/ebooks/conversion/preprocess.py,
+src/calibre/__init__.py, src/calibre/ebooks/html_entities.c and src/calibre/utils/speedup.c.
+
+src/dom/structure.rs ports calibre 9.18.0's chapter marks and generated contents, under the
+same notice: src/calibre/ebooks/oeb/transforms/structure.py, src/calibre/ebooks/oeb/reader.py,
+src/calibre/ebooks/oeb/base.py and src/calibre/ebooks/conversion/plumber.py.
+
+src/css ports calibre 9.18.0's reading of a book's stylesheets into rules and its first
+cascade, under the same notice: src/calibre/ebooks/oeb/stylizer.py, src/calibre/ebooks/oeb/base.py,
+src/calibre/ebooks/oeb/normalize_css.py, src/calibre/ebooks/conversion/preprocess.py,
+src/calibre/ebooks/oeb/transforms/flatcss.py and src/calibre/customize/profiles.py. It also
+ports src/tinycss/media3.py and src/tinycss/fonts3.py, which Kovid Goyal wrote for calibre's
+copy of tinycss and which carry calibre's GPL v3 header, and follows how the tinycss parser
+they build on (src/tinycss/css21.py and src/tinycss/tokenizer.py) reads a media query and a
+font shorthand; no tinycss code is copied. calibre's COPYRIGHT file lists src/tinycss/* as:
+
+    tinycss
+    Copyright: Simon Sapin
+    License: BSD
+
+src/css/flatten.rs and src/css/fake_margins.rs port calibre 9.18.0's CSS flattener and its
+removal of fake margins, under the same notice: src/calibre/ebooks/oeb/transforms/flatcss.py,
+src/calibre/ebooks/oeb/transforms/page_margin.py, src/calibre/ebooks/oeb/stylizer.py
+(`Style.lineHeight`, `Style.fontSize`), src/calibre/ebooks/__init__.py (`unit_convert`) and
+src/calibre/customize/profiles.py (`fnums`). Class names are made ASCII with the deunicode crate
+(BSD-3-Clause) where calibre uses its own transliteration.
+
+src/css/style.rs ports calibre 9.18.0's style values, under the same notice:
+src/calibre/ebooks/oeb/stylizer.py (`Style`, `validate_color`), src/calibre/ebooks/__init__.py
+(`unit_convert`, `UNIT_RE`) and src/calibre/customize/profiles.py (`fsizes`, the screen size).
+The colour pattern is css_parser's CSS 2.1 `color`, read from calibre.
+
+src/book.rs runs those ports in calibre 9.18.0's order and reads each file's stylesheets as its
+Stylizer finds them, under the same notice: src/calibre/ebooks/conversion/plumber.py,
+src/calibre/ebooks/oeb/stylizer.py, src/calibre/ebooks/oeb/base.py,
+src/calibre/ebooks/oeb/reader.py, src/calibre/ebooks/oeb/transforms/structure.py and
+src/calibre/ebooks/oeb/transforms/flatcss.py.
+
+The tables in src/css/defaults.rs are calibre's (`DEFAULTS`, `INHERITED`). src/css also
+follows the behaviour of css_parser 1.1.1, the CSS library calibre runs (a fork of cssutils,
+licensed under the GNU Lesser General Public License v3 or later); no css_parser code is
+copied, its behaviour was read from calibre.
+
+src/css/select/ ports calibre's selector engine under the same notice:
+src/css_selectors/select.py (Kovid Goyal) and src/css_selectors/parser.py, which calibre
+derived from cssselect (its header: ":copyright: (c) 2007-2012 Ian Bicking and contributors.
+See AUTHORS for more details. :license: BSD, see LICENSE for more details."). The tokenizer
+and grammar in src/css/select/tokens.rs and src/css/select/parse.rs are ported from that file,
+under cssselect's licence:
+
+    Copyright (c) 2007-2012 Ian Bicking and contributors. See AUTHORS
+    for more details.
+
+    All rights reserved.
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions are
+    met:
+
+    1. Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+
+    2. Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in
+    the documentation and/or other materials provided with the
+    distribution.
+
+    3. Neither the name of Ian Bicking nor the names of its contributors may
+    be used to endorse or promote products derived from this software
+    without specific prior written permission.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+    A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL IAN BICKING OR
+    CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+    EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+    PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+    PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+    LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+    NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+src/css/html.css is calibre's resources/templates/html.css, copied verbatim. It is Mozilla
+code under the tri-licence its header states (MPL 1.1, GPL 2.0 or later, LGPL 2.1 or later),
+used here under the GPL.

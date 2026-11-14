@@ -1,0 +1,11 @@
+{
+ "font_face": [],
+ "rules": [
+  [1, "span.emb", {"direction": "rtl", "unicode-bidi": "embed"}, [], [1, 0, 0, 1, 1, 83]],
+  [1, "span.big", {"font-size": "1.5em"}, [], [1, 0, 0, 1, 1, 84]],
+  [1, "p.start", {"text-align": "start"}, [], [1, 0, 0, 1, 1, 85]],
+  [1, "p.plain", {"unicode-bidi": "plaintext"}, [], [1, 0, 0, 1, 1, 86]],
+  [1, "div.box", {"border-top-color": "black", "border-top-style": "solid", "border-top-width": "1px", "border-right-color": "black", "border-right-style": "solid", "border-right-width": "1px", "border-bottom-color": "black", "border-bottom-style": "solid", "border-bottom-width": "1px", "border-left-color": "black", "border-left-style": "solid", "border-left-width": "1px", "padding-top": "0.5em", "padding-right": "0.5em", "padding-bottom": "0.5em", "padding-left": "0.5em"}, [], [1, 0, 0, 1, 1, 87]]
+ ],
+ "ua_rules": 180
+}
