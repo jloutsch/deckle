@@ -560,6 +560,12 @@ impl Dom {
         self.nodes.len()
     }
 
+    /// [`Dom::node_count`] and every element's attributes: what the tree holds, counted
+    /// against [`deckle_limits::MAX_BOOK_DOM_NODES`].
+    pub(crate) fn held(&self) -> usize {
+        self.nodes.len() + self.nodes.iter().map(|e| e.attrs.len()).sum::<usize>()
+    }
+
     /// Appends `s` where text after `parent`'s last child goes: that child's tail, or
     /// `parent`'s text when it has no child.
     fn append_text(&mut self, parent: NodeId, s: &str) {

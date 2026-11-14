@@ -348,6 +348,14 @@ that makes (`parse_html`). A short value referenced many times multiplies: a 100
 name 100 MB. The port refuses a file whose entities would make more than 16 MB
 (`deckle_limits::MAX_ENTITY_TEXT`, `dom::Error::EntityText`).
 
+## Files too large to read
+
+Calibre reads every document and XML file of a book whatever its size. The port refuses the
+book (`book::Error::TooLarge`) when one it reads is larger than
+`deckle_limits::MAX_CONTENT_FILE_BYTES` (32 MiB) or holds more than `MAX_DOM_NODES` nodes, and
+when the documents it reads hold more than `MAX_BOOK_DOM_NODES` elements and attributes
+together. The nine Gutenberg books' largest file is 70 KB and their largest book holds 7,718.
+
 ## Calibre steps the element tree leaves out
 
 - Comments and processing instructions are dropped and the text around them joined. Calibre

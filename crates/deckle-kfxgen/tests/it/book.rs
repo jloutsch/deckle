@@ -407,7 +407,9 @@ fn first_pass_rules_count_against_the_book_limit() {
     let file = epub_of(opf.as_bytes(), &entries);
     let start = std::time::Instant::now();
     match read_book(file.path()) {
-        Err(Error::TooLarge { what }) => assert!(what.contains("this book"), "{what}"),
+        Err(Error::TooLarge { what }) => {
+            assert!(what.starts_with("the CSS of this book "), "{what}")
+        }
         other => panic!("{:?}", other.map(|_| ())),
     }
     assert!(
@@ -526,4 +528,159 @@ fn style_elements_are_calibres() {
     );
     let book = read_book(file.path()).unwrap();
     assert_eq!(book_selectors(&book), ["p.svg"]);
+}
+
+/// What the [`Error::TooLarge`] that reading `file` gives says, after less than `COST_LIMIT`.
+fn too_large(file: &tempfile::NamedTempFile) -> String {
+    let start = std::time::Instant::now();
+    let got = read_book(file.path());
+    let took = start.elapsed();
+    let Err(Error::TooLarge { what }) = got else {
+        panic!("{:?} after {took:?}", got.map(|_| ()));
+    };
+    assert!(took < crate::support::COST_LIMIT, "took {took:?}");
+    what
+}
+
+/// An OPF whose spine is `c.xhtml` then each of `xml`, items of type `application/xml`.
+fn opf_with_xml(xml: &[&str]) -> String {
+    let items: String = xml
+        .iter()
+        .enumerate()
+        .map(|(i, h)| format!(r#"<item id="x{i}" href="{h}" media-type="application/xml"/>"#))
+        .collect();
+    let spine: String = (0..xml.len())
+        .map(|i| format!(r#"<itemref idref="x{i}"/>"#))
+        .collect();
+    opf_with(&items).replace(
+        r#"<itemref idref="c"/>"#,
+        &format!(r#"<itemref idref="c"/>{spine}"#),
+    )
+}
+
+/// An XML item of more nodes than `MAX_DOM_NODES` is refused while it is parsed, named.
+#[test]
+fn an_xml_item_of_too_many_nodes_is_too_large() {
+    let xml = format!("<r>{}</r>", "<a/>".repeat(deckle_limits::MAX_DOM_NODES + 1));
+    let page = page_with("");
+    let file = epub_of(
+        opf_with_xml(&["x.xml"]).as_bytes(),
+        &[("c.xhtml", page.as_bytes()), ("x.xml", xml.as_bytes())],
+    );
+    let what = too_large(&file);
+    assert!(what.starts_with("x.xml: "), "{what}");
+}
+
+/// The same for the NCX.
+#[test]
+fn an_ncx_of_too_many_nodes_is_too_large() {
+    let ncx = format!(
+        r#"<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head>{}</head><docTitle><text>t</text></docTitle><navMap/></ncx>"#,
+        "<a/>".repeat(deckle_limits::MAX_DOM_NODES + 1)
+    );
+    let opf = opf_with(r#"<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>"#)
+        .replace("<spine>", r#"<spine toc="ncx">"#);
+    let page = page_with("");
+    let file = epub_of(
+        opf.as_bytes(),
+        &[("c.xhtml", page.as_bytes()), ("toc.ncx", ncx.as_bytes())],
+    );
+    let what = too_large(&file);
+    assert!(what.starts_with("toc.ncx: "), "{what}");
+}
+
+/// XML items each under `MAX_DOM_NODES` that together pass `MAX_BOOK_DOM_NODES` are refused.
+#[test]
+fn xml_items_count_against_the_book_node_limit() {
+    let per_file = deckle_limits::MAX_DOM_NODES * 9 / 10;
+    let n = deckle_limits::MAX_BOOK_DOM_NODES / per_file + 1;
+    let xml = format!("<r>{}</r>", "<a/>".repeat(per_file));
+    let names: Vec<String> = (0..n).map(|i| format!("x{i}.xml")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let page = page_with("");
+    let mut entries: Vec<(&str, &[u8])> = vec![("c.xhtml", page.as_bytes())];
+    entries.extend(refs.iter().map(|n| (*n, xml.as_bytes())));
+    let file = epub_of(opf_with_xml(&refs).as_bytes(), &entries);
+    let what = too_large(&file);
+    assert!(what.starts_with("this book's files "), "{what}");
+}
+
+/// Each kept rule's selector counts against the book's limit, 64 bytes a unit: files linking
+/// one sheet whose single selector is long are refused.
+#[test]
+fn long_selectors_count_against_the_book_limit() {
+    const SELECTOR: usize = 4 * 1024 * 1024;
+    let css = format!(".{} {{ color: red }}", "k".repeat(SELECTOR));
+    let files = MAX_BOOK_CASCADE_DECLS / (SELECTOR / 64) + 1;
+    let opf = opf_of_files(
+        files,
+        r#"<item id="a" href="a.css" media-type="text/css"/>"#,
+    );
+    let page = page_with(r#"<link rel="stylesheet" href="a.css"/>"#);
+    let names: Vec<String> = (0..files).map(|i| format!("f{i}.xhtml")).collect();
+    let mut entries: Vec<(&str, &[u8])> =
+        vec![("c.xhtml", page.as_bytes()), ("a.css", css.as_bytes())];
+    entries.extend(names.iter().map(|n| (n.as_str(), page.as_bytes())));
+    let file = epub_of(opf.as_bytes(), &entries);
+    let what = too_large(&file);
+    assert!(what.starts_with("the CSS of this book "), "{what}");
+}
+
+/// A spine document past `MAX_CONTENT_FILE_BYTES` is refused before it is parsed, named.
+#[test]
+fn a_document_past_the_size_limit_is_too_large() {
+    let size = usize::try_from(deckle_limits::MAX_CONTENT_FILE_BYTES).unwrap();
+    let page = format!(
+        r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title></head><body><p>{}</p></body></html>"#,
+        "w".repeat(size)
+    );
+    let file = epub_of(opf_with("").as_bytes(), &[("c.xhtml", page.as_bytes())]);
+    let what = too_large(&file);
+    assert!(what.starts_with("c.xhtml: "), "{what}");
+}
+
+/// The same for an XML item.
+#[test]
+fn an_xml_item_past_the_size_limit_is_too_large() {
+    let size = usize::try_from(deckle_limits::MAX_CONTENT_FILE_BYTES).unwrap();
+    let xml = format!("<r>{}</r>", "w".repeat(size));
+    let page = page_with("");
+    let file = epub_of(
+        opf_with_xml(&["x.xml"]).as_bytes(),
+        &[("c.xhtml", page.as_bytes()), ("x.xml", xml.as_bytes())],
+    );
+    let what = too_large(&file);
+    assert!(what.starts_with("x.xml: "), "{what}");
+}
+
+/// Read as HTML, a file stops at `MAX_DOM_NODES` nodes even when its length allows more.
+#[test]
+fn an_html_file_of_too_many_elements_is_too_large() {
+    // Not XML from its first tag: an unquoted attribute.
+    let page = format!(
+        "<html><head><title>T</title></head><body><p a=1>{}",
+        "<br>".repeat(deckle_limits::MAX_DOM_NODES + 1)
+    );
+    let file = epub_of(opf_with("").as_bytes(), &[("c.xhtml", page.as_bytes())]);
+    let what = too_large(&file);
+    assert!(what.starts_with("c.xhtml: "), "{what}");
+}
+
+/// Attributes count against `MAX_BOOK_DOM_NODES` with the elements: files of few elements and
+/// many attributes, each under the file's limits, are refused together.
+#[test]
+fn attributes_count_against_the_book_node_limit() {
+    let per_file = deckle_limits::MAX_BOOK_DOM_NODES * 4 / 10;
+    let tag: String = (0..100).map(|i| format!(r#" b{i}="""#)).collect();
+    let page = format!(
+        r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title></head><body>{}</body></html>"#,
+        format!("<a{tag}/>").repeat(per_file / 100)
+    );
+    let opf = opf_of_files(3, "");
+    let small = page_with("");
+    let mut entries: Vec<(&str, &[u8])> = vec![("c.xhtml", small.as_bytes())];
+    entries.extend(["f0.xhtml", "f1.xhtml", "f2.xhtml"].map(|n| (n, page.as_bytes())));
+    let file = epub_of(opf.as_bytes(), &entries);
+    let what = too_large(&file);
+    assert!(what.starts_with("this book's files "), "{what}");
 }

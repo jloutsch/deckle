@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Timelike};
 use deckle_kfx::epub_zip::{EpubReader, InspectError, percent_decode};
-use deckle_limits::XmlError;
 use deckle_limits::roxmltree::{Document, Node, ParsingOptions};
+use deckle_limits::{MAX_DOM_NODES, XmlError};
 
 use super::{Error, GuideRef, Item, Metadata, Package, SpineRef, oeb};
 
@@ -23,10 +23,12 @@ pub(crate) const NCX_MIME: &str = "application/x-dtbncx+xml";
 const MARC_NS: &str = "http://id.loc.gov/vocabulary/";
 
 /// Options for every parse: a DOCTYPE is allowed (XHTML files carry one);
-/// `deckle_limits::parse_xml` refuses entities that hold markup.
+/// `deckle_limits::parse_xml` refuses entities that hold markup. Past
+/// [`MAX_DOM_NODES`] nodes the parse stops (`roxmltree::Error::NodesLimitReached`).
 pub(crate) fn parse_options<'a>() -> ParsingOptions<'a> {
     ParsingOptions {
         allow_dtd: true,
+        nodes_limit: u32::try_from(MAX_DOM_NODES).unwrap_or(u32::MAX),
         ..Default::default()
     }
 }
@@ -1113,6 +1115,12 @@ pub fn read_package(zip: &mut EpubReader) -> Result<Package, Error> {
         Some(h) => read_text(zip, &unquote(h))?,
         None => None,
     };
+    if let (Some(p), Some(t)) = (&files.nav_path, &nav_text) {
+        super::check_size(p, t.len())?;
+    }
+    if let (Some(h), Some(t)) = (&files.ncx_href, &ncx_text) {
+        super::check_size(h, t.len())?;
+    }
     Ok(Package {
         opf_path,
         opf_text,

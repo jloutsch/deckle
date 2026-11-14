@@ -10,8 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
 use deckle_kfx::epub_zip::{EpubReader, InspectError};
-use deckle_limits::MAX_DEPTH;
-use deckle_limits::roxmltree::Document;
+use deckle_limits::roxmltree::{self, Document};
+use deckle_limits::{MAX_BOOK_DOM_NODES, MAX_DEPTH, MAX_DOM_NODES, XmlError};
 use regex::Regex;
 
 use super::package::{
@@ -329,10 +329,20 @@ fn sheet_refs(text: &str) -> (Vec<String>, Vec<String>) {
     (imports, urls)
 }
 
-/// `f` of `text` parsed ([`package::parse_with`]), or None when `deckle_limits::parse_xml`
-/// refuses it (too deep, an entity with markup) or it is not well-formed.
-fn read_xml<R>(text: &str, f: impl FnOnce(&Document) -> R) -> Option<R> {
-    package::parse_with(text, f).ok()
+/// `f` of the XML file `file`'s `text` parsed ([`package::parse_with`]), or None when
+/// `deckle_limits::parse_xml` refuses it (too deep, an entity with markup) or it is not
+/// well-formed. [`Error::TooLarge`] past [`MAX_CONTENT_FILE_BYTES`](deckle_limits) or
+/// [`MAX_DOM_NODES`] nodes.
+fn read_xml<R>(file: &str, text: &str, f: impl FnOnce(&Document) -> R) -> Result<Option<R>, Error> {
+    super::check_size(file, text.len())?;
+    match package::parse_with(text, f) {
+        Ok(r) => Ok(Some(r)),
+        Err(XmlError::Parse(roxmltree::Error::NodesLimitReached)) => Err(Error::TooLarge(format!(
+            "{file}: {}",
+            dom::Error::TooManyNodes(MAX_DOM_NODES)
+        ))),
+        Err(_) => Ok(None),
+    }
 }
 
 /// `reader.py` `_toc_from_html`: the links under the fragment of the guide's `toc` document
@@ -398,6 +408,9 @@ struct Book<'z> {
     zip: &'z mut EpubReader,
     names: BTreeSet<String>,
     docs: BTreeMap<String, Option<DocInfo>>,
+    /// The elements and attributes of every document read so far, counted against
+    /// [`MAX_BOOK_DOM_NODES`].
+    nodes: usize,
 }
 
 impl Book<'_> {
@@ -429,21 +442,47 @@ impl Book<'_> {
     /// The links of the document at `href`, read the first time it is asked for: as a
     /// document (`html`, `base.py` `_parse_xhtml`: `dom::parse`, which reads HTML that is not
     /// XML), or as XML (`_parse_xml`). None when it cannot be read: `dom::parse` refuses it
-    /// (too deep or too large as HTML, entities past their limit), or XML that
-    /// `deckle_limits::parse_xml` refuses or is not well-formed or UTF-8.
+    /// (too deep, entities past their limit), or XML that `deckle_limits::parse_xml` refuses
+    /// or is not well-formed or UTF-8. [`Error::TooLarge`] for a file past
+    /// [`MAX_CONTENT_FILE_BYTES`](deckle_limits) or [`MAX_DOM_NODES`] nodes, or past
+    /// [`MAX_BOOK_DOM_NODES`] with the documents read before it.
     fn doc(&mut self, href: &str, html: bool) -> Result<Option<DocInfo>, Error> {
         let name = unquote(href);
         if let Some(d) = self.docs.get(&name) {
             return Ok(d.clone());
         }
-        let info = if html {
-            self.read_bytes(&name)?
-                .and_then(|b| dom::parse(&b).ok())
-                .map(|d| doc_info(&d))
+        let read = if html {
+            match self.read_bytes(&name)? {
+                Some(b) => {
+                    super::check_size(&name, b.len())?;
+                    match dom::parse(&b) {
+                        Ok(d) => Some((d.held(), doc_info(&d))),
+                        Err(e @ (dom::Error::TooLarge(_) | dom::Error::TooManyNodes(_))) => {
+                            return Err(Error::TooLarge(format!("{name}: {e}")));
+                        }
+                        Err(_) => None,
+                    }
+                }
+                None => None,
+            }
         } else {
-            self.read(&name)?
-                .and_then(|text| read_xml(&text, |doc| doc_info(&dom::from_xml(doc))))
+            match self.read(&name)? {
+                Some(text) => read_xml(&name, &text, |doc| {
+                    let d = dom::from_xml(doc);
+                    (d.held(), doc_info(&d))
+                })?,
+                None => None,
+            }
         };
+        let info = read.map(|(nodes, info)| {
+            self.nodes = self.nodes.saturating_add(nodes);
+            info
+        });
+        if self.nodes > MAX_BOOK_DOM_NODES {
+            return Err(Error::TooLarge(format!(
+                "this book's files hold more than {MAX_BOOK_DOM_NODES} elements and attributes"
+            )));
+        }
         self.docs.insert(name, info.clone());
         Ok(info)
     }
@@ -773,7 +812,7 @@ impl Input {
         text: &str,
         book: &Book,
         removed_cover: Option<&str>,
-    ) -> Option<NavToc> {
+    ) -> Result<Option<NavToc>, Error> {
         let nav_dir = dirname(nav_path);
         let nav_name = &nav_path[nav_path.rfind('/').map_or(0, |i| i + 1)..];
         let base = if nav_dir.is_empty() { "." } else { nav_dir };
@@ -805,7 +844,9 @@ impl Input {
             }
             (found, toc::nav_points(doc, nav_name))
         };
-        let (landmarks, points) = read_xml(text, read)?;
+        let Some((landmarks, points)) = read_xml(nav_path, text, read)? else {
+            return Ok(None);
+        };
         let mut rank: BTreeMap<String, usize> = BTreeMap::new();
         for (gtype, href, title) in landmarks {
             rank.insert(gtype.clone(), rank.len());
@@ -827,13 +868,15 @@ impl Input {
             self.guide = OpfGuide::new(refs);
         }
 
-        let points = points?;
+        let Some(points) = points else {
+            return Ok(None);
+        };
         self.toc = TocAttr::Nav;
-        Some(NavToc {
+        Ok(Some(NavToc {
             points,
             base: urlnormalize(&posix_join(nav_dir, "calibre_nav.ncx")),
             nav_href: urlnormalize(nav_path),
-        })
+        }))
     }
 
     /// The rest of `convert`: DTBook refused, page templates and mislabelled fonts out of the
@@ -1291,7 +1334,9 @@ impl State {
         self.auto = false;
         let points = match (nav, ncx) {
             (Some(nav), _) => Some((nav.points.clone(), nav.base.clone())),
-            (None, Some((text, href))) => read_xml(text, toc::ncx_points).map(|p| (p, href)),
+            (None, Some((text, href))) => {
+                read_xml(&href, text, toc::ncx_points)?.map(|p| (p, href))
+            }
             (None, None) => None,
         };
         if let Some((points, base)) = points {
@@ -1317,10 +1362,11 @@ impl State {
         };
         let base = self.item(i).href.clone();
         // `item.data`: `parse_html` for a document (`base.py` `_parse_xhtml`).
-        let Some(dom) = book
-            .read_bytes(&unquote(&base))?
-            .and_then(|b| dom::parse(&b).ok())
-        else {
+        let Some(bytes) = book.read_bytes(&unquote(&base))? else {
+            return Ok(false);
+        };
+        super::check_size(&base, bytes.len())?;
+        let Ok(dom) = dom::parse(&bytes) else {
             return Ok(false);
         };
         self.toc = html_toc(&dom, &base, &frag, &self.hrefs);
@@ -1633,6 +1679,7 @@ pub fn oeb_view(pkg: &Package, zip: &mut EpubReader) -> Result<Oeb, Error> {
         zip,
         names,
         docs: BTreeMap::new(),
+        nodes: 0,
     };
 
     // `epub_input.py` `convert`.
@@ -1644,7 +1691,7 @@ pub fn oeb_view(pkg: &Package, zip: &mut EpubReader) -> Result<Oeb, Error> {
     };
     let removed_cover = removed_cover.as_deref();
     let nav = match (&pkg.files.nav_path, &pkg.nav_text) {
-        (Some(path), Some(text)) => input.convert_epub3_nav(path, text, &book, removed_cover),
+        (Some(path), Some(text)) => input.convert_epub3_nav(path, text, &book, removed_cover)?,
         _ => None,
     };
     input.clean_spine()?;

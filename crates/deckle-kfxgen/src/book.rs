@@ -124,6 +124,7 @@ impl From<epub::Error> for Error {
             epub::Error::Zip(e) => e.into(),
             epub::Error::Xml { file, source } => Error::Xml { file, source },
             epub::Error::Package(why) => Error::Package(why),
+            epub::Error::TooLarge(what) => Error::TooLarge { what },
         }
     }
 }
@@ -145,6 +146,15 @@ impl From<css::Error> for Error {
 fn too_large_in(href: &str, e: impl std::fmt::Display) -> Error {
     Error::TooLarge {
         what: format!("{href}: {e}"),
+    }
+}
+
+/// A [`flatten`] error in the file `href`: named, unless the book's limit was passed, which no
+/// one file is to blame for.
+fn flatten_error(href: &str, e: css::Error) -> Error {
+    match e {
+        css::Error::BookCascade(_) | css::Error::BookSelectors(_) => Error::from(e),
+        e => too_large_in(href, e),
     }
 }
 
@@ -174,13 +184,16 @@ pub fn read_book(path: &Path) -> Result<Book, Error> {
     let mut nodes = 0usize;
     for s in &oeb.spine {
         let bytes = zip.read_bytes(&percent_decode(&s.href))?;
+        epub::check_size(&s.href, bytes.len())?;
         let mut dom = dom::parse(&bytes).map_err(|e| too_large_in(&s.href, e))?;
         drop(bytes);
         // Every tree is held until the book is styled.
-        nodes = nodes.saturating_add(dom.node_count());
+        nodes = nodes.saturating_add(dom.held());
         if nodes > MAX_BOOK_DOM_NODES {
             return Err(Error::TooLarge {
-                what: format!("this book's files hold more than {MAX_BOOK_DOM_NODES} elements"),
+                what: format!(
+                    "this book's files hold more than {MAX_BOOK_DOM_NODES} elements and attributes"
+                ),
             });
         }
         mark_chapters(&mut dom);
@@ -211,13 +224,8 @@ pub fn read_book(path: &Path) -> Result<Book, Error> {
         // Both stay until the book is done.
         namer.charge_kept(&first_pass_rules, &first.font_face)?;
         font_face.append(&mut first.font_face);
-        let flat = flatten(&mut dom, href, first, &mut namer, &DEFAULT_PROFILE).map_err(|e| {
-            match e {
-                // Past the book's limit: no one file is to blame.
-                css::Error::BookCascade(_) | css::Error::BookSelectors(_) => Error::from(e),
-                e => too_large_in(href, e),
-            }
-        })?;
+        let flat = flatten(&mut dom, href, first, &mut namer, &DEFAULT_PROFILE)
+            .map_err(|e| flatten_error(href, e))?;
         files.push(File {
             href: href.clone(),
             dom,
@@ -363,4 +371,24 @@ pub fn file_sheets(
         sheets.push(sheet);
     }
     Ok(sheets)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Past a book's limit no one file is to blame; past a file's, the file is named.
+    #[test]
+    fn a_book_limit_in_flatten_names_no_file() {
+        let what = |e| match flatten_error("c.xhtml", e) {
+            Error::TooLarge { what } => what,
+            other => panic!("{other:?}"),
+        };
+        let book = css::Error::BookCascade(1).to_string();
+        assert_eq!(what(css::Error::BookCascade(1)), book);
+        let book = css::Error::BookSelectors(1).to_string();
+        assert_eq!(what(css::Error::BookSelectors(1)), book);
+        let file = format!("c.xhtml: {}", css::Error::Cascade(1));
+        assert_eq!(what(css::Error::Cascade(1)), file);
+    }
 }

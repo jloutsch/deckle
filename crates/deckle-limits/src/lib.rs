@@ -138,15 +138,23 @@ pub const MAX_CASCADE_DECLS: usize = 500_000;
 pub const MAX_BOOK_CASCADE_DECLS: usize = 3_000_000;
 
 /// EPUB to KFX: the nodes of one book file's tree, refused while the file is parsed: read as
-/// XML, its elements, runs of text, comments and processing instructions (`roxmltree`'s
-/// `nodes_limit`); read as HTML, its elements and their attributes. The trees of nine
-/// Gutenberg books and the cascade fixtures hold at most 530 elements a file.
+/// XML (a document, the OPF, the nav, the NCX, an XML item), its elements, runs of text,
+/// comments and processing instructions (`roxmltree`'s `nodes_limit`); read as HTML, its
+/// elements and their attributes. The trees of nine Gutenberg books and the cascade fixtures
+/// hold at most 530 elements a file.
 pub const MAX_DOM_NODES: usize = 500_000;
 
-/// EPUB to KFX: the elements of all a book's files' trees together: every tree is held until
-/// the book is styled. The nine Gutenberg books hold at most 5,067 elements a book. A book of
-/// 2.25 million empty elements, refused at the limit, peaked at 595 MB (release build).
+/// EPUB to KFX: the elements and attributes of all a book's files together, counted for every
+/// document read for its links and again for the trees held until the book is styled. The
+/// nine Gutenberg books hold at most 7,718 (pg76). A book of 2 million paragraphs, under the
+/// limit, peaked at 1.11 GB styled (2.2 s, release build).
 pub const MAX_BOOK_DOM_NODES: usize = 2_000_000;
+
+/// EPUB to KFX: one book file read as a document or as XML (a spine document, the nav, the
+/// NCX, an XML manifest item), refused before it is parsed. The nine Gutenberg books' largest
+/// is 70 KB (pg23). At the limit a file of one paragraph of text peaked at 302 MB read as XML
+/// and 432 MB read as HTML; one of attributes, read as XML, 774 MB.
+pub const MAX_CONTENT_FILE_BYTES: u64 = 32 * MB;
 
 /// Largest reservation made from a size a file declares (rule 1 of the size-limits design):
 /// `Vec::with_capacity(declared.min(MAX_RESERVE))`.

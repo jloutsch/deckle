@@ -126,4 +126,21 @@ pub enum Error {
     /// no usable spine entry.
     #[error("{0}")]
     Package(String),
+    /// A file past a limit on what is read of a book, named in the text, or the book's files
+    /// together past theirs.
+    #[error("{0}")]
+    TooLarge(String),
+}
+
+/// [`Error::TooLarge`] when `file`, `len` bytes, is past
+/// [`deckle_limits::MAX_CONTENT_FILE_BYTES`]: checked before a document or XML file is parsed.
+pub(crate) fn check_size(file: &str, len: usize) -> Result<(), Error> {
+    use deckle_limits::MAX_CONTENT_FILE_BYTES;
+    if u64::try_from(len).map_or(true, |len| len > MAX_CONTENT_FILE_BYTES) {
+        return Err(Error::TooLarge(format!(
+            "{file}: this file is larger than {} MiB",
+            MAX_CONTENT_FILE_BYTES / (1024 * 1024)
+        )));
+    }
+    Ok(())
 }
