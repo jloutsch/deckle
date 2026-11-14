@@ -459,3 +459,32 @@ fn many_html_start_tags_stop() {
         start.elapsed()
     );
 }
+
+/// Calibre keeps hrefs in their quoted form (`My%20Book/c.xhtml`) and finds a stylesheet a
+/// link or a `<style>`'s `@import` names relative to it (`stylizer.py` `Stylizer.__init__`,
+/// `Manifest.Item.abshref`); so does the port, in a folder whose name needs quoting.
+#[test]
+fn stylesheets_are_found_in_a_folder_that_needs_quoting() {
+    let container = br#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="My Book/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
+    let opf = opf_with(
+        r#"<item id="a" href="a.css" media-type="text/css"/><item id="b" href="b.css" media-type="text/css"/>"#,
+    );
+    let page = page_with(r#"<link rel="stylesheet" href="a.css"/><style>@import "b.css";</style>"#);
+    let entries: Vec<(&str, &[u8])> = vec![
+        ("mimetype", b"application/epub+zip"),
+        ("META-INF/container.xml", container),
+        ("My Book/content.opf", opf.as_bytes()),
+        ("My Book/c.xhtml", page.as_bytes()),
+        ("My Book/a.css", b"p.a { color: red }"),
+        ("My Book/b.css", b"p.b { color: red }"),
+    ];
+    let entries: Vec<(&str, &[u8], u64)> = entries
+        .into_iter()
+        .map(|(n, d)| (n, d, d.len() as u64))
+        .collect();
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), fixtures::stored_zip(&entries)).unwrap();
+    let book = read_book(file.path()).unwrap();
+    assert_eq!(book.files[0].href, "My%20Book/c.xhtml");
+    assert_eq!(book_selectors(&book), ["p.a", "p.b"]);
+}

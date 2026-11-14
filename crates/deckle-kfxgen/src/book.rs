@@ -27,6 +27,7 @@ use crate::css::{
     cascade, flatten, media_ok, parse_sheet_in, prepare_body, remove_fake_margins,
 };
 use crate::dom::{self, Dom, generated_toc, mark_chapters};
+use crate::epub::package::{abshref, urlnormalize};
 use crate::epub::{self, OEB_STYLES, Oeb, Package, oeb_view, read_package};
 
 /// A book as kfxgen receives it from Calibre.
@@ -256,11 +257,6 @@ pub fn stylesheets(pkg: &Package) -> Vec<String> {
         .collect()
 }
 
-/// The directory part of an href from the EPUB root.
-fn dir_of(href: &str) -> &str {
-    href.rsplit_once('/').map_or("", |(d, _)| d)
-}
-
 /// The local name of element `n`, in lower case.
 fn local(dom: &Dom, n: dom::NodeId) -> String {
     let tag = dom.tag(n);
@@ -283,11 +279,14 @@ pub fn file_sheets(
 ) -> Result<Vec<Sheet>, Error> {
     // The first read error, kept while the import callback can only answer "none".
     let failed: RefCell<Option<InspectError>> = RefCell::new(None);
-    let mut read_css = |path: &str| -> Option<String> {
-        if failed.borrow().is_some() || !css_items.iter().any(|c| c == path) {
+    // Calibre keeps hrefs quoted (`My%20Book/a.css`) and looks a sheet up by its quoted,
+    // book-absolute href; `css_items` and the archive's names are unquoted.
+    let mut read_css = |quoted: &str| -> Option<String> {
+        let path = percent_decode(quoted);
+        if failed.borrow().is_some() || !css_items.contains(&path) {
             return None;
         }
-        match zip.read_bytes(path) {
+        match zip.read_bytes(&path) {
             Ok(bytes) => Some(dom::decode(&bytes)),
             Err(InspectError::MissingFile(_)) => None,
             Err(e) => {
@@ -323,8 +322,8 @@ pub fn file_sheets(
                 if text.is_empty() {
                     continue;
                 }
-                let base = dir_of(href);
-                let mut import = |h: &str| read_css(&join(base, h));
+                // `ihref = item.abshref(rule.href)`.
+                let mut import = |h: &str| read_css(&abshref(href, h));
                 parse_sheet_in(&budget, &text, Origin::Book, href, next, &mut import)
             }
             "link" => {
@@ -345,12 +344,12 @@ pub fn file_sheets(
                 {
                     continue;
                 }
-                let path = join(dir_of(href), &percent_decode(link));
+                // `path = item.abshref(urlnormalize(href))`.
+                let path = abshref(href, &urlnormalize(link));
                 let Some(text) = read_css(&path) else {
                     continue;
                 };
-                let base = dir_of(&path).to_owned();
-                let mut import = |h: &str| read_css(&join(&base, h));
+                let mut import = |h: &str| read_css(&abshref(&path, h));
                 parse_sheet_in(&budget, &text, Origin::Book, &path, next, &mut import).map(
                     |mut sheet| {
                         sheet.page.clear();
