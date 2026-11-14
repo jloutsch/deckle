@@ -97,6 +97,13 @@ pub const MAX_STYLE_DECLS: usize = 150_000;
 /// 2,000 rules of the kinds books use on a file of 20,000 elements take about 12 million.
 pub const MAX_SELECTOR_WORK: u64 = 100_000_000;
 
+/// EPUB to KFX: the steps of [`MAX_SELECTOR_WORK`] all a book's files take together, both
+/// cascades of each. The nine Gutenberg books take at most 21,828 (pg76), the 13 cascade
+/// fixture books at most 1,971, 200 chapters of an ordinary novel (`css_flatten`'s
+/// `NOVEL_CSS`) 310,000; one file of 20,000 elements and 2,000 rules of the kinds books use,
+/// about 12 million.
+pub const MAX_BOOK_SELECTOR_WORK: u64 = 1_000_000_000;
+
 /// EPUB to KFX: declarations the two cascades of one book file (Calibre's first pass, and
 /// kfxgen's over the flattened classes) store for its elements, together, in units: one for
 /// each declaration copied into an element's styles, one more for each 64 bytes of it, and one
@@ -121,9 +128,10 @@ pub const MAX_CASCADE_DECLS: usize = 500_000;
 /// books of 6 files of 24,000 elements styled their own way, 100 files of 6,000 elements of
 /// 2,000 styles each, and 1,500 files of 300 elements of 100 styles; release build), so at
 /// the limit a book's styles take about 400 MB besides its trees. Kept rules cost more a
-/// unit: 100 files each keeping 45,000 one-declaration rules were refused at 690 MB. The 13
-/// cascade fixture books use at most 4,196 units; 200 chapters of an ordinary novel (`css_flatten`'s
-/// `NOVEL_CSS`) use 135,800.
+/// unit: 100 files each keeping 45,000 one-declaration rules were refused at 690 MB. Through
+/// `read_book`, the 13 cascade fixture books use at most 7,492 units and the nine Gutenberg
+/// books at most 51,196 (pg98); 200 chapters of an ordinary novel (`css_flatten`'s
+/// `NOVEL_CSS`, cascades only) use 135,800.
 pub const MAX_BOOK_CASCADE_DECLS: usize = 3_000_000;
 
 /// EPUB to KFX: the nodes of one book file's tree, refused while the file is parsed: read as

@@ -214,7 +214,7 @@ pub fn read_book(path: &Path) -> Result<Book, Error> {
         let flat = flatten(&mut dom, href, first, &mut namer, &DEFAULT_PROFILE).map_err(|e| {
             match e {
                 // Past the book's limit: no one file is to blame.
-                css::Error::BookCascade(_) => Error::from(e),
+                css::Error::BookCascade(_) | css::Error::BookSelectors(_) => Error::from(e),
                 e => too_large_in(href, e),
             }
         })?;

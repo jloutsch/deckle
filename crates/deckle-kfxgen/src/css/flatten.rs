@@ -26,7 +26,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use cssparser::{Parser, ParserInput};
-use deckle_limits::{MAX_BOOK_CASCADE_DECLS, MAX_STYLE_RULES};
+use deckle_limits::{MAX_BOOK_CASCADE_DECLS, MAX_BOOK_SELECTOR_WORK, MAX_STYLE_RULES};
 
 use super::cascade::{Spent, Units, decl_units, run};
 use super::style::{py_float, unit_number};
@@ -97,6 +97,9 @@ pub struct ClassNamer {
     /// The units the book's files flattened so far used, both cascades of each
     /// ([`MAX_BOOK_CASCADE_DECLS`]).
     units: usize,
+    /// The selector steps the book's files flattened so far took, both cascades of each
+    /// ([`MAX_BOOK_SELECTOR_WORK`]).
+    work: u64,
 }
 
 /// One rule of the stylesheet Calibre writes.
@@ -613,6 +616,11 @@ pub fn flatten(
     if namer.units > MAX_BOOK_CASCADE_DECLS {
         return Err(Error::BookCascade(MAX_BOOK_CASCADE_DECLS));
     }
+    // And the time its selectors took, the file's limit bounding each file.
+    namer.work = namer.work.saturating_add(second.spent.work);
+    if namer.work > MAX_BOOK_SELECTOR_WORK {
+        return Err(Error::BookSelectors(MAX_BOOK_SELECTOR_WORK));
+    }
     // Elements of one class attribute share its text.
     let mut texts: HashMap<&str, Arc<str>> = HashMap::new();
     let mut class = vec![None; n];
@@ -950,6 +958,28 @@ mod tests {
         let got = flatten(&mut dom, "a.xhtml", first, &mut namer, &DEFAULT_PROFILE);
         assert!(
             matches!(got, Err(Error::BookCascade(MAX_BOOK_CASCADE_DECLS))),
+            "{got:?}"
+        );
+    }
+
+    /// The time a book's selectors take is bounded too: a book whose files took the whole
+    /// of it has its next file refused.
+    #[test]
+    fn a_book_past_its_selector_work_refuses_its_next_file() {
+        let mut dom = crate::dom::parse(
+            b"<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>T</title></head>\
+              <body><p>x</p></body></html>",
+        )
+        .unwrap();
+        prepare_body(&mut dom);
+        let first = cascade(&mut dom, "a.xhtml", Vec::new(), &DEFAULT_PROFILE).unwrap();
+        let mut namer = ClassNamer {
+            work: MAX_BOOK_SELECTOR_WORK,
+            ..ClassNamer::default()
+        };
+        let got = flatten(&mut dom, "a.xhtml", first, &mut namer, &DEFAULT_PROFILE);
+        assert!(
+            matches!(got, Err(Error::BookSelectors(MAX_BOOK_SELECTOR_WORK))),
             "{got:?}"
         );
     }

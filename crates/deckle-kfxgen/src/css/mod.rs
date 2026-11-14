@@ -165,6 +165,10 @@ pub enum Error {
     /// together: the limit passed.
     #[error("the CSS of this book holds more than {0} declarations over its files")]
     BookCascade(usize),
+    /// Matching the selectors of the book's files so far took more than
+    /// [`deckle_limits::MAX_BOOK_SELECTOR_WORK`] steps together.
+    #[error("matching the CSS selectors of this book's files took more than {0} steps")]
+    BookSelectors(u64),
     /// A style value Calibre has no default for was asked of an element that has none:
     /// Calibre raises `KeyError` ([`Styles::inherited`]).
     #[error("CSS property {prop} has no value and no default")]
