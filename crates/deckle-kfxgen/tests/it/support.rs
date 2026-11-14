@@ -39,7 +39,7 @@ pub const BOOKS: [&str; 13] = [
 pub struct Book {
     pub zip: EpubReader,
     /// The manifest's stylesheets, as paths from the EPUB root.
-    pub css_items: Vec<String>,
+    pub css_items: std::collections::HashSet<String>,
     /// Spine href → `NNN`, the dump's name for the file (`files.json`).
     pub files: BTreeMap<String, String>,
     /// `fixtures/kfxgen/cascade/<book>`.

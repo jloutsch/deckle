@@ -488,3 +488,25 @@ fn stylesheets_are_found_in_a_folder_that_needs_quoting() {
     assert_eq!(book.files[0].href, "My%20Book/c.xhtml");
     assert_eq!(book_selectors(&book), ["p.a", "p.b"]);
 }
+
+/// Each link and import is looked up among the manifest's stylesheets in constant time: many
+/// stylesheet items and many links to sheets not listed finish in time.
+#[test]
+fn many_stylesheet_items_and_links_finish() {
+    const N: usize = 100_000;
+    let pre = "a-long-shared-prefix-for-every-stylesheet-name-";
+    let items: String = (0..N)
+        .map(|i| format!(r#"<item id="s{i}" href="{pre}{i}.css" media-type="text/css"/>"#))
+        .collect();
+    let links: String = (0..N)
+        .map(|i| format!(r#"<link rel="stylesheet" href="{pre}x{i}.css"/>"#))
+        .collect();
+    let opf = opf_with(&items);
+    let page = page_with(&links);
+    let file = epub_of(opf.as_bytes(), &[("c.xhtml", page.as_bytes())]);
+    let start = std::time::Instant::now();
+    let book = read_book(file.path()).unwrap();
+    let took = start.elapsed();
+    assert!(book_selectors(&book).is_empty());
+    assert!(took < crate::support::COST_LIMIT, "{took:?}");
+}

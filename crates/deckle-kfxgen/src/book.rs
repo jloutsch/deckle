@@ -17,6 +17,7 @@
 //! [`deckle_limits::MAX_BOOK_CASCADE_DECLS`] in the [`ClassNamer`].
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::path::Path;
 
 use deckle_kfx::epub_zip::{EpubReader, InspectError, join, percent_decode};
@@ -248,7 +249,7 @@ pub fn manifest_bytes(path: &Path, href: &str) -> Result<Vec<u8>, Error> {
 /// may name: the manifest items Calibre's manifest holds as CSS, their media type lower-cased
 /// or guessed from the extension when empty (`reader.py` `_manifest_from_opf`, `base.py`
 /// `OEB_STYLES`).
-pub fn stylesheets(pkg: &Package) -> Vec<String> {
+pub fn stylesheets(pkg: &Package) -> HashSet<String> {
     let opf_dir = pkg.opf_path.rsplit_once('/').map_or("", |(d, _)| d);
     pkg.manifest
         .iter()
@@ -273,7 +274,7 @@ fn local(dom: &Dom, n: dom::NodeId) -> String {
 /// [`deckle_limits::MAX_STYLE_DECLS`] hold for all of them together, charged as they are read.
 pub fn file_sheets(
     zip: &mut EpubReader,
-    css_items: &[String],
+    css_items: &HashSet<String>,
     href: &str,
     dom: &Dom,
 ) -> Result<Vec<Sheet>, Error> {

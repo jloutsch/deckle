@@ -153,7 +153,7 @@ fn first_difference(got: &[Flat], want: &[Flat]) -> String {
 /// `@font-face` rules.
 fn spine_file_sheets(
     zip: &mut EpubReader,
-    css_items: &[String],
+    css_items: &std::collections::HashSet<String>,
     href: &str,
 ) -> (Vec<Sheet>, Vec<Decls>) {
     let bytes = zip
@@ -243,10 +243,11 @@ fn book_rules_match_calibre_in_text_and_order() {
 fn sheet_quirks_match_calibre() {
     let path = fixtures::kfxgen("sources/css_quirks.epub");
     let mut zip = EpubReader::open(&path).unwrap();
-    let css: Vec<String> = ["sheet", "imported", "deep", "cycle_a", "cycle_b"]
-        .iter()
-        .map(|n| format!("OEBPS/{n}.css"))
-        .collect();
+    let css: std::collections::HashSet<String> =
+        ["sheet", "imported", "deep", "cycle_a", "cycle_b"]
+            .iter()
+            .map(|n| format!("OEBPS/{n}.css"))
+            .collect();
     let (sheets, font_face) = spine_file_sheets(&mut zip, &css, "OEBPS/sheet.xhtml");
     let got: Vec<(String, Vec<(String, String)>)> = sheets
         .iter()
