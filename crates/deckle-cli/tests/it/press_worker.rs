@@ -251,6 +251,23 @@ fn press_worker_real_child_publishes_and_restart_does_not_refetch() {
     assert!(!counted.exists(), "restart must not build again");
     assert_eq!(std::fs::read_dir(f.root.join("jobs")).unwrap().count(), 0);
 }
+/// A folder opened so its times can be set: Windows opens a folder only with backup semantics,
+/// and setting a time needs write-attributes access.
+fn open_dir_for_times(dir: &std::path::Path) -> std::fs::File {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_WRITE_ATTRIBUTES: u32 = 0x100;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        std::fs::OpenOptions::new()
+            .access_mode(FILE_WRITE_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(dir)
+            .unwrap()
+    }
+    #[cfg(not(windows))]
+    std::fs::File::open(dir).unwrap()
+}
 #[test]
 fn press_worker_removes_stale_job_folders_at_start() {
     let f = fixture("TEST HANG");
@@ -273,10 +290,7 @@ fn press_worker_removes_stale_job_folders_at_start() {
     std::fs::write(recent.join("job.json"), b"{").unwrap();
     let two_days_ago = std::time::SystemTime::now() - Duration::from_secs(2 * 24 * 3600);
     for dir in [&held, &damaged] {
-        std::fs::File::open(dir)
-            .unwrap()
-            .set_modified(two_days_ago)
-            .unwrap();
+        open_dir_for_times(dir).set_modified(two_days_ago).unwrap();
     }
     let mut w = PressSupervisor::with_options(f.options.clone());
     // The status still says building from the first run; wait for the sweep itself.
