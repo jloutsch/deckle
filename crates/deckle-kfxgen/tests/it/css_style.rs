@@ -468,7 +468,15 @@ fn every_value_of_a_page_20_000_deep_cost() {
         n = d;
     }
     let span = dom.children(n)[0];
-    assert!(matches!(styles.computed(span, "width"), Ok(Value::Pt(w)) if w >= 0.0));
+    // `span { width: 50% }` of its <div>, whose width 1,819 `width="99%"` attributes above it
+    // have made small but not zero.
+    let width = pt(&styles, span, "width");
+    let div = pt(&styles, n, "width");
+    assert!(
+        div > 0.0 && div < pt(&styles, body(&dom), "width") * 1e-6,
+        "{div}"
+    );
+    assert_eq!(width, div * 0.5);
 }
 
 #[test]

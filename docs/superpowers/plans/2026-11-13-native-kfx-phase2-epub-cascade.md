@@ -6,7 +6,7 @@
 
 **Architecture:** Two new modules in `crates/deckle-kfxgen`: `epub` (package files and Calibre's view of them) and `css` (parse, cascade, Calibre's flattening, value resolution), over a small owned element tree in `dom`. Nothing writes CSS text or re-parses it: the flattening step produces each element's declared values directly. Calibre and kfxgen run only on a developer machine to make fixtures; the tests read committed dump files.
 
-**Tech Stack:** Rust; `roxmltree` through `deckle_limits::parse_xml`; `html5ever`, `cssparser` 0.37 and `selectors` 0.38 (all already in `Cargo.lock`, added as direct dependencies; no new crate enters the lock file). Python only in `tools/ref/`.
+**Tech Stack:** Rust; `roxmltree` through `deckle_limits::parse_xml`; `html5ever` and `cssparser` 0.37 (both already in `Cargo.lock`, added as direct dependencies; no new crate enters the lock file). `selectors` 0.38 was planned and dropped in Task 7: the port matches selectors with its own engine, after Calibre's `css_selectors`. Python only in `tools/ref/`.
 
 **Spec:** `docs/superpowers/specs/2026-11-10-native-kfx-design.md`. Research behind this plan: the three reports summarized in "What the research changed" below.
 
@@ -23,7 +23,7 @@
 - The kfxgen repository is only read. All hook code lives in `tools/ref/kfxgen_hook/` and is injected into an exported copy, as in phase 1.
 - `deckle-kfxgen` must not depend on `deckle-core` (phase 4 makes `deckle-core` depend on it).
 - License: the crate is `GPL-3.0-only`; every new source file carries `// SPDX-License-Identifier: GPL-3.0-only`. Code ported from Calibre (GPL v3) names its source file and function in a comment, and `crates/deckle-kfxgen/NOTICE` (new) lists Calibre's files used, including `html.css` copied verbatim.
-- Every XML parse goes through `deckle_limits::parse_xml`; every archive read through `Budget`; own recursion stops at `deckle_limits::MAX_DEPTH`. `cargo test -p deckle-core --test it xml_boundary state_file_guard` must pass.
+- Every XML parse goes through `deckle_limits::parse_xml`; every archive read through `Budget`; own recursion stops at `deckle_limits::MAX_DEPTH`. `cargo test -p deckle-core --test it -- xml_boundary state_file_guard` must pass.
 - Deterministic: no hash-map iteration order, time or randomness reaches a result. Class numbering follows spine order then document order.
 - Every deliberate difference from Calibre or kfxgen gets a section in `crates/deckle-kfxgen/DIVERGENCES.md` in the existing format.
 - New fixtures stay under **1.5 MB** in total (`fixtures/kfxgen` is at 7.9 MB of its 10 MB cap). Corpus dumps stay outside git.

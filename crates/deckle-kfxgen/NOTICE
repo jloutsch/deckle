@@ -35,7 +35,8 @@ src/calibre/ebooks/oeb/reader.py, src/calibre/ebooks/oeb/polish/upgrade.py,
 src/calibre/ebooks/oeb/transforms/flatcss.py, src/calibre/ebooks/oeb/transforms/guide.py,
 src/calibre/ebooks/oeb/transforms/metadata.py, src/calibre/ebooks/oeb/transforms/trimmanifest.py,
 src/calibre/ebooks/metadata/__init__.py, src/calibre/ebooks/metadata/opf2.py,
-src/calibre/ebooks/metadata/opf3.py, src/calibre/utils/date.py,
+src/calibre/ebooks/metadata/opf3.py, src/calibre/ebooks/metadata/book/base.py,
+src/calibre/utils/date.py,
 src/calibre/utils/localization.py and src/calibre/utils/xml_parse.py. The table of two-letter
 language codes in src/epub/package.rs is calibre's (`iso639['2to3']` in
 resources/localization/iso639.calibre_msgpack, built from the iso-codes package). The
