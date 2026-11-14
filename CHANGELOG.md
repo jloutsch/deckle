@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **The desktop app asks again before removing or replacing.** Remove on a Kobo, PocketBook or
+  reMarkable deleted the chosen books at once, and sending a puzzle book that was already there
+  replaced it, ink and all, without asking "Replace it?". Both now show the question and wait for
+  the answer (jloutsch/deckle#88). The web app always asked.
 - **Adding a book again under a name that differs only in case keeps it.** On a Mac (or any
   case-insensitive disk), adding `mini.epub` when the library held `Mini.epub` deleted the copy
   just written, and a library scan then removed the loose file too, leaving no copy of the
