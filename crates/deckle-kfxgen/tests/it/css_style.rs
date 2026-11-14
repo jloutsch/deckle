@@ -93,11 +93,19 @@ fn every_cascade_fixture_computed_matches_kfxgens_stylizer() {
             let styles = Styles::new(dom, flat, &DEFAULT_PROFILE);
             let dump = read(&fixtures_dir(name).join(format!("styles/{nnn}.json")));
             let table = dump["table"].as_array().unwrap();
+            let mut skipped = 0;
             for node in dump["nodes"].as_array().unwrap() {
                 let path = path_of(&node[0]);
                 // Calibre's flattener links two new stylesheets at the end of <head>; the
-                // port's tree has no such links (`css_flatten.rs` checks it).
+                // port's tree has no such links (`css_flatten.rs` checks they are links).
                 let Some(n) = find(dom, &path) else {
+                    assert!(
+                        path.len() == 2 && path[0] == 0,
+                        "{name} {}: {path:?} is missing",
+                        f.href
+                    );
+                    skipped += 1;
+                    assert!(skipped <= 2, "{name} {}: {skipped} missing", f.href);
                     continue;
                 };
                 let want = &table[node[1].as_u64().unwrap() as usize]["computed"];
@@ -226,12 +234,16 @@ fn width_attribute_beats_css() {
 fn a_property_with_no_default_is_an_error() {
     let (dom, flat) = flat_page(
         "",
-        "<div style=\"x-own: inherit\"><p>x</p></div>",
+        "<div style=\"x-own: inherit\"><p>x</p></div>\
+         <section style=\"x-own: 2px\"><div style=\"x-own: inherit\">\
+         <p style=\"x-own: inherit\">y</p></div></section>",
         "p { x-other: 1px }",
     );
     let styles = Styles::new(&dom, &flat, &DEFAULT_PROFILE);
     let div = dom.children(body(&dom))[0];
     let p = dom.children(div)[0];
+    let section = dom.children(body(&dom))[1];
+    let deep = dom.children(dom.children(section)[0])[0];
     // Not inherited and not declared: Calibre's `DEFAULTS[name]` raises KeyError.
     assert!(matches!(
         styles.inherited(div, "x-unknown"),
@@ -242,10 +254,15 @@ fn a_property_with_no_default_is_an_error() {
         Err(Error::NoDefault { .. })
     ));
     // `inherit` asks the parent, up to the root, which has none either.
+    assert_eq!(styles.get(div, "x-own"), Some("inherit"));
     assert!(matches!(
         styles.computed(div, "x-own"),
         Err(Error::NoDefault { .. })
     ));
+    // Two `inherit`s up, a value: 2px.
+    assert_eq!(styles.get(deep, "x-own"), Some("inherit"));
+    assert_eq!(styles.inherited(deep, "x-own").unwrap(), "2px");
+    assert_eq!(styles.computed(deep, "x-own").unwrap(), Value::Pt(1.44));
     // Declared, it is the value.
     assert_eq!(styles.inherited(p, "x-other").unwrap(), "1px");
     assert_eq!(styles.computed(p, "x-other").unwrap(), Value::Pt(0.72));
@@ -254,6 +271,41 @@ fn a_property_with_no_default_is_an_error() {
         styles.computed(p, "font-style").unwrap(),
         Value::Text("normal".to_owned())
     );
+}
+
+#[test]
+fn sizes_past_the_table_and_their_limits() {
+    let (dom, flat) = flat_page(
+        "",
+        "<div class=\"f144\"><p class=\"sm\">a</p><p class=\"lg\">b</p></div>\
+         <div class=\"f4\"><p class=\"sm\">c</p></div>\
+         <div class=\"f30\"><p class=\"lg\">d</p></div>\
+         <div class=\"mw1\">e</div><div class=\"mw2\">f</div>\
+         <div class=\"bad\">g</div><div width=\"abc\">h</div>",
+        "div.f144 { font-size: 14.4pt } div.f4 { font-size: 4pt } div.f30 { font-size: 30pt } \
+         p.sm { font-size: smaller } p.lg { font-size: larger } \
+         div.mw1 { width: 50px; max-width: bogus; height: 50px; max-height: bogus } \
+         div.mw2 { width: 50px; max-width: 10px; height: 50px; max-height: 10px } \
+         div.bad { width: foo; height: foo }",
+    );
+    let styles = Styles::new(&dom, &flat, &DEFAULT_PROFILE);
+    let kids = dom.children(body(&dom));
+    let first = |i: usize| dom.children(kids[i])[0];
+    // Within the table: the next size down or up.
+    assert_eq!(pt(&styles, dom.children(kids[0])[0], "font-size"), 13.5);
+    assert_eq!(pt(&styles, dom.children(kids[0])[1], "font-size"), 17.0);
+    // Past its ends: ÷ 1.2 (as × (1 / 1.2)) below 5pt, × 1.2 above 22pt.
+    assert_eq!(pt(&styles, first(1), "font-size"), (1.0 / 1.2) * 4.0);
+    assert_eq!(pt(&styles, first(2), "font-size"), 36.0);
+    // A `max-width` that does not read keeps the width; one that does and is less wins.
+    assert_eq!(pt(&styles, kids[3], "width"), 36.0);
+    assert_eq!(pt(&styles, kids[3], "height"), 36.0);
+    assert_eq!(pt(&styles, kids[4], "width"), 7.2);
+    assert_eq!(pt(&styles, kids[4], "height"), 7.2);
+    // A size that does not read is the screen's in pixels, not points.
+    assert_eq!(pt(&styles, kids[5], "width"), 1600.0);
+    assert_eq!(pt(&styles, kids[5], "height"), 1200.0);
+    assert_eq!(pt(&styles, kids[6], "width"), 1600.0);
 }
 
 #[test]

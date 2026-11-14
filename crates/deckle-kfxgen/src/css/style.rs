@@ -55,9 +55,41 @@ const UNKNOWN: u32 = u32::MAX;
 /// An inherited value's slot: Calibre's default, or none.
 const DEFAULT: u32 = u32::MAX - 1;
 
-/// For each element (by [`NodeId`] index), the element whose declaration `_get` gives,
-/// [`DEFAULT`], or [`UNKNOWN`].
-type Sources = Box<[Cell<u32>]>;
+/// For each element (by [`NodeId`] index), the element whose declaration `_get` gives, or
+/// [`DEFAULT`]; [`UNKNOWN`] where not worked out yet.
+enum Sources {
+    /// An inherited property: one slot per element, since any element may ask its parent.
+    Every(Box<[u32]>),
+    /// Any other property, which only `inherit` takes from the parent: the elements that
+    /// declare `inherit` and those their walks reached, so no more than the declarations.
+    Some(HashMap<u32, u32>),
+}
+
+impl Sources {
+    fn get(&self, i: usize) -> u32 {
+        match self {
+            Sources::Every(all) => all[i],
+            Sources::Some(map) => map.get(&(i as u32)).copied().unwrap_or(UNKNOWN),
+        }
+    }
+
+    fn set(&mut self, i: usize, at: u32) {
+        match self {
+            Sources::Every(all) => all[i] = at,
+            Sources::Some(map) => {
+                map.insert(i as u32, at);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        match self {
+            Sources::Every(all) => all.len(),
+            Sources::Some(map) => map.len(),
+        }
+    }
+}
 
 /// The style values of one flattened file, worked out as asked and kept.
 pub struct Styles<'a> {
@@ -162,21 +194,33 @@ impl<'a> Styles<'a> {
 
     /// Where `_get(prop)` finds the element's value: the element that declares it, or
     /// [`DEFAULT`]. Walks up to the nearest element already answered, then gives each element
-    /// on the way the answer.
+    /// on the way the answer. A property that is not inherited, asked of an element that does
+    /// not declare it `inherit`, is answered from the element alone and keeps nothing.
     fn source(&self, n: NodeId, prop: &str) -> u32 {
+        let inherited = INHERITED.contains(&prop);
+        if !inherited {
+            match own(self.flat, n.index(), prop) {
+                None => return DEFAULT,
+                Some(v) if v != "inherit" => return n.index() as u32,
+                Some(_) => {}
+            }
+        }
         let mut found = self.found.borrow_mut();
         if !found.contains_key(prop) {
-            let fresh = (0..self.font_size.len())
-                .map(|_| Cell::new(UNKNOWN))
-                .collect();
+            let fresh = if inherited {
+                Sources::Every(vec![UNKNOWN; self.font_size.len()].into_boxed_slice())
+            } else {
+                Sources::Some(HashMap::new())
+            };
             found.insert(prop.into(), fresh);
         }
-        let slots = &found[prop];
-        let inherited = INHERITED.contains(&prop);
+        let Some(slots) = found.get_mut(prop) else {
+            return DEFAULT;
+        };
         let mut chain = Vec::new();
         let mut cur = n;
         let at = loop {
-            let known = slots[cur.index()].get();
+            let known = slots.get(cur.index());
             if known != UNKNOWN {
                 break known;
             }
@@ -192,11 +236,17 @@ impl<'a> Styles<'a> {
                 _ => break DEFAULT,
             }
         };
-        slots[cur.index()].set(at);
+        slots.set(cur.index(), at);
         for c in chain {
-            slots[c.index()].set(at);
+            slots.set(c.index(), at);
         }
         at
+    }
+
+    /// How many answers of `_get` are kept, over all properties.
+    #[cfg(test)]
+    fn kept(&self) -> usize {
+        self.found.borrow().values().map(Sources::len).sum()
     }
 
     /// A value worked out from the parent's: the cached one, else each uncached element from
@@ -498,8 +548,66 @@ pub(crate) fn py_float(s: &str) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
-    use crate::css::DEFAULT_PROFILE;
+    use crate::css::{DEFAULT_PROFILE, Decl};
+
+    #[test]
+    fn names_not_inherited_keep_nothing_per_element() {
+        // 100,000 paragraphs under <body>, which declares `x-own: 3px`; every 1,000th
+        // paragraph declares `x-own: inherit`.
+        let mut dom = crate::dom::parse(
+            b"<html xmlns=\"http://www.w3.org/1999/xhtml\"><head/><body/></html>",
+        )
+        .unwrap();
+        let body = dom.children(dom.root())[1];
+        let ps: Vec<NodeId> = (0..100_000).map(|_| dom.append_child(body, "p")).collect();
+        let n = dom.node_count();
+        let decl = |k: &str, v: &str| {
+            Arc::new(vec![(
+                k.to_owned(),
+                Decl {
+                    value: v.to_owned(),
+                    important: false,
+                },
+            )])
+        };
+        let none = Arc::new(Decls::new());
+        let mut specified = vec![none; n];
+        specified[body.index()] = decl("x-own", "3px");
+        let inherit = decl("x-own", "inherit");
+        for p in ps.iter().step_by(1_000) {
+            specified[p.index()] = Arc::clone(&inherit);
+        }
+        let flat = Flat {
+            specified,
+            pseudo: vec![Vec::new(); n],
+            class: vec![None; n],
+            ua: Vec::new(),
+            main: Vec::new(),
+        };
+        let styles = Styles::new(&dom, &flat, &DEFAULT_PROFILE);
+        let last = ps[99_999];
+        for i in 0..2_000 {
+            let prop = format!("x-unknown-{i}");
+            assert!(matches!(
+                styles.computed(last, &prop),
+                Err(Error::NoDefault { .. })
+            ));
+        }
+        assert_eq!(styles.kept(), 0);
+        // Declared or not, a name that is not inherited is answered from the element alone.
+        assert_eq!(styles.inherited(body, "x-own").unwrap(), "3px");
+        assert!(styles.inherited(last, "x-own").is_err());
+        assert_eq!(styles.kept(), 0);
+        // `inherit` walks to <body>, keeping the paragraph's answer and <body>'s.
+        assert_eq!(styles.inherited(ps[1_000], "x-own").unwrap(), "3px");
+        assert_eq!(styles.kept(), 2);
+        // An inherited property keeps one answer per element.
+        assert_eq!(styles.inherited(last, "font-family").unwrap(), "serif");
+        assert_eq!(styles.kept(), 2 + n);
+    }
 
     fn uc(value: &str) -> Num<'_> {
         unit_convert(value, || 200.0, || 10.0, &DEFAULT_PROFILE)

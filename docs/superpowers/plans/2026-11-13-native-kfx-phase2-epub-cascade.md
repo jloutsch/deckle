@@ -338,7 +338,7 @@
   ```
   *As built (Task 10):* `Value::Absent`, `Styles::new`, the `'a` lifetimes and the two
   `Profile` fields were added; the dumps hold `null` for `background-color` on most elements.
-- Ports `oeb/stylizer.py:518-944` and `unit_convert` (`ebooks/__init__.py:258`): unitless and `px` × 72/dpi; `in` × 72; `pt` as is; `em` × font size; `ex`/`en` × font size × 0.5; `pc` × 12; `mm` × 2.8346457; `cm` × 28.346457; `rem` × 12; `%` of the base; unparseable returned as `Text`. `font-size`: keywords from `fnames`; `smaller`/`larger` by the table, else ÷ or × 1.2; `%` and `em` of the parent; negative becomes `smaller`; unparseable inherits. `line-height`: `normal` is 1.2 × font size, a number × font size, and with no declaration the **parent's computed pt**. `width`/`height`: the attribute beats CSS, `%` of the parent, the root is `width_pts`/`height_pts`. Margins and padding `%` of the parent's width. `color` falls back to `black`. `initial` and `unset` come back as text.
+- Ports `oeb/stylizer.py:518-944` and `unit_convert` (`ebooks/__init__.py:258`): unitless and `px` × 72/dpi; `in` × 72; `pt` as is; `em` × font size; `ex`/`en` × font size × 0.5; `pc` × 12; `mm` × 2.8346456693; `cm` × 28.346456693; `q` × 0.708661417325; `rem` × 12 (the profile's `fbase`); `%` of the base; unparseable returned as `Text`. `font-size`: keywords from `fnames`; `smaller`/`larger` by the table, else ÷ or × 1.2; `%` and `em` of the parent; negative becomes `smaller`; unparseable inherits. `line-height`: `normal` is 1.2 × font size, a number × font size, and with no declaration the **parent's computed pt**. `width`/`height`: the attribute beats CSS, `%` of the parent, the root is `width_pts`/`height_pts`. Margins and padding `%` of the parent's width. `color` falls back to `black`. `initial` and `unset` come back as text.
 - Caches are per node; parent lookups are loops, not recursion.
 
 **Amended after Task 1 (the dumps are the reference; where a line above disagrees, these win):**
@@ -384,7 +384,7 @@
 - [ ] **Step 3: Implement `book.rs`.**
 - [ ] **Step 4: Run** `cargo test -p deckle-kfxgen --test it`, then `tools/ref/kfxgen_models.sh --corpus` and `DECKLE_KFXGEN_CORPUS=gutenberg/models cargo test --release -p deckle-kfxgen --test it corpus -- --ignored`. Expected: PASS; each text-only corpus book under 1 s in `read_book`.
 - [ ] **Step 5: Run the workspace checks**: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`. Expected: clean, with only the known environment failures.
-- [ ] **Step 6: Write the outcome note**: what matches, every `DIVERGENCES.md` section added, timings, fixture size, and what phase 3 must do first (kfxgen's resolver, the `data-kfxgen-*` marks, the spine reorder, and the "Before phase 3" list from the phase 1 note).
+- [ ] **Step 6: Write the outcome note**: what matches, every `DIVERGENCES.md` section added, timings, fixture size, and what phase 3 must do first (kfxgen's resolver, the `data-kfxgen-*` marks, the spine reorder, kfxgen's `Style.pseudo_classes(filter_css)` on top of `Styles::pseudo` (the `filter_css` properties popped from each pseudo-class, then the pseudo-classes left empty dropped), and the "Before phase 3" list from the phase 1 note).
 - [ ] **Step 7: Commit** `feat(kfxgen): read_book, checked against Calibre on fixtures and corpus`.
 
 ## Done when
@@ -396,7 +396,7 @@
 
 ## Not in this plan
 
-- kfxgen's resolver, marks and spine reorder (phase 3). Resolver dumps are not captured yet; phase 3's plan adds them to the same hook.
+- kfxgen's resolver, marks and spine reorder (phase 3), and its `pseudo_classes(filter_css)` filtering of pseudo-class styles (`Styles::pseudo` gives them unfiltered). Resolver dumps are not captured yet; phase 3's plan adds them to the same hook.
 - Any call from the app, the CLI or `deckle-core` into this code (phase 4). Crediting Calibre in the app's About view belongs there too.
 - MathML, fixed layout, image conversion.
 - Matching Calibre on XHTML that is not well-formed (Review Focus 1).

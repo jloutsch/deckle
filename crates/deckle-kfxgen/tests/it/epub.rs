@@ -3,7 +3,7 @@
 //! `cascade/<book>/oeb.json` dumps, Calibre 9.18's own view recorded inside a kfxgen run.
 
 use std::io::Write as _;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use deckle_kfx::epub_zip::EpubReader;
 use deckle_kfx::fixtures;
@@ -327,7 +327,8 @@ fn nested_landmark_navs_give_each_link_once() {
             .iter()
             .all(|g| g.href == format!("c.xhtml#a{}", &g.kind["other.calibre-epub-type-t".len()..]))
     );
-    assert!(took < Duration::from_secs(3), "took {took:?}");
+    // With the nested navs walked again and `seen` a list, it took 118 s in a debug build.
+    assert!(took < crate::support::COST_LIMIT, "took {took:?}");
 }
 
 #[test]
@@ -379,7 +380,7 @@ fn a_large_package_reads_in_linear_time() {
     assert_eq!(oeb.metadata.creator.len(), N);
     // About 1.9 s in a debug build, and linear in N; it took 208 s before the package was
     // read through indexes.
-    assert!(took < Duration::from_secs(6), "took {took:?}");
+    assert!(took < crate::support::COST_LIMIT, "took {took:?}");
 }
 
 #[test]

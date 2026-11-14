@@ -537,14 +537,15 @@ fn declared_legacy_encodings_decode() {
 
 #[test]
 fn formatting_rebuilt_with_many_attributes_stops() {
-    // One `<b>` of 3,000 attributes, left open, which the HTML algorithm copies, attributes
-    // and all, into each of 3,000 paragraphs: 9 million attributes from 47 KB.
-    let attrs: String = (0..3000).map(|i| format!(" a{i}=v")).collect();
-    let src = format!("<html><body><p><b{attrs}>x</p>{}", "<p>x</p>".repeat(3000));
+    // One `<b>` of 6,000 attributes, left open, which the HTML algorithm copies, attributes
+    // and all, into each of 6,000 paragraphs: 36 million attributes from 95 KB. Unbounded, it
+    // took 90 s in a debug build (13 s at 3,000 by 3,000, too close to the limit).
+    let attrs: String = (0..6000).map(|i| format!(" a{i}=v")).collect();
+    let src = format!("<html><body><p><b{attrs}>x</p>{}", "<p>x</p>".repeat(6000));
     let start = std::time::Instant::now();
     let r = dom::parse(src.as_bytes());
     assert!(
-        start.elapsed() < std::time::Duration::from_secs(1),
+        start.elapsed() < crate::support::COST_LIMIT,
         "{:?}",
         start.elapsed()
     );
@@ -689,8 +690,9 @@ fn many_edits_on_wide_parents_are_linear() {
     let start = std::time::Instant::now();
     let items: Vec<(NodeId, &str)> = kids.iter().map(|&k| (k, "div")).collect();
     let made = dom.insert_many_before(&items);
+    // One `insert_before` per paragraph took 68 s in a debug build.
     assert!(
-        start.elapsed() < std::time::Duration::from_secs(1),
+        start.elapsed() < crate::support::COST_LIMIT,
         "{:?}",
         start.elapsed()
     );
@@ -700,8 +702,9 @@ fn many_edits_on_wide_parents_are_linear() {
 
     let start = std::time::Instant::now();
     dom.remove_many(&kids);
+    // One `remove` per paragraph took 136 s in a debug build.
     assert!(
-        start.elapsed() < std::time::Duration::from_secs(1),
+        start.elapsed() < crate::support::COST_LIMIT,
         "{:?}",
         start.elapsed()
     );
