@@ -19,7 +19,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::spacing::{Pad, font_ratio, has_real_text, padding_em};
 use super::walk::{HORIZONTAL, Walker};
-use super::{Block, Field, dedupe, dict_set, s, strs, unsupported};
+use super::{Block, dict_set, s, unsupported};
 use crate::convert::ItemError;
 use crate::convert::inline::{keyword, text_of};
 use crate::convert::inline_style::{Raised, Span};
@@ -739,43 +739,12 @@ impl Walker<'_, '_, '_, '_> {
         extra: Vec<(&'static str, PyValue)>,
         font_px: PyValue,
     ) -> Result<Block, ItemError> {
-        let mut ids = Vec::new();
-        for b in &kids {
-            if let Some(PyValue::List(items)) = b.get("anchor_ids") {
-                ids.extend(items.iter().filter_map(|i| i.as_str().map(str::to_owned)));
-            }
-        }
-        let ids = dedupe(ids);
-        // Each list round a nested list copies its blocks' texts and ids once more: charged.
-        let texts: Vec<&str> = kids
-            .iter()
-            .filter_map(|b| b.get("text").and_then(PyValue::as_str))
-            .filter(|t| !t.is_empty())
-            .collect();
-        let bytes = texts.iter().map(|t| t.len() + 2).sum::<usize>()
-            + 2 * ids.iter().map(String::len).sum::<usize>();
-        self.resolver.charge(bytes)?;
-        let text = texts.join("\n\n");
-        let break_before = kids
-            .iter()
-            .any(|b| b.get("break_before").is_some_and(PyValue::is_truthy));
         let mut bx = list_box_fields();
         for (k, v) in extra {
             dict_set(&mut bx, k, v);
         }
-        let offsets = ids.iter().map(|i| (s(i), PyValue::Int(0))).collect();
-        Ok(self.new_block(vec![
-            ("type", Field::Py(s("box"))),
-            ("break_before", Field::Py(PyValue::Bool(break_before))),
-            ("text", Field::Py(PyValue::Str(text))),
-            ("spans", Field::Py(PyValue::List(Vec::new()))),
-            ("block_style", Field::Py(PyValue::None)),
-            ("font_px", Field::Py(font_px)),
-            ("blocks", Field::Blocks(kids)),
-            ("anchor_ids", Field::Py(strs(&ids))),
-            ("anchor_offsets", Field::Py(PyValue::Dict(offsets))),
-            ("box", Field::Py(PyValue::Dict(bx))),
-        ]))
+        // Each list round a nested list copies its blocks' texts and ids once more: charged.
+        self.box_block(kids, None, font_px, bx)
     }
 
     /// The end of `_walk_list_item(li, native)`: an item of one paragraph is that paragraph,

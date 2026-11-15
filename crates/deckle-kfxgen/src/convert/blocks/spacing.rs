@@ -11,19 +11,19 @@
 //! Float arithmetic follows the Python operation for operation, in its order; `max` and `min`
 //! keep the first of equal arguments, as Python's do ([`py_max`], [`py_min`]).
 //!
-//! A box (a native list's, Task 13) is spaced as kfxgen spaces any: `_note_box_margins`, its
-//! side margins in `_carry_container_margins`, and the box part of `_space_between` (its
-//! blocks spaced inside it, what leaves it, along a vertical box's axis too). Only
-//! `_make_box` makes a vertical box or a horizontal one in vertical text: their margins and
-//! paddings (`_note_box_margins`' vertical branch, the horizontal branches of `_note_padding`,
-//! `_note_margins` and `_carry_container_margins`) are Task 15's, and each stops the file with
-//! "boxes (Task 15)".
+//! A box (`boxes.rs`, and a native list's) is spaced as kfxgen spaces any:
+//! `_note_box_margins` (a vertical box's along its own axis), its side margins in
+//! `_carry_container_margins` (a horizontal box's in vertical text over and under it), a
+//! horizontal box first or last in `_note_padding` and `_note_margins` (on its sides), and the
+//! box part of `_space_between` (its blocks spaced inside it, what leaves it, along a vertical
+//! box's axis too).
 
 use std::collections::HashMap;
 
+use super::boxes::css_px;
 use super::rules::{BORDER_SIDES, css_border};
 use super::walk::{Walker, has_words, text_field, unit_percent};
-use super::{Block, BlockId, Field, dict_set, s, unsupported};
+use super::{Block, BlockId, Field, dict_set, s};
 use crate::convert::block_style::compute_block_style;
 use crate::convert::inline::{keyword, text_of};
 use crate::convert::inline_style::parse_css_length;
@@ -134,7 +134,7 @@ fn pair_bytes(v: &PyValue) -> usize {
 }
 
 /// Python's truth of a float: NaN is true.
-fn truthy(x: f64) -> bool {
+pub(super) fn truthy(x: f64) -> bool {
     x != 0.0
 }
 
@@ -174,6 +174,14 @@ fn number(v: Option<&PyValue>) -> f64 {
         Some(PyValue::Bool(b)) => f64::from(u8::from(*b)),
         _ => 0.0,
     }
+}
+
+/// `d.get(key)` on a dict's pairs, string keys.
+fn dict_get<'v>(pairs: &'v [(PyValue, PyValue)], key: &str) -> Option<&'v PyValue> {
+    pairs
+        .iter()
+        .find(|(k, _)| k.as_str() == Some(key))
+        .map(|(_, v)| v)
 }
 
 /// `v or …`: the number when it is a true one.
@@ -240,13 +248,14 @@ pub(super) fn font_ratio(css: Option<&Resolved>) -> f64 {
     }
 }
 
-/// `_margin_em(css, side, share)`: the element's margin-top or -bottom in the 16px root's
-/// ems, a percentage of `share` of the page, negative as the book sets it, 0 when unset.
+/// `_margin_em(css, side, share)`: the element's margin on `side` in the 16px root's ems, a
+/// percentage of `share` of the page, negative as the book sets it, 0 when unset.
 pub(super) fn margin_em(css: Option<&Resolved>, side: &str, share: f64) -> Result<f64, ItemError> {
-    let key = if side == "top" {
-        "margin-top"
-    } else {
-        "margin-bottom"
+    let key = match side {
+        "top" => "margin-top",
+        "bottom" => "margin-bottom",
+        "left" => "margin-left",
+        _ => "margin-right",
     };
     let raw = match css {
         Some(css) => css.get(key)?,
@@ -339,7 +348,7 @@ fn spacer_em(css: &Resolved) -> Result<(f64, f64, f64), ItemError> {
 }
 
 /// `_page_share(margin)`: a `(magnitude, unit)` margin as a share of the page width, in %.
-fn page_share(margin: &PyValue) -> Result<f64, Raised> {
+pub(super) fn page_share(margin: &PyValue) -> Result<f64, Raised> {
     let PyValue::Tuple(parts) = margin else {
         return Ok(0.0);
     };
@@ -351,7 +360,7 @@ fn page_share(margin: &PyValue) -> Result<f64, Raised> {
 }
 
 /// A `(magnitude, unit)` length as the model holds it, or None.
-fn length_py(l: &Option<(String, &'static str)>) -> PyValue {
+pub(super) fn length_py(l: &Option<(String, &'static str)>) -> PyValue {
     match l {
         Some((mag, unit)) => PyValue::Tuple(vec![s(mag), s(unit)]),
         None => PyValue::None,
@@ -532,11 +541,42 @@ impl Walker<'_, '_, '_, '_> {
         let Some((first, last)) = mine(&self.blocks, start) else {
             return Ok((false, false));
         };
-        // A horizontal block first or last, in vertical text: its padding goes on its sides.
-        if (truthy(top) && horizontal_box(&self.blocks[first]))
-            || (truthy(bottom) && horizontal_box(&self.blocks[last]))
-        {
-            return Err(self.unsupported_box());
+        // A horizontal block first or last, in vertical text: the padding is space before or
+        // after it, on its right and left, added to what it holds; padding doesn't collapse.
+        for (i, key, value) in [(first, "before", top), (last, "after", bottom)] {
+            if !truthy(value) || !horizontal_box(&self.blocks[i]) {
+                continue;
+            }
+            if let Some(PyValue::Dict(bx)) = self.blocks[i].get_mut("box") {
+                // The margins it holds are inside this padding now: fixed, with it.
+                let (fixed, inner) = (format!("{key}_fixed"), format!("{key}_inner"));
+                let held = true_number(dict_get(bx, key)).unwrap_or(0.0);
+                match dict_get(bx, &fixed) {
+                    Some(was) => {
+                        let sum = number(Some(was)) + (held + value);
+                        dict_set(bx, &fixed, PyValue::Float(sum));
+                    }
+                    None => {
+                        // The margins inside the first padding still meet its own margin.
+                        dict_set(bx, &inner, PyValue::Float(held));
+                        dict_set(bx, &fixed, PyValue::Float(value));
+                    }
+                }
+                dict_set(bx, key, PyValue::Float(0.0));
+            }
+        }
+        let top = if horizontal_box(&self.blocks[first]) {
+            0.0
+        } else {
+            top
+        };
+        let bottom = if horizontal_box(&self.blocks[last]) {
+            0.0
+        } else {
+            bottom
+        };
+        if !(truthy(top) || truthy(bottom)) {
+            return Ok((false, false));
         }
         let (first, last) = (self.blocks[first].id(), self.blocks[last].id());
         let pads = &mut self.noted.paddings;
@@ -584,12 +624,28 @@ impl Walker<'_, '_, '_, '_> {
         let Some((first, last)) = mine else {
             return Ok(());
         };
-        // A horizontal block first or last: the margins go on its sides.
-        if (truthy(top) && horizontal_box(&self.blocks[first]))
-            || (truthy(bottom) && horizontal_box(&self.blocks[last]))
-        {
-            return Err(self.unsupported_box());
+        // A horizontal block first or last: this element is vertical text, so its margin-top
+        // and -bottom are its space before and after the block, which takes them on those
+        // sides, meeting the margins outside any padding it took.
+        for (i, key, value) in [(first, "before", top), (last, "after", bottom)] {
+            if truthy(value)
+                && horizontal_box(&self.blocks[i])
+                && let Some(PyValue::Dict(bx)) = self.blocks[i].get_mut("box")
+            {
+                let held = true_number(dict_get(bx, key)).unwrap_or(0.0);
+                dict_set(bx, key, PyValue::Float(collapse(held, value)));
+            }
         }
+        let top = if horizontal_box(&self.blocks[first]) {
+            0.0
+        } else {
+            top
+        };
+        let bottom = if horizontal_box(&self.blocks[last]) {
+            0.0
+        } else {
+            bottom
+        };
         let first_id = self.blocks[first].id();
         let last_id = self.blocks[last].id();
         let noted = &mut self.noted;
@@ -648,6 +704,8 @@ impl Walker<'_, '_, '_, '_> {
         }
         let (left, right) = (length_py(&left), length_py(&right));
         let mut empty_style = None;
+        // `_margin_em(css, "left")` and `(…, "right")`, read at the first horizontal box.
+        let mut over_under: Option<[f64; 2]> = None;
         let (mut left_buf, mut right_buf) = (String::new(), String::new());
         let pushed = pair_bytes(&left).saturating_add(pair_bytes(&right));
         for i in start.min(self.blocks.len())..self.blocks.len() {
@@ -656,7 +714,28 @@ impl Walker<'_, '_, '_, '_> {
             self.resolver.charge(TEXT_UNIT)?;
             match self.blocks[i].kind() {
                 Some("box") if horizontal_box(&self.blocks[i]) => {
-                    return Err(self.unsupported_box());
+                    // This element is vertical text: its left and right are its top and
+                    // bottom, and the block takes them there, in ems.
+                    let ems = match over_under {
+                        Some(ems) => ems,
+                        None => {
+                            let css = self.resolve(elem)?;
+                            let ems = [
+                                margin_em(css.as_ref(), "left", 1.0)?,
+                                margin_em(css.as_ref(), "right", 1.0)?,
+                            ];
+                            *over_under.insert(ems)
+                        }
+                    };
+                    if let Some(PyValue::Dict(bx)) = self.blocks[i].get_mut("box") {
+                        for (key, em) in [("over", ems[0]), ("under", ems[1])] {
+                            if truthy(em) {
+                                let had = true_number(dict_get(bx, key)).unwrap_or(0.0);
+                                dict_set(bx, key, PyValue::Float(had + em));
+                            }
+                        }
+                    }
+                    continue;
                 }
                 Some("box") => {
                     // The box takes them, not its paragraphs: `(x or 0) + share or None`.
@@ -776,8 +855,8 @@ impl Walker<'_, '_, '_, '_> {
 
     /// `_note_box_margins(box, css)` for the box at `self.blocks[at]`: its margins, spaced
     /// as a paragraph's; on a side with no border or padding, the margin of the block inside
-    /// meets the box's and collapses into it. A box drawn vertical (`box.vertical`) is Task
-    /// 15's.
+    /// meets the box's and collapses into it. A vertical box's blocks meet its own margins
+    /// along its axis instead: its right (`start`) and left (`end`).
     pub(super) fn note_box_margins(
         &mut self,
         at: usize,
@@ -801,17 +880,40 @@ impl Walker<'_, '_, '_, '_> {
         };
         let edge = |side: &str| side_of("border", side) || side_of("padding", side);
         let (edge_top, edge_bottom) = (edge("top"), edge("bottom"));
-        if bx
+        let (edge_right, edge_left) = (edge("right"), edge("left"));
+        let vertical = bx
             .and_then(|bx| bx.get("vertical"))
-            .is_some_and(PyValue::is_truthy)
-        {
-            return Err(unsupported(self.w, "boxes (Task 15)"));
-        }
+            .is_some_and(PyValue::is_truthy);
         let id = b.id();
         let kids = b.blocks().unwrap_or(&[]);
         let counts = |k: &&Block| !matches!(k.kind(), Some("space" | "rule"));
         let first = kids.iter().find(counts).map(Block::id);
         let last = kids.iter().rev().find(counts).map(Block::id);
+        if vertical {
+            // A vertical block in a horizontal one: its blocks' first and last margins run
+            // along its own axis, before and after it, its right and left sides; they meet
+            // its own there, not the horizontal block's.
+            let mut met = Vec::with_capacity(2);
+            for (k, end, edge, key) in
+                [(first, 0, edge_right, "start"), (last, 1, edge_left, "end")]
+            {
+                if let Some(inner) = k.and_then(|k| self.noted.margins.get_mut(&k))
+                    && !edge
+                {
+                    met.push((key, inner[end]));
+                    inner[end] = 0.0;
+                }
+            }
+            // `start` and `end` are there: `make_box` writes them with `vertical`.
+            if let Some(PyValue::Dict(d)) = self.blocks[at].get_mut("box") {
+                for (key, inner) in met {
+                    let own = number(dict_get(d, key));
+                    dict_set(d, key, PyValue::Float(collapse(own, inner)));
+                }
+            }
+            self.noted.margins.insert(id, [top, bottom]);
+            return Ok(());
+        }
         // A spacer or rule after the last block meets its margin first.
         let spaced_end = kids
             .last()
@@ -831,10 +933,6 @@ impl Walker<'_, '_, '_, '_> {
         }
         self.noted.margins.insert(id, [top, bottom]);
         Ok(())
-    }
-
-    fn unsupported_box(&self) -> ItemError {
-        unsupported(self.w, "boxes (Task 15)")
     }
 
     /// `_box_share(elem, side)`: the share of the page a % margin on that side of `elem` is
@@ -1030,15 +1128,7 @@ impl Walker<'_, '_, '_, '_> {
             if unit == "$314" && 0.0 < w && w < 100.0 {
                 return Ok(share * (w / 100.0));
             }
-            // `_CSS_PX`.
-            let px = match unit {
-                "$319" => Some(1.0),
-                "$308" | "$505" => Some(16.0),
-                "$318" => Some(4.0 / 3.0),
-                "$316" => Some(96.0 / 25.4),
-                _ => None,
-            };
-            if let Some(px) = px {
+            if let Some(px) = css_px(unit) {
                 return Ok(w * px * 0.45 / pp);
             }
         }
@@ -1943,7 +2033,8 @@ mod tests {
 
         /// A box's tail, each branch, against the pinned `_space_between` copied into a
         /// scratch module and run under Python 3 on the same blocks. List boxes reach only
-        /// the last; the others need `_make_box` (Task 15) or a table ending a box (16).
+        /// the last; `_make_box`'s boxes reach the others (`boxes_no_dump_holds_are_made_as_
+        /// kfxgen_makes_them`, with a rule ending the box), as a table ending one will.
         #[test]
         fn what_leaves_a_box_goes_where_kfxgen_puts_it() {
             let spacers = || vec![para("a"), B::Table, B::Space(0.5, 0.0, 0.0, 0.0)];

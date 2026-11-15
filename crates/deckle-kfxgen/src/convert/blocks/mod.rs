@@ -15,11 +15,13 @@
 //! (Task 12, `spacing.rs`); lists, typed markers and native list boxes (Task 13, `lists.rs`),
 //! with what any box takes part in: its margins, the space inside it and what leaves it, its
 //! blocks' anchor keys and the ids at the file's end; rules (Task 14, `rules.rs`), with the
-//! border reading boxes share.
+//! border reading boxes share; boxes (Task 15, `boxes.rs`): bordered, filled, sized and
+//! turned containers.
 //! Each branch a later task ports stops the file with [`Error::Unsupported`] naming that task
 //! (`walk.rs`), so a book that needs one cannot be converted by accident.
 
 mod anchors;
+mod boxes;
 mod lists;
 mod rules;
 mod spacing;
@@ -90,20 +92,24 @@ impl Block {
         self.blocks_mut().map(std::mem::take).unwrap_or_default()
     }
 
-    /// `block["blocks"] = blocks`, in place.
+    /// `block["blocks"] = blocks`, in place. Every box has its `blocks` (`box_block` writes
+    /// them), and only a box's are taken out and put back.
     fn put_blocks(&mut self, blocks: Vec<Block>) {
-        match self.blocks_mut() {
-            Some(b) => *b = blocks,
-            None => self.fields.push(("blocks", Field::Blocks(blocks))),
+        if let Some(b) = self.blocks_mut() {
+            *b = blocks;
         }
     }
 
-    /// `block.pop(key, None)`.
+    /// `block.pop(key, None)` for a key holding a model value (a box's `blocks` are never
+    /// popped).
     fn remove(&mut self, key: &str) -> Option<PyValue> {
-        let at = self.fields.iter().position(|(k, _)| *k == key)?;
+        let at = self
+            .fields
+            .iter()
+            .position(|(k, v)| *k == key && matches!(v, Field::Py(_)))?;
         match self.fields.remove(at).1 {
             Field::Py(p) => Some(p),
-            Field::Blocks(b) => Some(PyValue::List(b.iter().map(Block::to_py).collect())),
+            Field::Blocks(_) => None,
         }
     }
 

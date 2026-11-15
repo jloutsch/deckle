@@ -18,8 +18,8 @@ use std::collections::{HashMap, HashSet};
 
 use deckle_limits::MAX_DEPTH;
 
+use super::boxes::Seen;
 use super::lists::{Item, Lists, Native};
-use super::rules::css_border;
 use super::spacing::Noted;
 use super::{Block, BlockId, ExtractOptions, Field, dedupe, dict_set, s, strs, unsupported};
 use crate::convert::block_bidi::{BlockBidi, start_end_align};
@@ -27,16 +27,15 @@ use crate::convert::block_style::compute_block_style;
 use crate::convert::initial::initial;
 use crate::convert::inline::{
     Walk, epub_switch_branch, epub_types, is_body_block, is_non_rendered, keyword, own_anchor_ids,
-    subtree_anchor_ids, text_of,
+    subtree_anchor_ids,
 };
 use crate::convert::inline_style::{
-    FLAG_PRE, Flag, Flags, Segment, make_anchor_mark, normalize_runs_with_anchors, parse_css_length,
+    FLAG_PRE, Flag, Flags, Segment, make_anchor_mark, normalize_runs_with_anchors,
 };
-use crate::convert::pictures::{css_background_image, displays_as_block, float_side};
+use crate::convert::pictures::{css_background_image, displays_as_block};
 use crate::convert::resolver::{Resolved, Resolver};
 use crate::convert::{Error, ItemError};
 use crate::dom::{Dom, NodeId, XHTML_NS};
-use crate::generate::images::{IMG_TOKEN, WHOLE_TOKEN};
 use crate::generate::page_scale::em_percent;
 use crate::generate::py;
 use crate::pyvalue::PyValue;
@@ -47,7 +46,7 @@ const SOURCE_MARKED: &str = "data-kfxgen-source";
 const SOURCE_TOC: &str = "data-kfxgen-toc";
 const SOURCE_FRONT: &str = "data-kfxgen-front";
 pub(super) const HORIZONTAL: &str = "data-kfxgen-horizontal";
-const VERTICAL: &str = "data-kfxgen-vertical";
+pub(super) const VERTICAL: &str = "data-kfxgen-vertical";
 
 /// `block_tags`' local names (it holds each bare and in the XHTML namespace).
 fn is_block_name(local: &str) -> bool {
@@ -106,14 +105,6 @@ fn is_front_matter_token(t: &str) -> bool {
     matches!(
         t,
         "dedication" | "epigraph" | "copyright" | "copyright-page" | "colophon"
-    )
-}
-
-/// `_BOX_TAGS` and `_SIZED_BOX_TAGS`.
-fn is_box_tag(local: &str) -> bool {
-    matches!(
-        local,
-        "div" | "aside" | "section" | "blockquote" | "article" | "p" | "pre"
     )
 }
 
@@ -200,7 +191,7 @@ pub(super) struct Walker<'o, 'w, 'a, 's> {
     pub(super) w: &'w mut Walk<'a, 's>,
     pub(super) dom: &'a Dom,
     pub(super) resolver: &'a Resolver<'a>,
-    opts: &'o ExtractOptions<'o>,
+    pub(super) opts: &'o ExtractOptions<'o>,
     pub(super) blocks: Vec<Block>,
     next_id: usize,
     pub(super) pending_ids: Vec<String>,
@@ -224,6 +215,8 @@ pub(super) struct Walker<'o, 'w, 'a, 's> {
     pub(super) noted: Noted,
     /// `pending_markers`, `list_ordinals`, `native_lists`, `cell_depth`.
     pub(super) lists: Lists,
+    /// What `_make_box` has read in each block's text.
+    pub(super) seen: HashMap<BlockId, Seen>,
 }
 
 /// The walk of one file: everything `extract_blocks_from_html` does before `_space_between`.
@@ -251,6 +244,7 @@ pub(super) fn walk(w: &mut Walk, opts: &ExtractOptions) -> Result<Walked, ItemEr
         stack: Vec::new(),
         noted: Noted::new(dom),
         lists: Lists::default(),
+        seen: HashMap::new(),
     };
     walker.walk_body(body)?;
     // Each listing's index counts the space blocks before it, which `_space_between` takes
@@ -632,8 +626,10 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         let block = self.new_block(fields);
         self.blocks.push(block);
         let at = self.blocks.len() - 1;
-        if self.would_box(elem, at, true)? {
-            return Err(self.unsupported("boxes (Task 15)"));
+        // Text written straight in a bordered or filled block is a box round that one
+        // paragraph; the box takes its margins and padding.
+        if self.make_box(elem, at, true)? {
+            return Ok(());
         }
         let padded = self.note_padding(elem, at)?;
         self.note_margins(elem, at, padded)
@@ -878,81 +874,12 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
             }
             return Ok(());
         }
-        if self.would_box(elem, start, false)? {
-            return Err(self.unsupported("boxes (Task 15)"));
+        if self.make_box(elem, start, false)? {
+            return Ok(());
         }
         self.carry_container_margins(elem, start)?;
         let padded = self.note_padding(elem, start)?;
         self.note_margins(elem, start, padded)
-    }
-
-    /// Whether `_make_box(elem, start, leaf)` would draw a box round `blocks[start:]`: its
-    /// tests up to the box, in kfxgen's order (the box itself is Task 15's).
-    fn would_box(&mut self, elem: NodeId, start: usize, leaf: bool) -> Result<bool, ItemError> {
-        let dom = self.dom;
-        let tag = dom.tag(elem);
-        let turned = dom.attr(elem, HORIZONTAL).is_some() || dom.attr(elem, VERTICAL).is_some();
-        if !(is_box_tag(tag) || tag == "figure") && !turned {
-            return Ok(false);
-        }
-        let css = self.resolve(elem)?;
-        let border = css_border(css.as_ref())?;
-        // `_box_background(css)`: the resolved style's background values are the element's
-        // own (`st.get`), which the resolver's fill reads.
-        let fill = match &css {
-            Some(_) => self
-                .resolver
-                .box_background(elem)?
-                .map_err(ItemError::Raised)?,
-            None => None,
-        };
-        let (border, fill) = if is_box_tag(tag) {
-            (border, fill)
-        } else {
-            (None, None)
-        };
-        let kids = &self.blocks[start.min(self.blocks.len())..];
-        let mut width = box_width(css.as_ref())?;
-        let side = float_side(css.as_ref())?;
-        if width.is_some() && !kids.iter().any(|b| IMG_TOKEN.is_match(text_field(b))) {
-            width = None;
-        }
-        if width.is_some()
-            && side.is_some()
-            && kids.len() == 1
-            && let Some(m) = WHOLE_TOKEN.captures(text_field(&kids[0]))
-            && m.get(4).is_some_and(|g| !g.as_str().is_empty())
-        {
-            return Ok(false);
-        }
-        if border.is_none() && fill.is_none() && width.is_none() && !turned {
-            return Ok(false);
-        }
-        if !kids
-            .iter()
-            .any(|b| matches!(b.kind(), Some("table" | "box")) || has_words(text_field(b)))
-        {
-            return Ok(false);
-        }
-        // A leaf's style loses its side margins here; no TOC entry can name a block past a
-        // leaf box's only one.
-        if !leaf
-            && kids
-                .iter()
-                .skip(1)
-                .flat_map(|b| {
-                    b.get("anchor_ids")
-                        .and_then(PyValue::as_list)
-                        .unwrap_or(&[])
-                })
-                .any(|a| {
-                    a.as_str()
-                        .is_some_and(|a| self.opts.toc_targets.contains(a))
-                })
-        {
-            return Ok(false);
-        }
-        Ok(true)
     }
 
     /// `_holds_blocks(elem)`: one of `block_tags`, or an `<epub:switch>` whose default holds
@@ -1276,18 +1203,4 @@ pub(super) fn unit_percent(unit: &str) -> f64 {
         "$316" => em * 72.0 / 25.4 / 12.0,
         _ => 1.0,
     }
-}
-
-/// `_box_width(css)`: a wrapper's CSS width as a share of the page, in %, or None.
-fn box_width(css: Option<&Resolved>) -> Result<Option<f64>, ItemError> {
-    let raw = match css {
-        Some(css) => text_of(css.get("width")?).into_owned(),
-        None => String::new(),
-    };
-    let Some((mag, unit)) = parse_css_length(&raw, false)? else {
-        return Ok(None);
-    };
-    // `float(margin[0])` of a magnitude `parse_css_length` wrote: always a number.
-    let share = py::py_float(&mag).unwrap_or(0.0) * unit_percent(unit);
-    Ok((share > 0.0 && share < 100.0).then_some(share))
 }

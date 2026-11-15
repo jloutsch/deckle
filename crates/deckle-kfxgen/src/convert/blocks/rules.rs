@@ -324,15 +324,15 @@ impl Walker<'_, '_, '_, '_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::convert::resolver::TextBudget;
 
     /// A resolved style's pairs, as a case gives them.
     type Css = Vec<(&'static str, PyValue)>;
 
-    /// `repr(v)` for the values a rule's look holds.
-    fn repr(v: &PyValue) -> String {
+    /// `repr(v)` for the values a rule's look (or a box) holds.
+    pub(in crate::convert::blocks) fn repr(v: &PyValue) -> String {
         match v {
             PyValue::None => "None".into(),
             PyValue::Int(i) => i.to_string(),
