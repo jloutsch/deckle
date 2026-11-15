@@ -17,7 +17,7 @@ use regex::Regex;
 use super::chapters::{Block, Chapter, first_writing_mode};
 use super::chunks::Chunk;
 use super::inline::{Anchors, Flag, Span};
-use super::page_scale::column_px;
+use super::page_scale::{column_px, page_pt};
 use super::table_styles::align_symbol;
 use super::{GenerateError, Generator, measure, model_err, py, st, sym};
 use crate::pyvalue::PyValue;
@@ -417,10 +417,14 @@ pub(crate) struct Picture {
     pub float: Option<String>,
     /// In a link's container: inline, the one position its link covers (#355).
     pub inline: bool,
-    /// In a horizontal block of vertical text: its size only (#247), and a block picture's
-    /// alignment there (0bc705d :5898).
+    /// In vertical text or a horizontal block of it: its size only (#247), and a block
+    /// picture's alignment there (0bc705d :5898).
     pub plain: bool,
     pub box_align: Option<String>,
+    /// The markup's height, the token's `h` (#247, a1ba662).
+    pub height: Option<String>,
+    /// Directly in vertical-rl text: sized by its height (#247, a1ba662).
+    pub upright: bool,
 }
 
 /// Whether `text` holds pictures and nothing else but spaces: `IMG_TOKEN_RE.sub("", text)`
@@ -437,6 +441,20 @@ pub(crate) fn has_picture(text: &str) -> bool {
 pub(crate) fn picture_of(m: &regex::Captures, images: &Images) -> Option<Picture> {
     let (resource, _) = images.resource(&m[1])?;
     let field = |i: usize| m.get(i).map(|g| g.as_str()).filter(|s| !s.is_empty());
+    // `dict(e.split("=", 1) for e in extras.split(";") if "=" in e)`: a later key wins.
+    let extras: Vec<(&str, &str)> = field(5)
+        .unwrap_or("")
+        .split(';')
+        .filter_map(|e| e.split_once('='))
+        .collect();
+    let extra = |key: &str| {
+        extras
+            .iter()
+            .rev()
+            .find(|(k, _)| *k == key)
+            .map(|(_, v)| *v)
+            .filter(|v| !v.is_empty())
+    };
     Some(Picture {
         resource: resource.clone(),
         alt: m[2].replace('\x02', " "),
@@ -445,6 +463,10 @@ pub(crate) fn picture_of(m: &regex::Captures, images: &Images) -> Option<Picture
         inline: false,
         plain: false,
         box_align: None,
+        // The markup's height: in vertical text it sizes the picture whenever given (#247,
+        // a1ba662).
+        height: extra("h").map(str::to_owned),
+        upright: false,
     })
 }
 
@@ -607,9 +629,85 @@ fn parse_size_hint(hint: &str) -> Result<Option<(char, f64)>, GenerateError> {
 /// A picture style's size: `_image_size_key` (:7029).
 type SizeKey = (char, f64);
 
-/// `_plain_key` (0bc705d :7138): a plain picture's size, whether the markup set it, and a
-/// block picture's alignment (#247).
-type PlainKey = (SizeKey, bool, Option<String>);
+/// `_plain_key` (a1ba662): a plain picture's size, whether the markup set it, a block
+/// picture's alignment (#247), and whether a height in em gives it `$64` (QA's Q761 E04).
+/// Its clear is never one: the port refuses a clear.
+type PlainKey = (SizeKey, bool, Option<String>, bool);
+
+/// `_LENGTH_RE` (a1ba662): a length, as `_img_size_hint` and `_img_inline_extras` pass it.
+static LENGTH: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\A(\d+(?:\.\d+)?)(%|px|em|pt)?\n?\z").unwrap());
+
+/// `_up` (a1ba662): a picture's percentage, at most 100, to three places rounded half up, as
+/// Previewer rounds it (7.813, where `round` gives 7.812; QA's Q761 E32):
+/// `Decimal(f"{min(100.0, pct):.9f}").quantize(Decimal("0.001"), ROUND_HALF_UP)`. An infinity,
+/// or a result past the context's 28 digits, raises `InvalidOperation` there.
+pub(crate) fn up(pct: f64) -> Result<f64, GenerateError> {
+    let x = pct.min(100.0);
+    let text = format!("{:.9}", x.abs());
+    let (int, frac) = text.split_once('.').unwrap_or((&text, ""));
+    let digits = format!("{int}{}", &frac[..3]);
+    if !x.is_finite() || digits.trim_start_matches('0').len() > 28 {
+        return Err(model_err(format!(
+            "a picture's percentage of {pct}: kfxgen cannot round it"
+        )));
+    }
+    let mut milli: i128 = digits.parse().unwrap();
+    if frac.as_bytes()[3] >= b'5' {
+        milli += 1;
+    }
+    // `float()` of the decimal: its text, parsed, is the nearest float.
+    let sign = if x.is_sign_negative() { "-" } else { "" };
+    Ok(format!("{sign}{}.{:03}", milli / 1000, milli % 1000)
+        .parse()
+        .unwrap())
+}
+
+/// Points per unit for a picture's height in vertical text, as Kindle Previewer 4.0.3
+/// counts it (`_HEIGHT_PT`, a1ba662; QA's Q761 E01-E06): px at the picture's own 0.75pt,
+/// pt through px at 0.45pt, em at 12pt.
+fn height_pt(unit: &str) -> f64 {
+    match unit {
+        "em" => 12.0,
+        "pt" => 0.75 / 0.45,
+        _ => 0.75,
+    }
+}
+
+/// `_WIDTH_PT` (a1ba662): a width in px at 0.45pt, em at 12pt, pt as it is.
+fn width_pt(unit: &str) -> f64 {
+    match unit {
+        "px" => 0.45,
+        "em" => 12.0,
+        _ => 1.0,
+    }
+}
+
+/// `_upright_lengths` (a1ba662): a picture's height and width as the markup gives them, each
+/// a (number, unit) or None.
+fn upright_lengths(p: &Picture) -> Result<[Option<(f64, String)>; 2], GenerateError> {
+    let mut raw = [p.height.clone().unwrap_or_default(), String::new()];
+    if let Some(size) = SIZE_HINT.captures(p.size.as_deref().unwrap_or(""))
+        && !(&size[1] == "h" && !raw[0].is_empty())
+    {
+        raw[usize::from(&size[1] == "w")] =
+            format!("{}{}", &size[2], size.get(3).map_or("", |u| u.as_str()));
+    }
+    let mut out = [None, None];
+    for (slot, text) in out.iter_mut().zip(&raw) {
+        let Some(m) = LENGTH.captures(text) else {
+            continue;
+        };
+        if !m[1].is_ascii() {
+            return Err(Unsupported("a picture size in other than ASCII digits"));
+        }
+        let number: f64 = m[1].parse().unwrap();
+        if number > 0.0 {
+            *slot = Some((number, m.get(2).map_or("px", |u| u.as_str()).to_owned()));
+        }
+    }
+    Ok(out)
+}
 
 /// The `$157` styles of the book's pictures (:7008): one per width, then per height, then
 /// per floated size and side, then per plain picture's key (#247), each in sorted order (#96,
@@ -653,10 +751,11 @@ impl ImageStyles {
                 (None, _) => heights.push(key.1),
             }
         }
-        // By (axis, size, sized, alignment or ""), as kfxgen sorts them (0bc705d :7174).
+        // By (axis, size, sized, alignment or "", clear or "", `$64`), as kfxgen sorts them
+        // (a1ba662).
         plains.sort_by(|a, b| {
-            (a.0.0, a.0.1, a.1, a.2.as_deref().unwrap_or(""))
-                .partial_cmp(&(b.0.0, b.0.1, b.1, b.2.as_deref().unwrap_or("")))
+            (a.0.0, a.0.1, a.1, a.2.as_deref().unwrap_or(""), a.3)
+                .partial_cmp(&(b.0.0, b.0.1, b.1, b.2.as_deref().unwrap_or(""), b.3))
                 .unwrap()
         });
         plains.dedup();
@@ -702,10 +801,53 @@ impl ImageStyles {
         Ok(styles)
     }
 
-    /// `_plain_key` (0bc705d :7138).
+    /// `_plain_key` (a1ba662).
     fn plain_key(&self, p: &Picture) -> Result<PlainKey, GenerateError> {
+        if p.upright {
+            let [height, width] = upright_lengths(p)?;
+            let em_high = height.as_ref().is_some_and(|(_, unit)| unit == "em");
+            return Ok((
+                self.upright_size_key(p)?,
+                height.is_some() || width.is_some(),
+                p.box_align.clone(),
+                em_high,
+            ));
+        }
         let sized = parse_size_hint(p.size.as_deref().unwrap_or(""))?.is_some();
-        Ok((self.size_key(p)?, sized, p.box_align.clone()))
+        Ok((self.size_key(p)?, sized, p.box_align.clone(), false))
+    }
+
+    /// `_upright_size_key` (a1ba662): a picture directly in vertical-rl text is sized by its
+    /// height (`$57`), capped at 100%, as Kindle Previewer 4.0.3 writes it (PVA, PVAL; QA's
+    /// Q761 E01-E06, E51-E55). A height the markup gives wins, in % or a length; else a width
+    /// in % keeps its axis; else a width in a length gives the height at the picture's
+    /// proportions; else the picture's own height. Lengths count in points over the page.
+    fn upright_size_key(&self, p: &Picture) -> Result<SizeKey, GenerateError> {
+        let [height, width] = upright_lengths(p)?;
+        match (&height, &width) {
+            (Some((n, unit)), _) if unit == "%" => return Ok(('h', up(*n)?)),
+            (Some((n, unit)), _) => {
+                let pt = n * height_pt(unit);
+                return Ok(('h', up(pt / page_pt() * 100.0)?));
+            }
+            (None, Some((n, unit))) if unit == "%" => return Ok(('w', up(*n)?)),
+            _ => {}
+        }
+        let (Some(w), Some(h)) = self
+            .resource_dims
+            .get(&p.resource)
+            .map_or((None, None), |d| (d.0, d.1))
+        else {
+            return self.size_key(p);
+        };
+        if w == 0.0 || h == 0.0 {
+            return self.size_key(p);
+        }
+        let pt = match &width {
+            Some((n, unit)) => n * width_pt(unit) * h / w,
+            None => h * 0.75,
+        };
+        Ok(('h', up(pt / page_pt() * 100.0)?))
     }
 
     /// `_image_size_key` (:7029): the markup's size, else the picture's own width against
@@ -790,7 +932,7 @@ fn build_fragment_157_image(
 fn build_plain_image_style_157(
     g: &mut Generator,
     name: &str,
-    ((axis, pct), sized, box_align): &PlainKey,
+    ((axis, pct), sized, box_align, em_high): &PlainKey,
 ) -> Fragment {
     g.local(name);
     let Value::Struct(mut v) = st([
@@ -807,6 +949,10 @@ fn build_plain_image_style_157(
     }
     if let Some(align) = box_align.as_deref().and_then(align_symbol) {
         v.insert("$580", sym(align));
+    }
+    if *em_high {
+        // A height in em, in vertical text (QA's Q761 E04).
+        v.insert("$64", measure(py::decimal("100"), "$314"));
     }
     Fragment::new("$157", Some(name), Value::Struct(v))
 }

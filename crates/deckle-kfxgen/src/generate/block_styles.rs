@@ -495,14 +495,14 @@ impl Containers {
             matches!(node, Node::Cell(_)).then(|| sizes.block_font_size(chapter_fs, chunk));
         self.sizes.push(cell_size);
         Ok(match node {
-            // In a horizontal block of vertical text: no style, or only the block's alignment
-            // (#247, 0bc705d :7640).
+            // In vertical text or a horizontal block of it: no style, or only the block's
+            // alignment and its paragraph's indent (#247, a1ba662).
             Node::Link(open) if open.plain => {
-                let name = open
-                    .align
-                    .as_deref()
-                    .and_then(table_styles::align_symbol)
-                    .map(|align| styles.allocate(g, "_pbox", StyleArgs::PictureBox(align)));
+                let align = open.align.as_deref().and_then(table_styles::align_symbol);
+                let name = (align.is_some() || open.indent.is_some()).then(|| {
+                    let args = StyleArgs::PictureBox(align, open.indent.clone());
+                    styles.allocate(g, "_pbox", args)
+                });
                 (None, name)
             }
             // A linked picture's container centres it, as `$580` does a picture alone (:7505).

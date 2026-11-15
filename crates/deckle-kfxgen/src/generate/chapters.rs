@@ -113,6 +113,9 @@ pub(crate) struct Block {
     /// The text-align a picture walked as a block of its own inherits, having no
     /// `block_style` (#757, 0bc705d :5890).
     pub picture_align: Option<String>,
+    /// A picture set `display: block`: a block picture in a vertical book's horizontal block
+    /// (PVA H10, a1ba662).
+    pub picture_block: bool,
     /// Its file's writing mode (#247), on a chapter's own blocks: what
     /// `_chapter_writing_mode` (:942) looks for.
     pub writing_mode: Option<String>,
@@ -137,6 +140,7 @@ impl Block {
             tight: false,
             trailing: String::new(),
             picture_align: None,
+            picture_block: false,
             writing_mode: None,
         }
     }
@@ -347,6 +351,7 @@ pub(crate) fn read_block(
             Some(PyValue::Str(a)) => Some(a.clone()),
             Some(_) => return Err(model_err(format!("{at}.picture_align: a string"))),
         },
+        picture_block: truthy(b.get("picture_block")),
         ..Block::plain(text)
     })
 }

@@ -421,7 +421,13 @@ pub(crate) fn emit_entries(
                 // Previewer 4.0.3 writes it (#247, 0bc705d :5870). In a vertical book it is
                 // inline in a plain container, as is a linked one in any book; in an ltr-spine
                 // book, a block picture aligned by `$580` as the block is.
-                picture.plain = picture.float.is_none() && now.in_horizontal_block(chunks);
+                let free = picture.float.is_none();
+                let horizontal = free && now.in_horizontal_block(chunks);
+                // Directly in vertical-rl text: sized by its height, with no other key but an
+                // alignment the block sets, in either spine (PVA, PVAL V01-V15, a1ba662). A
+                // linked one is inline in a plain container (V07).
+                picture.upright = free && now.vertical && !horizontal;
+                picture.plain = horizontal || picture.upright;
                 // A picture walked as a block of its own beside the block's paragraphs has no
                 // block_style: the text-align it inherits (S755).
                 let align = block
@@ -429,7 +435,10 @@ pub(crate) fn emit_entries(
                     .as_ref()
                     .and_then(|s| s.align.clone())
                     .or_else(|| block.picture_align.clone());
-                let boxed = picture.plain && (link.is_some() || now.vertical_book);
+                // `display: block` keeps it a block picture in a vertical book's horizontal
+                // block (PVA H10, P247k K10).
+                let boxed = picture.plain
+                    && (link.is_some() || horizontal && !block.picture_block && now.vertical_book);
                 if picture.plain
                     && !boxed
                     && matches!(align.as_deref(), Some("left" | "center" | "right"))
@@ -443,6 +452,11 @@ pub(crate) fn emit_entries(
                     let open = LinkOpen {
                         target: link.clone(),
                         plain: boxed,
+                        // A paragraph's text-indent stays on its container (PVA H02, H18, V18;
+                        // P247k K02).
+                        indent: boxed
+                            .then(|| block.style.as_ref().and_then(|s| s.indent.clone()))
+                            .flatten(),
                         align: if boxed { align } else { None },
                     };
                     chunks.push(Chunk {

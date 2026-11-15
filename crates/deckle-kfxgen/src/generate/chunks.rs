@@ -2,7 +2,7 @@
 //! A chapter's entries: [`Chunk`], one per paragraph, picture or contents line, and
 //! `_emit_paragraph`'s dispatch.
 
-use super::block_styles::{BlockStyle, HeadingStyle, keep_space};
+use super::block_styles::{BlockStyle, HeadingStyle, Length, keep_space};
 use super::boxes::{BoxOpen, RuleStyle};
 use super::chapters::Block;
 use super::images::{Images, Picture};
@@ -76,11 +76,13 @@ impl Node {
 }
 
 /// A picture's container (0bc705d :5900): its link's target, if any; whether it is a plain
-/// one in a horizontal block of vertical text, and its block's alignment there (#247).
+/// one in vertical text or a horizontal block of it, and its block's alignment and its
+/// paragraph's text-indent there (#247, a1ba662).
 pub(crate) struct LinkOpen {
     pub target: Option<String>,
     pub plain: bool,
     pub align: Option<String>,
+    pub indent: Option<Length>,
 }
 
 /// The chapter being written (0bc705d :5489): where its chunks start, whether it is

@@ -102,8 +102,8 @@ pub(crate) enum StyleArgs {
     Rule(RuleStyle),
     /// A run's direction keys alone (#710).
     Direction,
-    /// A picture's plain container's alignment symbol (#247).
-    PictureBox(&'static str),
+    /// A picture's plain container's alignment symbol and text-indent (#247).
+    PictureBox(Option<&'static str>, Option<Length>),
 }
 
 impl From<Style157> for StyleArgs {
@@ -217,11 +217,21 @@ impl Styles {
                 g.local(&name);
                 st([("$173", sym(&name))])
             }
-            // `build_picture_box_style_157` (0bc705d :4108): only its alignment, as Kindle
-            // Previewer 4.0.3 writes `text-align` there (P247k K07).
-            StyleArgs::PictureBox(align) => {
+            // `build_picture_box_style_157` (a1ba662): only its alignment, as Kindle
+            // Previewer 4.0.3 writes `text-align` there (P247k K07), and its paragraph's
+            // text-indent (PVA H02).
+            StyleArgs::PictureBox(align, indent) => {
                 g.local(&name);
-                st([("$173", sym(&name)), ("$34", sym(align))])
+                let Value::Struct(mut v) = st([("$173", sym(&name))]) else {
+                    unreachable!()
+                };
+                if let Some(align) = align {
+                    v.insert("$34", sym(align));
+                }
+                if let Some(indent) = indent {
+                    v.insert("$36", length(indent));
+                }
+                Value::Struct(v)
             }
         };
         if let Value::Struct(v) = &mut value {
