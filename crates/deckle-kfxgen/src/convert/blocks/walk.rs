@@ -870,7 +870,7 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
             return Ok(false);
         }
         let css = self.resolve(elem)?;
-        let border = css_border_drawn(css.as_ref())?;
+        let border = css_border(css.as_ref())?;
         // `_box_background(css)`: the resolved style's background values are the element's
         // own (`st.get`), which the resolver's fill reads.
         let fill = match &css {
@@ -883,7 +883,7 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         let (border, fill) = if is_box_tag(tag) {
             (border, fill)
         } else {
-            (false, None)
+            (None, None)
         };
         let kids = &self.blocks[start.min(self.blocks.len())..];
         let mut width = box_width(css.as_ref())?;
@@ -899,7 +899,7 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         {
             return Ok(false);
         }
-        if !border && fill.is_none() && width.is_none() && !turned {
+        if border.is_none() && fill.is_none() && width.is_none() && !turned {
             return Ok(false);
         }
         if !kids
@@ -1245,18 +1245,35 @@ fn anchors_follow_rows(dom: &Dom, elem: NodeId) -> bool {
     kinds.starts_with('R') && kinds.ends_with('A') && kinds.trim_end_matches('A').contains('A')
 }
 
-/// `_css_border(css) is not None`: a side drawn. Its colour is read as kfxgen's
-/// `_border_colour` reads it, which can raise.
-fn css_border_drawn(css: Option<&Resolved>) -> Result<bool, ItemError> {
+/// `_BORDER_SIDES`.
+const BORDER_SIDES: [&str; 4] = ["top", "right", "bottom", "left"];
+/// `_PREVIEWER_PT_PER_CALIBRE_PT`: Previewer writes a border at 0.45pt a pixel, calibre
+/// computes it at 0.72pt.
+const PREVIEWER_PT_PER_CALIBRE_PT: f64 = 0.625;
+
+/// One drawn side of `_css_border`'s dict: `(style, width in Previewer's points, ARGB colour
+/// or None)`, keyed by its side.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct BorderSide {
+    pub(super) side: &'static str,
+    pub(super) kind: String,
+    pub(super) pt: f64,
+    pub(super) colour: Option<i64>,
+}
+
+/// `_css_border(css)`: the drawn sides of the element's computed border, in `_BORDER_SIDES`
+/// order, or None when no side is drawn. A colour is read as `_border_colour` reads it, which
+/// can raise.
+pub(super) fn css_border(css: Option<&Resolved>) -> Result<Option<Vec<BorderSide>>, ItemError> {
     let Some(css) = css else {
-        return Ok(false);
+        return Ok(None);
     };
     let Some(PyValue::Tuple(sides)) = css.get("border-sides")? else {
-        return Ok(false);
+        return Ok(None);
     };
-    let mut drawn = false;
-    for side in sides.iter().take(4) {
-        let PyValue::Tuple(parts) = side else {
+    let mut out = Vec::new();
+    for (side, value) in BORDER_SIDES.into_iter().zip(sides.iter()) {
+        let PyValue::Tuple(parts) = value else {
             continue;
         };
         let get = |i: usize| parts.get(i).unwrap_or(&PyValue::None);
@@ -1289,10 +1306,18 @@ fn css_border_drawn(css: Option<&Resolved>) -> Result<bool, ItemError> {
         if pt <= 0.0 {
             continue;
         }
-        css_rgb(&colour)?;
-        drawn = true;
+        // `_border_colour`: the ARGB integer, None for black or unreadable.
+        let colour = css_rgb(&colour)?
+            .filter(|rgb| *rgb != 0)
+            .map(|rgb| 0xFF00_0000 | rgb);
+        out.push(BorderSide {
+            side,
+            kind,
+            pt: py::round(pt * PREVIEWER_PT_PER_CALIBRE_PT, 4),
+            colour,
+        });
     }
-    Ok(drawn)
+    Ok((!out.is_empty()).then_some(out))
 }
 
 /// `_unit_percent(unit)`.
