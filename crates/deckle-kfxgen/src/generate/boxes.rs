@@ -14,7 +14,7 @@ use super::chunks::{ChapterNow, Chunk, Marker, Node, emit_paragraph};
 use super::frames;
 use super::images::{IMG_TOKEN, Images};
 use super::inline;
-use super::page_scale::page_pt;
+use super::page_scale::{em_percent, page_pt};
 use super::styles::{LINE_EM, g6};
 use super::table_chunks::{emit_table_chunks, link_target_index};
 use super::table_styles::{apply_border, border_style_symbol, padding_values, side_keys};
@@ -172,6 +172,23 @@ pub(crate) struct BoxSpec {
     pub vertical: bool,
     pub start: f64,
     pub end: f64,
+    /// A horizontal block's share of a vertical list's margins (#247, 3b514d1).
+    pub list_sides: ListSides,
+}
+
+/// A horizontal block given a vertical list's margins (PQ4, QA's P749 Q04; 3b514d1), in ems:
+/// its space before and after, the padding of a wrapper it took with the margins inside it
+/// (`_fixed`) and the margins outside it (`_inner`), and the list's top and bottom.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct ListSides {
+    pub before: f64,
+    pub after: f64,
+    pub before_fixed: f64,
+    pub after_fixed: f64,
+    pub before_inner: f64,
+    pub after_inner: f64,
+    pub over: f64,
+    pub under: f64,
 }
 
 /// A box block (#238): its look and the blocks in it.
@@ -221,6 +238,21 @@ pub(crate) fn read_box(b: &PyValue, at: &str, depth: usize) -> Result<BoxBlock, 
         vertical: truthy(d.get("vertical")),
         start: opt_key(d, "start", &at_box, "a number", number)?.unwrap_or(0.0),
         end: opt_key(d, "end", &at_box, "a number", number)?.unwrap_or(0.0),
+        list_sides: {
+            let em = |key: &str| -> Result<f64, GenerateError> {
+                Ok(opt_key(d, key, &at_box, "a number", number)?.unwrap_or(0.0))
+            };
+            ListSides {
+                before: em("before")?,
+                after: em("after")?,
+                before_fixed: em("before_fixed")?,
+                after_fixed: em("after_fixed")?,
+                before_inner: em("before_inner")?,
+                after_inner: em("after_inner")?,
+                over: em("over")?,
+                under: em("under")?,
+            }
+        },
     };
     let blocks = b
         .get("blocks")
@@ -367,6 +399,8 @@ pub(crate) struct BoxStyle {
     pub horizontal: bool,
     /// A vertical block's (a8b9683): the flag, its space before and after.
     pub vertical: Option<(f64, f64)>,
+    /// A horizontal block's, zero on any other box (3b514d1).
+    pub list_sides: ListSides,
 }
 
 impl BoxStyle {
@@ -401,6 +435,11 @@ impl BoxStyle {
                 .spec
                 .vertical
                 .then_some((open.spec.start, open.spec.end)),
+            list_sides: if open.spec.horizontal {
+                open.spec.list_sides.clone()
+            } else {
+                ListSides::default()
+            },
         }
     }
 }
@@ -457,8 +496,56 @@ pub(crate) fn build_box_style_157(g: &mut Generator, name: &str, s: &BoxStyle) -
             }
         }
     }
+    // A horizontal block given a vertical list's margins (PQ4, QA's P749 Q04; 3b514d1): its
+    // space before and after on its right and left, in line heights; the list's top and
+    // bottom on its top and bottom, in em. Sides whose own margin went into the sum: written
+    // there, even when it comes to 0 (QA's Q764E W51, W54), not again below.
+    let l = &s.list_sides;
+    let mut summed = Vec::new();
+    for (key, (run, fixed, inner), own) in [
+        (
+            "$50",
+            (l.before, l.before_fixed, l.before_inner),
+            s.margin_right,
+        ),
+        (
+            "$48",
+            (l.after, l.after_fixed, l.after_inner),
+            s.margin_left,
+        ),
+    ] {
+        let taken = run != 0.0 || fixed != 0.0;
+        if taken {
+            summed.push(key);
+        }
+        // Its own side margin, in vertical text the space before or after it too, meets the
+        // margins next to it: the list's (PQ4 L08), or inside a padding the ones inside it,
+        // the padding and the margins outside it adding (QA's W21, W30, W41).
+        let own = match own {
+            Some(own) if own != 0.0 && taken => own / em_percent(),
+            _ => 0.0,
+        };
+        // Touching margins: the largest positive plus the most negative, as the converter's
+        // `_collapse`.
+        let meet = |a: f64, b: f64| 0.0f64.max(a).max(b) + 0.0f64.min(a).min(b);
+        let em = if fixed != 0.0 {
+            meet(inner, own) + fixed + run
+        } else {
+            meet(run, own)
+        };
+        if em != 0.0 {
+            v.insert(key, g6(em / LINE_EM, "$310"));
+        }
+    }
+    for (key, em) in [("$47", l.over), ("$49", l.under)] {
+        if em != 0.0 {
+            v.insert(key, g6(em, "$308"));
+        }
+    }
     for (key, pct) in [("$48", s.margin_left), ("$50", s.margin_right)] {
-        if let Some(pct) = pct.filter(|&p| p != 0.0) {
+        if let Some(pct) = pct.filter(|&p| p != 0.0)
+            && !summed.contains(&key)
+        {
             v.insert(key, g6(pct, "$314"));
         }
     }
