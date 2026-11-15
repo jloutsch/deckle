@@ -830,7 +830,7 @@ impl<'a> Resolver<'a> {
     /// `_box_background(stylizer.style(elem))`: the element's own fill as the ARGB integer
     /// Previewer writes, or None for none, transparent, white or unreadable. Both values it
     /// may read are charged first.
-    fn box_background(&self, n: NodeId) -> Result<Fill, css::Error> {
+    pub(crate) fn box_background(&self, n: NodeId) -> Result<Fill, css::Error> {
         let colour = self.styles.get(n, "background-color");
         let shorthand = self.styles.get(n, "background").unwrap_or_default();
         self.charge(colour.map_or(0, str::len))?;

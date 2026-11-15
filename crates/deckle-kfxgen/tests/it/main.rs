@@ -3,6 +3,7 @@
 
 mod book;
 mod convert_args;
+mod convert_blocks;
 mod convert_inline;
 mod convert_inline_style;
 mod convert_resolver;

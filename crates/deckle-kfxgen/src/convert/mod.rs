@@ -7,7 +7,9 @@
 
 mod args;
 mod bidi;
+mod block_bidi;
 mod block_style;
+mod blocks;
 mod font_table;
 mod href;
 mod initial;
@@ -24,6 +26,9 @@ mod resolver;
 
 pub use args::book_args;
 pub use block_style::{StyleError, compute_block_style};
+pub use blocks::{
+    Block, BlockId, ExtractOptions, Field, FileBlocks, blocks_before_spacing, extract_blocks,
+};
 pub use font_table::{parse_style, parse_weight};
 pub use href::{
     external_target, is_unsafe, key_doc, normalize, resolve_doc_path, resolve_link_target, unquote,

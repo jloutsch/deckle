@@ -249,12 +249,12 @@ pub(crate) fn img_inline_extras(
 }
 
 /// `_displays_as_block(css)`.
-fn displays_as_block(css: Option<&Resolved>) -> Result<bool, ItemError> {
+pub(crate) fn displays_as_block(css: Option<&Resolved>) -> Result<bool, ItemError> {
     Ok(keyword(css, "display")? == "block")
 }
 
 /// `_float_side(css)`: "left" or "right".
-fn float_side(css: Option<&Resolved>) -> Result<Option<&'static str>, ItemError> {
+pub(crate) fn float_side(css: Option<&Resolved>) -> Result<Option<&'static str>, ItemError> {
     Ok(match keyword(css, "float")?.as_str() {
         "left" => Some("left"),
         "right" => Some("right"),

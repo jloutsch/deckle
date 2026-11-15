@@ -11,7 +11,7 @@ mod chunks;
 mod fonts;
 mod fragments;
 mod frames;
-mod images;
+pub(crate) mod images;
 mod inline;
 mod inline_picture_entries;
 mod inline_pictures;

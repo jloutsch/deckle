@@ -63,7 +63,7 @@ const COLLAPSING: [char; 5] = [' ', '\t', '\n', '\r', '\u{c}'];
 const OBJECT: char = '\u{fffc}';
 
 /// `_CELL_TAGS`.
-fn is_cell(tag: &str) -> bool {
+pub(super) fn is_cell(tag: &str) -> bool {
     matches!(tag, "td" | "th")
 }
 
@@ -93,7 +93,7 @@ fn is_cell_block(tag: &str) -> bool {
 }
 
 /// `_BODY_BLOCK_TAGS`.
-fn is_body_block(tag: &str) -> bool {
+pub(super) fn is_body_block(tag: &str) -> bool {
     matches!(
         tag,
         "img"
@@ -319,7 +319,7 @@ fn flags_bytes(flags: &Flags) -> usize {
 }
 
 /// `_own_anchor_ids(elem)`: its `id`, and an `<a>`'s `name`, each when not empty.
-fn own_anchor_ids(dom: &Dom, n: NodeId) -> impl Iterator<Item = &str> {
+pub(super) fn own_anchor_ids(dom: &Dom, n: NodeId) -> impl Iterator<Item = &str> {
     let id = if dom.is_comment(n) {
         None
     } else {
@@ -334,7 +334,7 @@ fn own_anchor_ids(dom: &Dom, n: NodeId) -> impl Iterator<Item = &str> {
 }
 
 /// `_epub_types(elem)`: its `epub:type` words, lower case.
-fn epub_types(dom: &Dom, n: NodeId) -> Vec<String> {
+pub(super) fn epub_types(dom: &Dom, n: NodeId) -> Vec<String> {
     let raw = dom
         .attr_ns(n, OPS_NS, "type")
         .filter(|t| !t.is_empty())
@@ -349,7 +349,7 @@ fn epub_types(dom: &Dom, n: NodeId) -> Vec<String> {
 
 /// `_is_non_rendered(elem)`: `hidden`, a `<template>` or `<iframe>`, or an `epub:type` of a
 /// navigation kind.
-fn is_non_rendered(dom: &Dom, n: NodeId) -> bool {
+pub(super) fn is_non_rendered(dom: &Dom, n: NodeId) -> bool {
     if dom.attr(n, "hidden").is_some() {
         return true;
     }
@@ -363,7 +363,7 @@ fn is_non_rendered(dom: &Dom, n: NodeId) -> bool {
 
 /// `_epub_switch_branch(elem)`: for an `<epub:switch>`, the ids of it and its cases, and its
 /// first `<epub:default>`.
-fn epub_switch_branch(dom: &Dom, n: NodeId) -> Option<(Vec<String>, Option<NodeId>)> {
+pub(super) fn epub_switch_branch(dom: &Dom, n: NodeId) -> Option<(Vec<String>, Option<NodeId>)> {
     let named = |m: NodeId, local: &str, prefixed: &str| match dom.qualified(m) {
         (Some(ns), tag) => ns == OPS_NS && tag == local,
         (None, tag) => tag == prefixed,
@@ -387,7 +387,7 @@ fn epub_switch_branch(dom: &Dom, n: NodeId) -> Option<(Vec<String>, Option<NodeI
 }
 
 /// `_subtree_anchor_ids(elem)`: the anchor ids of `n` and every element under it.
-fn subtree_anchor_ids(dom: &Dom, n: NodeId) -> Vec<String> {
+pub(super) fn subtree_anchor_ids(dom: &Dom, n: NodeId) -> Vec<String> {
     dom.subtree(n)
         .flat_map(|m| own_anchor_ids(dom, m))
         .map(str::to_owned)
@@ -622,6 +622,21 @@ impl<'a, 's> Walk<'a, 's> {
         self.serials
     }
 
+    /// The book file this walk is over.
+    pub(super) fn file(&self) -> &'a File {
+        self.file
+    }
+
+    /// The file's style resolver.
+    pub(super) fn resolver(&self) -> &'a Resolver<'a> {
+        self.resolver
+    }
+
+    /// `_is_hidden(elem, style_resolver)`, kept per element.
+    pub(super) fn hidden(&mut self, n: NodeId) -> Result<bool, ItemError> {
+        self.is_hidden(n, None)
+    }
+
     /// `_walk_inline(elem, style_resolver=…, base_href=…)`, as a block calls
     /// it: `n`'s inline content, `n` itself read as the block (its own shift, hiding,
     /// direction and drawn-as-block display are not its runs').
@@ -637,11 +652,31 @@ impl<'a, 's> Walk<'a, 's> {
     /// No caller in kfxgen passes `split_tables`, so the port has no such argument and no
     /// table parts: a table in the content is walked as kfxgen walks it then.
     pub fn inline(&mut self, n: NodeId) -> Result<Vec<Segment>, ItemError> {
+        self.walk_inline(n, &Flags::default(), true)
+    }
+
+    /// `_walk_inline(child, flags, style_resolver, is_root=False, base_href=…)`, as the block
+    /// walk calls it for a container's inline child: no `parent_emphasis` (the walk reads the
+    /// parent's own).
+    pub(super) fn inline_child(
+        &mut self,
+        n: NodeId,
+        flags: &Flags,
+    ) -> Result<Vec<Segment>, ItemError> {
+        self.walk_inline(n, flags, false)
+    }
+
+    fn walk_inline(
+        &mut self,
+        n: NodeId,
+        flags: &Flags,
+        root: bool,
+    ) -> Result<Vec<Segment>, ItemError> {
         let mut bufs = vec![Vec::new()];
         let mut stack: Vec<Job> = Vec::new();
         let root = Opening {
-            flags: &Flags::default(),
-            root: true,
+            flags,
+            root,
             parent_emphasis: None,
             depth: 0,
             buf: 0,
@@ -937,7 +972,7 @@ impl<'a, 's> Walk<'a, 's> {
     }
 
     /// `_white_space_flags(elem, style_resolver, inherited)`.
-    fn white_space_flags(
+    pub(super) fn white_space_flags(
         &self,
         n: NodeId,
         css: Option<&Resolved>,
@@ -1295,7 +1330,7 @@ impl<'a, 's> Walk<'a, 's> {
                         for id in own_anchor_ids(dom, child) {
                             bufs[job.buf].push(Self::mark(id));
                         }
-                        let token = self.picture_token(child, job.n)?;
+                        let token = self.picture_token(child, Some(job.n))?;
                         // Only a link carries over: tapping the picture follows it (#355).
                         let link: Flags = job
                             .cur
@@ -1328,7 +1363,11 @@ impl<'a, 's> Walk<'a, 's> {
     /// The token of a visible `<img>` inside `parent`: its `src` resolved against the file, its
     /// alt, and the size, float and extras its markup and CSS give. The text it copies is
     /// charged. A `data:` source is refused before anything is copied.
-    fn picture_token(&self, img: NodeId, parent: NodeId) -> Result<String, ItemError> {
+    pub(super) fn picture_token(
+        &self,
+        img: NodeId,
+        parent: Option<NodeId>,
+    ) -> Result<String, ItemError> {
         let dom = self.dom;
         let src = dom.attr(img, "src").unwrap_or("");
         if is_data_uri(src) {
@@ -1339,7 +1378,7 @@ impl<'a, 's> Walk<'a, 's> {
         let href = resolve_img_src(&self.file.href, src);
         let css = self.resolver.resolve(img)?;
         let size = img_size_hint(dom, img, css.as_ref())?;
-        let (side, size) = img_float(self.resolver, dom, img, css.as_ref(), Some(parent), size)?;
+        let (side, size) = img_float(self.resolver, dom, img, css.as_ref(), parent, size)?;
         let extra = img_inline_extras(dom, img, css.as_ref())?;
         Ok(img_token(
             &href,

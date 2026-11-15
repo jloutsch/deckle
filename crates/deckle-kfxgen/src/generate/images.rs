@@ -29,7 +29,7 @@ use GenerateError::Unsupported;
 const TOKEN: &str = r"\x00IMG\x01([^\x01]*)\x01([^\x00\x01]*)(?:\x01([^\x00\x01]*))?(?:\x01([^\x00\x01]*))?(?:\x01([^\x00]*))?\x00";
 pub(crate) static IMG_TOKEN: LazyLock<Regex> = LazyLock::new(|| Regex::new(TOKEN).unwrap());
 /// `IMG_TOKEN_RE.fullmatch`.
-static WHOLE_TOKEN: LazyLock<Regex> =
+pub(crate) static WHOLE_TOKEN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(&format!(r"\A(?:{TOKEN})\z")).unwrap());
 /// `_SIZE_HINT_RE` (:59), its `$` also before a final line break, as Python's is.
 pub(crate) static SIZE_HINT: LazyLock<Regex> =
