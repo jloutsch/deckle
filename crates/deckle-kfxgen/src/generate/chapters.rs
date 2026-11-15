@@ -4,7 +4,7 @@
 //! [`GenerateError::Unsupported`], so a book needing it fails rather than coming out different.
 
 use super::block_styles::{BlockStyle, Length, number, read_block_style, read_length};
-use super::boxes::{BoxBlock, RuleStyle, read_box, read_rule};
+use super::boxes::{BoxBlock, ListItem, RuleStyle, read_box, read_rule};
 use super::images;
 use super::inline::{Anchors, Span, TocLink, read_spans};
 use super::nav::{SubEntry, read_sub_entries};
@@ -121,6 +121,8 @@ pub(crate) struct Block {
     /// The (left, right) margins of the boxes a picture's block is in, outermost first
     /// (#769, f605dd6).
     pub picture_boxes: Vec<[Option<Length>; 2]>,
+    /// A list item of one paragraph (#768, 7511ea5).
+    pub list_item: Option<ListItem>,
     /// Its file's writing mode (#247), on a chapter's own blocks: what
     /// `_chapter_writing_mode` (:942) looks for.
     pub writing_mode: Option<String>,
@@ -148,6 +150,7 @@ impl Block {
             picture_block: false,
             pictures_apart: false,
             picture_boxes: Vec::new(),
+            list_item: None,
             writing_mode: None,
         }
     }
@@ -385,6 +388,7 @@ pub(crate) fn read_block(
         picture_block: truthy(b.get("picture_block")),
         pictures_apart: truthy(b.get("pictures_apart")),
         picture_boxes: read_picture_boxes(b.get("picture_boxes"), at)?,
+        list_item: ListItem::read(b.get("list_item"), &format!("{at}.list_item"))?,
         ..Block::plain(text)
     })
 }

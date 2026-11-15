@@ -6,9 +6,9 @@
 use std::borrow::Borrow;
 use std::collections::HashSet;
 
-use deckle_kfx::ion::Value;
+use deckle_kfx::ion::{Struct, Value};
 
-use super::block_styles::{keep_space, number};
+use super::block_styles::{keep_space, number, unit_symbol};
 use super::chapters::{Block, read_block};
 use super::chunks::{ChapterNow, Chunk, Marker, Node, emit_paragraph};
 use super::frames;
@@ -174,6 +174,75 @@ pub(crate) struct BoxSpec {
     pub end: f64,
     /// A horizontal block's share of a vertical list's margins (#247, 3b514d1).
     pub list_sides: ListSides,
+    /// A list with no markers: Previewer's plain container round its items (#768, 7511ea5).
+    pub plain: bool,
+    /// A list, written as Previewer's `$276` (#768, 7511ea5).
+    pub list: Option<ListSpec>,
+    /// A list item holding several blocks, or none: a `$277` container (#768, 7511ea5).
+    pub item: Option<ListItem>,
+}
+
+/// A list's `list` (7511ea5): its marker style (a KFX symbol), its start, and whether its
+/// markers are inside.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ListSpec {
+    pub kind: String,
+    pub start: Option<i64>,
+    pub inside: bool,
+}
+
+/// A list item's `list_item` or a box's `item` (7511ea5): its number in its list, the
+/// number written for it, and whether it is empty.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct ListItem {
+    pub n: Option<i64>,
+    pub value: Option<i64>,
+    pub empty: bool,
+}
+
+impl ListItem {
+    /// A block's `list_item` or a box's `item`: None for none.
+    pub(crate) fn read(v: Option<&PyValue>, at: &str) -> Result<Option<Self>, GenerateError> {
+        let Some(d) = v.filter(|v| !matches!(v, PyValue::None)) else {
+            return Ok(None);
+        };
+        let int = |key: &str| opt_key(d, key, at, "an int", PyValue::as_int);
+        if !matches!(d, PyValue::Dict(_)) {
+            return Err(model_err(format!("{at}: a dict")));
+        }
+        Ok(Some(ListItem {
+            n: int("n")?,
+            value: int("value")?,
+            empty: truthy(d.get("empty")),
+        }))
+    }
+
+    /// `_list_entry_keys` of an item (7511ea5): its number, where the Kindle's count would
+    /// differ (S768 L9).
+    pub(crate) fn entry_keys(&self, out: &mut Struct) {
+        if let Some(value) = self.value {
+            out.insert("$104", Value::Int(value));
+        }
+    }
+}
+
+impl BoxSpec {
+    /// `_list_entry_keys` (7511ea5): a list's or an item's own entry keys, the marker style,
+    /// a start or a value, the marker inside, as Previewer writes them (S768 L7, L9, L11).
+    pub(crate) fn list_entry_keys(&self, out: &mut Struct) {
+        if let Some(list) = &self.list {
+            out.insert("$100", sym(&list.kind));
+            if let Some(start) = list.start {
+                out.insert("$104", Value::Int(start));
+            }
+            if list.inside {
+                out.insert("$551", sym("$552"));
+            }
+        }
+        if let Some(item) = &self.item {
+            item.entry_keys(out);
+        }
+    }
 }
 
 /// A horizontal block given a vertical list's margins (PQ4, QA's P749 Q04; 3b514d1), in ems:
@@ -238,6 +307,9 @@ pub(crate) fn read_box(b: &PyValue, at: &str, depth: usize) -> Result<BoxBlock, 
         vertical: truthy(d.get("vertical")),
         start: opt_key(d, "start", &at_box, "a number", number)?.unwrap_or(0.0),
         end: opt_key(d, "end", &at_box, "a number", number)?.unwrap_or(0.0),
+        plain: truthy(d.get("plain")),
+        list: read_list(d, &at_box)?,
+        item: ListItem::read(d.get("item"), &format!("{at_box}.item"))?,
         list_sides: {
             let em = |key: &str| -> Result<f64, GenerateError> {
                 Ok(opt_key(d, key, &at_box, "a number", number)?.unwrap_or(0.0))
@@ -254,10 +326,11 @@ pub(crate) fn read_box(b: &PyValue, at: &str, depth: usize) -> Result<BoxBlock, 
             }
         },
     };
+    // An empty list item is an empty `$277` (Q771 X26).
     let blocks = b
         .get("blocks")
         .and_then(PyValue::as_list)
-        .filter(|l| !l.is_empty())
+        .filter(|l| !l.is_empty() || spec.item.is_some())
         .ok_or_else(|| model_err(format!("{at}.blocks: a list of blocks")))?
         .iter()
         .enumerate()
@@ -268,6 +341,25 @@ pub(crate) fn read_box(b: &PyValue, at: &str, depth: usize) -> Result<BoxBlock, 
         blocks,
         opened: false,
     })
+}
+
+/// A box's `list` (7511ea5): `{"type": symbol, "start": int or None, "inside": bool}`.
+fn read_list(d: &PyValue, at: &str) -> Result<Option<ListSpec>, GenerateError> {
+    let Some(l) = d.get("list").filter(|v| !matches!(v, PyValue::None)) else {
+        return Ok(None);
+    };
+    let at = format!("{at}.list");
+    let kind = match l.get("type") {
+        Some(t) => unit_symbol(t)
+            .ok_or_else(|| model_err(format!("{at}.type: a KFX symbol")))?
+            .to_owned(),
+        None => return Err(model_err(format!("{at}.type: a KFX symbol"))),
+    };
+    Ok(Some(ListSpec {
+        kind,
+        start: opt_key(l, "start", &at, "an int", PyValue::as_int)?,
+        inside: truthy(l.get("inside")),
+    }))
 }
 
 /// The deepest boxes the port writes, as for contents (`nav.rs`).
@@ -344,6 +436,10 @@ pub(crate) fn emit_box_chunks(
         )))));
     }
     let mut pending = own;
+    // A list's count as the Kindle keeps it (#768, 7511ea5): an item whose number differs,
+    // from a `value` or after an item that made no entry, writes it as its `$104`. 0 counts
+    // (Q771 X27).
+    let mut count = b.spec.list.as_ref().map(|l| l.start.unwrap_or(1));
     for kid in &b.blocks {
         let first = chunks.len();
         // A table or a box inside is nested in it, as Kindle Previewer nests them (#310).
@@ -357,9 +453,37 @@ pub(crate) fn emit_box_chunks(
             return Err(Unsupported("a rule in a box"));
         } else {
             let unplaced = emit_paragraph(kid, false, now, images, chunks)?;
+            if let Some(item) = &kid.list_item {
+                mark_list_item(chunks, first, item);
+            }
             frames::size_pictures_in_box(&b.spec, &mut chunks[first..])?;
             unplaced
         };
+        let item = kid
+            .list_item
+            .as_ref()
+            .or_else(|| kid.boxed.as_ref().and_then(|bx| bx.spec.item.as_ref()));
+        if let (Some(n), Some(item)) = (count.as_mut(), item)
+            && (chunks[first..].iter().any(Chunk::is_content) || item.empty)
+            && let Some(number) = item.n
+        {
+            let value = (number != *n).then_some(number);
+            *n = number
+                .checked_add(1)
+                .ok_or_else(|| model_err(format!("a list item numbered {number}")))?;
+            // On the entry made of the item: its paragraph's, or its container's.
+            for c in &mut chunks[first..] {
+                let made = match &mut c.marker {
+                    None => c.list_item.as_mut(),
+                    Some(Marker::Open(Node::Box(bx))) => bx.spec.item.as_mut(),
+                    _ => None,
+                };
+                if let Some(made) = made {
+                    made.value = value;
+                    break;
+                }
+            }
+        }
         if !pending.is_empty() && chunks[first..].iter().any(Chunk::is_content) {
             let at = link_target_index(chunks, first);
             chunks[at].anchors.attach(&pending);
@@ -369,6 +493,36 @@ pub(crate) fn emit_box_chunks(
     }
     chunks.push(Chunk::marker(Marker::Close));
     Ok(pending)
+}
+
+/// `_mark_list_item` (7511ea5): the chunks of a one-paragraph list item. One text chunk is
+/// the `$277` itself; anything else (a picture beside its words, a cut) goes in an item
+/// container.
+fn mark_list_item(chunks: &mut Vec<Chunk>, first: usize, item: &ListItem) {
+    let made: Vec<usize> = (first..chunks.len())
+        .filter(|&i| chunks[i].marker.is_none())
+        .collect();
+    match made[..] {
+        [] => {}
+        [only] if chunks[only].rule.is_none() && chunks[only].picture.is_none() => {
+            chunks[only].list_item = Some(item.clone());
+        }
+        _ => {
+            let open = BoxOpen {
+                spec: BoxSpec {
+                    item: Some(item.clone()),
+                    ..BoxSpec::default()
+                },
+                space_above: 0.0,
+                space_below: 0.0,
+            };
+            chunks.insert(
+                first,
+                Chunk::marker(Marker::Open(Node::Box(Box::new(open)))),
+            );
+            chunks.push(Chunk::marker(Marker::Close));
+        }
+    }
 }
 
 /// `_block_keys` (:1110): every anchor key a block holds, in a box or a table included.

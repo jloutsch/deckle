@@ -152,7 +152,13 @@ pub(crate) fn build_fragment_259(
                         entry.insert("$157", sym(part));
                     }
                 }
-                Node::Group(..) | Node::Row(..) | Node::Box(_) => {
+                Node::Box(b) => {
+                    b.spec.list_entry_keys(&mut entry);
+                    if let Some(part) = &parts[i] {
+                        entry.insert("$157", sym(part));
+                    }
+                }
+                Node::Group(..) | Node::Row(..) => {
                     if let Some(part) = &parts[i] {
                         entry.insert("$157", sym(part));
                     }
@@ -190,6 +196,11 @@ pub(crate) fn build_fragment_259(
                 ]) else {
                     unreachable!()
                 };
+                if let Some(item) = &chunk.list_item {
+                    // A list item of one paragraph (#768, 7511ea5).
+                    entry.insert("$159", sym("$277"));
+                    item.entry_keys(&mut entry);
+                }
                 if let Some((content, index)) = &refs[i] {
                     entry.insert(
                         "$145",
@@ -233,6 +244,10 @@ fn node_type(node: &Node) -> &'static str {
         Node::Group(..) => "$454",
         Node::Row(..) => "$279",
         Node::Cell(_) | Node::Link(_) => "$269",
+        // A list and an item holding several blocks, as Kindle Previewer 4.0.3 writes `<ul>`
+        // or `<ol>` and `<li>` (#768, 7511ea5).
+        Node::Box(b) if b.spec.list.is_some() => "$276",
+        Node::Box(b) if b.spec.item.is_some() => "$277",
         // A frame is Previewer's plain container (:7485, #382, #565).
         Node::Box(b) if frames::is_frame(&b.spec) => "$269",
         Node::Box(_) => "$270",

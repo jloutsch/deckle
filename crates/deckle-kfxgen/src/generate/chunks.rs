@@ -3,7 +3,7 @@
 //! `_emit_paragraph`'s dispatch.
 
 use super::block_styles::{BlockStyle, HeadingStyle, Length, keep_space};
-use super::boxes::{BoxOpen, RuleStyle};
+use super::boxes::{BoxOpen, ListItem, RuleStyle};
 use super::chapters::Block;
 use super::images::{Images, Picture, Place};
 use super::inline::{self, Anchors, Span};
@@ -43,6 +43,8 @@ pub(crate) struct Chunk {
     pub space_below: Option<f64>,
     /// kfxgen's heading: what prints in it of the book's own (#490).
     pub heading: HeadingStyle,
+    /// A text entry that is a list item of one paragraph, a `$277` (#768, 7511ea5).
+    pub list_item: Option<ListItem>,
 }
 
 /// A table container's (#219) `open`, which takes a position, or `close`, which takes none.
@@ -188,6 +190,7 @@ impl Chunk {
             space_above: None,
             space_below: None,
             heading: HeadingStyle::default(),
+            list_item: None,
         }
     }
 
