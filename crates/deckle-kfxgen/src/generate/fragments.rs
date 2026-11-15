@@ -207,7 +207,7 @@ pub(crate) fn build_fragment_259(
             if popups.positions.contains(&position) {
                 entry.insert("$615", sym("$281"));
             }
-            if !chunk.pictures.is_empty() || !chunk.tcys.is_empty() {
+            if !chunk.pictures.is_empty() || !chunk.tcys.is_empty() || !chunk.turns.is_empty() {
                 let mixed = inline_styles.mixed(g, chunk)?;
                 entry.remove("$145");
                 entry.insert("$146", mixed);

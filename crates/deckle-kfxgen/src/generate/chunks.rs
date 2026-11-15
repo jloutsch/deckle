@@ -12,7 +12,7 @@ use super::inline_pictures;
 use super::styles::LINE_EM;
 use super::table_chunks::{CellInfo, TableOpen};
 use super::tables::Border;
-use super::writing::{Bidi, Tcy};
+use super::writing::{Bidi, Tcy, Turn};
 use super::{GenerateError, frames, py};
 
 /// `_ASCII_SPACE` (:1061): a paragraph's edges are trimmed of these only.
@@ -30,6 +30,8 @@ pub(crate) struct Chunk {
     pub pictures: Vec<InlinePicture>,
     /// Its 縦中横, each one placeholder of its text (#247).
     pub tcys: Vec<Tcy>,
+    /// Its text set the other way, each one placeholder of its text (#247, b067638).
+    pub turns: Vec<Turn>,
     pub rule: Option<RuleStyle>,
     pub marker: Option<Marker>,
     /// A text entry in a table cell.
@@ -132,6 +134,7 @@ impl ChapterNow {
 pub(crate) enum AmongWords<'a> {
     Picture(&'a InlinePicture),
     Tcy(&'a Tcy),
+    Turn(&'a Turn),
 }
 
 impl AmongWords<'_> {
@@ -139,21 +142,18 @@ impl AmongWords<'_> {
         match self {
             AmongWords::Picture(p) => p.at,
             AmongWords::Tcy(t) => t.at,
+            AmongWords::Turn(t) => t.at,
         }
     }
 
-    pub(crate) fn eid(&self) -> i64 {
+    /// Its ids and `_item_widths` (b067638): a picture takes a position, 縦中横 one per
+    /// character; a turned text's container one, its paragraph one per character, as
+    /// Previewer's position map counts them (PSB S01).
+    pub(crate) fn eids(&self) -> Vec<(i64, i64)> {
         match self {
-            AmongWords::Picture(p) => p.eid,
-            AmongWords::Tcy(t) => t.eid,
-        }
-    }
-
-    /// `_item_widths` (:1592): a picture takes a position, 縦中横 one per character.
-    pub(crate) fn width(&self) -> i64 {
-        match self {
-            AmongWords::Picture(_) => 1,
-            AmongWords::Tcy(t) => py::len(&t.text) as i64,
+            AmongWords::Picture(p) => vec![(p.eid, 1)],
+            AmongWords::Tcy(t) => vec![(t.eid, py::len(&t.text) as i64)],
+            AmongWords::Turn(t) => vec![(t.eids.0, 1), (t.eids.1, py::len(&t.turned.text) as i64)],
         }
     }
 }
@@ -175,6 +175,7 @@ impl Chunk {
             picture: None,
             pictures: Vec::new(),
             tcys: Vec::new(),
+            turns: Vec::new(),
             rule: None,
             marker: None,
             in_cell: None,
@@ -206,7 +207,9 @@ impl Chunk {
     pub(crate) fn among_words(&self) -> Vec<AmongWords<'_>> {
         let mut items: Vec<AmongWords> = self.pictures.iter().map(AmongWords::Picture).collect();
         items.extend(self.tcys.iter().map(AmongWords::Tcy));
-        // Stable, as Python's sort: a picture before a 縦中横 at the same place.
+        items.extend(self.turns.iter().map(AmongWords::Turn));
+        // Stable, as Python's sort: a picture before a 縦中横 at the same place, and a 縦中横
+        // before a turned text.
         items.sort_by_key(AmongWords::at);
         items
     }

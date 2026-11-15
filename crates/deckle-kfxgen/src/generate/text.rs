@@ -18,7 +18,7 @@ use super::fragments::{
     ContentRef, build_fragment_145, build_fragment_259, pack_content_fragments, style_refs,
 };
 use super::images::{self, ImageStyles, Images, Picture};
-use super::inline::{self, ChunkLinks, RunBase, TocLink};
+use super::inline::{self, ChunkLinks, Run, RunBase, TocLink};
 use super::inline_picture_entries::{self, InlineStyles};
 use super::nav;
 use super::notes::{self, Popups};
@@ -360,6 +360,7 @@ pub(crate) fn build_chapter_content(
         CONTENT_POS_STEP,
     );
     writing::number_tcy(&mut chunks, &mut content_pos_id, CONTENT_POS_STEP);
+    writing::number_turns(&mut chunks, &mut content_pos_id, CONTENT_POS_STEP);
     let sizes = Sizes::of(&chunks);
     for (ch_idx, &(start, end)) in chapter_chunk_ranges.iter().enumerate() {
         let fs = chapters[ch_idx].font_size;
@@ -419,7 +420,10 @@ pub(crate) fn build_chapter_content(
         })
         .collect();
     let mut popups = Popups {
-        targets: notes::popup_targets(chunks.iter().flat_map(|c| &c.spans), footnote_keys),
+        targets: notes::popup_targets(
+            chunks.iter().flat_map(|c| inline::with_turned(&c.spans)),
+            footnote_keys,
+        ),
         ..Popups::default()
     };
     let body_anchor_map = inline::build_body_anchors(g, &links, &mut anchor_names, &mut popups);
@@ -629,6 +633,21 @@ pub(crate) fn build_chapter_content(
                 sized: !heading || heading_book.is_some(),
                 drop_cap: drop_cap.map(|(_, chars)| chars),
             };
+            let turn_runs: Vec<Vec<Run>> = chunk
+                .turns
+                .iter()
+                .map(|t| {
+                    inline::turn_runs(
+                        g,
+                        &mut styles,
+                        &mut extra_style_names,
+                        &sizes,
+                        &t.turned.spans,
+                        &base,
+                        &body_anchor_map,
+                    )
+                })
+                .collect();
             let mut runs = inline::entry_runs(
                 g,
                 &mut styles,
@@ -650,6 +669,9 @@ pub(crate) fn build_chapter_content(
             entry_runs.push((link, runs));
             if cell_fill {
                 styles.fills.pop();
+            }
+            for (turn, runs) in chunks[chunk_idx].turns.iter_mut().zip(turn_runs) {
+                turn.runs = runs;
             }
         }
         let fragment = build_fragment_259(

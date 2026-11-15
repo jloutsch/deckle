@@ -13,7 +13,7 @@ use deckle_kfx::ion::{Struct, Value};
 use super::chapters::{Block, Chapter};
 use super::chunks::Chunk;
 use super::fragments::{MAX_CONTENT_FRAGMENT_SIZE, build_fragment_145};
-use super::inline::{Flag, Flags, Run, Span, title_spans};
+use super::inline::{Flag, Flags, Run, Span, Turned, read_spans, title_spans};
 use super::{GenerateError, Generator, measure, model_err, py, st, sym};
 use crate::pyvalue::PyValue;
 
@@ -443,16 +443,17 @@ fn ruby_of(flags: &Flags) -> Option<(i64, &str)> {
     })
 }
 
-/// `without_tcy(without_ruby(...))` (:7889): a run's flags less its ruby, written as an event
-/// of its own, and its 縦中横, written as an entry.
-pub(crate) fn without_ruby_or_tcy(spans: &[Span]) -> Vec<Span> {
+/// `without_turn(without_tcy(without_ruby(...)))` (b067638): a run's flags less its ruby,
+/// written as an event of its own, and its 縦中横 and text set the other way, written as
+/// entries.
+pub(crate) fn without_entries(spans: &[Span]) -> Vec<Span> {
     spans
         .iter()
         .map(|sp| Span {
             flags: sp
                 .flags
                 .iter()
-                .filter(|f| !matches!(f, Flag::Ruby(..) | Flag::Tcy(..)))
+                .filter(|f| !matches!(f, Flag::Ruby(..) | Flag::Tcy(..) | Flag::Turn(..)))
                 .cloned()
                 .collect(),
             ..sp.clone()
@@ -780,6 +781,137 @@ pub(crate) fn read_tcy_flag(v: &PyValue, at: &str) -> Result<Flag, GenerateError
     }
 }
 
+/// `make_turn_flag`'s `("turn", (serial, mode, text, spans))` (#247, b067638).
+pub(crate) fn read_turn_flag(v: &PyValue, at: &str) -> Result<Flag, GenerateError> {
+    let Some(
+        [
+            PyValue::Int(serial),
+            PyValue::Str(mode),
+            PyValue::Str(text),
+            spans,
+        ],
+    ) = v.as_list()
+    else {
+        return Err(model_err(format!(
+            "{at}: a turned text, (serial, mode, text, spans)"
+        )));
+    };
+    let horizontal = match mode.as_str() {
+        "horizontal" => true,
+        "vertical" => false,
+        _ => {
+            return Err(model_err(format!(
+                "{at}: a turned text's mode, horizontal or vertical"
+            )));
+        }
+    };
+    Ok(Flag::Turn(Box::new(Turned {
+        serial: *serial,
+        horizontal,
+        text: text.clone(),
+        spans: read_spans(Some(spans), at)?,
+    })))
+}
+
+/// Text set the other way from its line in a paragraph's words (#247, b067638): where its
+/// placeholder is, the ids of its container and of its paragraph, and its runs as written.
+pub(crate) struct Turn {
+    pub at: i64,
+    pub eids: (i64, i64),
+    pub turned: Turned,
+    pub runs: Vec<Run>,
+}
+
+/// Each chunk's text set the other way (b067638): two ids of their own per (chunk, serial),
+/// its container's and its paragraph's, after 縦中横's ids; an item per run carrying one.
+pub(crate) fn number_turns(chunks: &mut [Chunk], next_eid: &mut i64, step: i64) {
+    for chunk in chunks {
+        let mut eids: Vec<(i64, (i64, i64))> = Vec::new();
+        for sp in &chunk.spans {
+            let Some(turned) = sp.flags.iter().find_map(|f| match f {
+                Flag::Turn(t) => Some(t),
+                _ => None,
+            }) else {
+                continue;
+            };
+            let pair = match eids.iter().find(|(s, _)| *s == turned.serial) {
+                Some(&(_, pair)) => pair,
+                None => {
+                    let pair = (*next_eid, *next_eid + step);
+                    *next_eid += 2 * step;
+                    eids.push((turned.serial, pair));
+                    pair
+                }
+            };
+            chunk.turns.push(Turn {
+                at: sp.start,
+                eids: pair,
+                turned: (**turned).clone(),
+                runs: Vec::new(),
+            });
+        }
+    }
+}
+
+/// `TURN_STYLE_NAMES` (b067638): horizontal-tb in vertical text, vertical-rl in a horizontal
+/// block.
+fn turn_style_name(horizontal: bool) -> &'static str {
+    if horizontal { "turnh0" } else { "turnv0" }
+}
+
+/// `_turn_entry` (b067638): an inline `$270` holding a paragraph of the text, with its own
+/// runs, as Kindle Previewer 4.0.3 writes a horizontal-tb span in vertical text (PSB
+/// S01-S12) and a vertical-rl one in a horizontal block (R05).
+pub(crate) fn turn_entry(g: &mut Generator, turn: &Turn) -> Value {
+    let name = turn_style_name(turn.turned.horizontal);
+    g.tcy.turns.insert(turn.turned.horizontal);
+    g.local(name);
+    let note = math_note(g, &turn.turned.text);
+    let Value::Struct(mut inner) = st([
+        ("$155", Value::Int(turn.eids.1)),
+        ("$159", sym("$269")),
+        ("$145", note),
+    ]) else {
+        unreachable!()
+    };
+    let mut spans = Vec::new();
+    for run in &turn.runs {
+        let Value::Struct(mut span) = st([
+            ("$143", Value::Int(run.start)),
+            ("$144", Value::Int(run.len)),
+        ]) else {
+            unreachable!()
+        };
+        if let Some(anchor) = &run.anchor {
+            g.local(anchor);
+            span.insert("$179", sym(anchor));
+        }
+        if let Some(style) = &run.style {
+            g.local(style);
+            span.insert("$157", sym(style));
+        }
+        spans.push(Value::Struct(span));
+    }
+    if !spans.is_empty() {
+        inner.insert("$142", Value::List(spans));
+    }
+    st([
+        ("$155", Value::Int(turn.eids.0)),
+        ("$601", sym("$283")),
+        (
+            "$156",
+            sym(if turn.turned.horizontal {
+                "$323"
+            } else {
+                "$322"
+            }),
+        ),
+        ("$157", sym(name)),
+        ("$159", sym("$270")),
+        ("$146", Value::List(vec![Value::Struct(inner)])),
+    ])
+}
+
 /// 縦中横 in a paragraph's words (#247): where its placeholder is, its id and its text.
 pub(crate) struct Tcy {
     pub at: i64,
@@ -820,11 +952,12 @@ pub(crate) fn number_tcy(chunks: &mut [Chunk], next_eid: &mut i64, step: i64) {
 const TCY_STYLE_NAME: &str = "tcy0";
 
 /// The equations' texts and 縦中横's, in `content_math` fragments (:2380); whether a 縦中横
-/// was written.
+/// was written, and which text set the other way, horizontal (`true`) or vertical (b067638).
 #[derive(Default)]
 pub(crate) struct TcyNotes {
     groups: Vec<(String, Vec<String>)>,
     wrote: bool,
+    turns: BTreeSet<bool>,
 }
 
 /// `_math_note` (:2380): a content reference to `text`. A fragment takes strings until it
@@ -869,6 +1002,27 @@ pub(crate) fn build_tcy_fragments(
     extra_style_names: &mut Vec<String>,
     content_names: &mut Vec<String>,
 ) {
+    // Text set the other way, as Kindle Previewer 4.0.3 writes its container (probe PSB,
+    // b067638): horizontal-tb in vertical text at the line's width, or vertical-rl in a
+    // horizontal block at its height, with the two fit flags. "horizontal" sorts first.
+    for horizontal in [true, false] {
+        if !g.tcy.turns.contains(&horizontal) {
+            continue;
+        }
+        let name = turn_style_name(horizontal);
+        let value = st([
+            ("$560", sym(if horizontal { "$557" } else { "$559" })),
+            (
+                if horizontal { "$56" } else { "$57" },
+                measure(py::decimal("100"), "$314"),
+            ),
+            ("$478", Value::Bool(true)),
+            ("$784", Value::Bool(true)),
+            ("$173", sym(name)),
+        ]);
+        g.push(Fragment::new("$157", Some(name), value));
+        extra_style_names.push(name.to_owned());
+    }
     if g.tcy.wrote {
         let value = st([
             ("$560", sym("$557")),

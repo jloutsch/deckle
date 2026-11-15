@@ -62,7 +62,7 @@ pub(crate) fn build_position_data(section_names: &[String], data: &ChapterData) 
                 py::len(&chunk.text) as i64
             };
             entries.push((char_offset, pid, 0, false));
-            if !chunk.pictures.is_empty() || !chunk.tcys.is_empty() {
+            if !chunk.pictures.is_empty() || !chunk.tcys.is_empty() || !chunk.turns.is_empty() {
                 char_offset += inline_picture_entries::place_among_words(
                     chunk,
                     pid,
@@ -104,7 +104,9 @@ pub(crate) fn build_position_data(section_names: &[String], data: &ChapterData) 
             {
                 if let Some(pid) = pid {
                     pids.push(*pid);
-                    pids.extend(chunk.among_words().iter().map(|item| item.eid()));
+                    for item in chunk.among_words() {
+                        pids.extend(item.eids().into_iter().map(|(eid, _)| eid));
+                    }
                 }
             }
             (name.clone(), pids)

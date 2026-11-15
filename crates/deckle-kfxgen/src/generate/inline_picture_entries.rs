@@ -398,6 +398,7 @@ impl InlineStyles {
             out.push(match item {
                 AmongWords::Picture(p) => self.entry(g, p)?,
                 AmongWords::Tcy(t) => writing::tcy_entry(g, t),
+                AmongWords::Turn(t) => writing::turn_entry(g, t),
             });
             last = k + 1;
         }
@@ -437,9 +438,12 @@ pub(crate) fn place_among_words(
             // resumes it.
             entries.push((base, pos, k, true));
         }
-        entries.push((base, item.eid(), 0, true));
-        located.push((item.eid(), item.width(), 0));
-        let at = base + item.width();
+        let mut at = base;
+        for (eid, width) in item.eids() {
+            entries.push((at, eid, 0, true));
+            located.push((eid, width, 0));
+            at += width;
+        }
         done = k + 1;
         if done < len {
             entries.push((at, pos, done, true));
