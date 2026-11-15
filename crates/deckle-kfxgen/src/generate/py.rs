@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! Python's string and number semantics where kfxgen's output depends on them. Strings are
 //! indexed by code point (`char`), as Python indexes them. Character classes are Unicode 16.0:
-//! the tables below from calibre's Python 3.14 `unicodedata`, categories from the `regex` crate
-//! (`DIVERGENCES.md`). `DECIMAL_ZEROS` and `BIDI_STRONG` are from Python 3.14.10's
-//! `unicodedata` (`unidata_version` 16.0.0), the same tables: each run of ascending code points
-//! of one value, in hex.
+//! the tables below from Python 3.14's `unicodedata` (16.0.0, as calibre's), categories from the
+//! `regex` crate (`DIVERGENCES.md`).
 use std::sync::LazyLock;
 
 use deckle_kfx::ion::Decimal;
 use regex::Regex;
+
+// The tables from here to `BIDI_STRONG` are the output of
+// `python3.14 -I tools/ref/py_unicode_tables.py`, which regenerates them all.
 
 /// `str.isspace()`: every character it is true for.
 const SPACE: [char; 29] = [

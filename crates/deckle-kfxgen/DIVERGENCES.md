@@ -662,4 +662,9 @@ each href it rejects to its security log; the port has no such log.
 Where kfxgen raises on a value from the book, the helper returns `Raised` naming the exception:
 a length unit whose "i" is U+0130 or U+0131 (`KeyError`), and a colour function whose number
 `float()` or `int()` refuses (`ValueError`: two points, a channel of more than 4,300 digits, a
-percentage too big for a float).
+percentage too big for a float). This is no difference by itself: kfxgen catches these higher
+up, and its callers' handling is what the port's callers follow. Raised inside the style
+resolver's `resolve` (`converter.py` `_build_style_resolver`, a box's or cell's fill), the
+element resolves to None; raised anywhere else in a spine item's extraction, the item is left
+out with a warning (`extract_chapters_from_oeb`'s `except Exception`, "Spine item parse
+failed"), and the book is still made.

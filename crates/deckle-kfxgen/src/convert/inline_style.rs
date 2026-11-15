@@ -81,8 +81,11 @@ pub const SPACING_NORMAL: (&str, &str) = ("0", "$308");
 pub const LINK_COLOUR_FLAG: &str = "link-colour";
 pub const BLACK: i64 = 0xFF00_0000;
 
-/// An exception kfxgen's helper raises on this input instead of returning: kfxgen's
-/// conversion stops there, and so does the port's. Python's exception, and which helper
+/// An exception kfxgen's helper raises on this input instead of returning. Where it lands
+/// depends on the caller, and the caller in the port must do as kfxgen's does: raised in the
+/// style resolver's `resolve` (a box's or cell's fill), that element resolves to None; raised
+/// anywhere else in a spine item's extraction, kfxgen logs "Spine item parse failed" and
+/// leaves the item out (`extract_chapters_from_oeb`). Python's exception, and which helper
 /// raised it on what kind of input (never the input itself, which can be any size).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Raised {
@@ -1510,6 +1513,79 @@ mod tests {
                 ]),
             ])
         );
+    }
+
+    /// The tuples the makers give, as the pinned Python's do (its serials from its own
+    /// counters; the port's from the caller).
+    #[test]
+    fn flag_makers_give_kfxgens_tuples() {
+        let t = PyValue::Tuple;
+        let i = PyValue::Int;
+        let flag = |kind: &str, v: PyValue| t(vec![s(kind), v]);
+        assert_eq!(
+            make_link_flag("c.xhtml#n").to_py(),
+            flag("link", s("c.xhtml#n"))
+        );
+        assert_eq!(
+            make_ruby_flag(1, "ふ").to_py(),
+            flag("ruby", t(vec![i(1), s("ふ")]))
+        );
+        assert_eq!(
+            make_tcy_flag(0, "12").to_py(),
+            flag("tcy", t(vec![i(0), s("12")]))
+        );
+        let bold = Span {
+            start: 0,
+            len: 1,
+            flags: Flags::from_iter([Flag::Str("bold".into())]),
+        };
+        assert_eq!(
+            make_turn_flag(0, "horizontal", "AB", &[bold]).to_py(),
+            flag(
+                "turn",
+                t(vec![
+                    i(0),
+                    s("horizontal"),
+                    s("AB"),
+                    t(vec![t(vec![i(0), i(1), PyValue::Set(vec![s("bold")])])]),
+                ])
+            )
+        );
+        assert_eq!(
+            make_mono_flag(&["menlo".into(), "monospace".into()]).to_py(),
+            flag("mono", t(vec![s("menlo"), s("monospace")]))
+        );
+        assert_eq!(
+            make_size_flag(PyValue::Float(24.0)).to_py(),
+            flag("size", PyValue::Float(24.0))
+        );
+    }
+
+    /// An int or a float above 0, NaN and inf too; not a bool, a string or 0.
+    #[test]
+    fn font_size_as_the_resolver_gives_it() {
+        let size = |v: PyValue| {
+            let css = dict(vec![("font-size", v)]);
+            css_font_size(|k| css.get(k)).cloned()
+        };
+        assert_eq!(css_font_size(|_| None), None);
+        assert_eq!(size(PyValue::Float(24.0)), Some(PyValue::Float(24.0)));
+        assert_eq!(size(PyValue::Int(12)), Some(PyValue::Int(12)));
+        assert_eq!(
+            size(PyValue::Float(f64::INFINITY)),
+            Some(PyValue::Float(f64::INFINITY))
+        );
+        assert!(matches!(size(PyValue::Float(f64::NAN)), Some(PyValue::Float(x)) if x.is_nan()));
+        for none in [
+            PyValue::Float(0.0),
+            PyValue::Float(-1.5),
+            PyValue::Bool(true),
+            PyValue::Int(0),
+            s("12px"),
+            PyValue::None,
+        ] {
+            assert_eq!(size(none.clone()), None, "{none:?}");
+        }
     }
 
     #[test]
