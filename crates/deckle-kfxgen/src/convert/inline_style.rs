@@ -82,9 +82,30 @@ pub const LINK_COLOUR_FLAG: &str = "link-colour";
 pub const BLACK: i64 = 0xFF00_0000;
 
 /// An exception kfxgen's helper raises on this input instead of returning: kfxgen's
-/// conversion stops there. The text names Python's exception and its cause.
+/// conversion stops there, and so does the port's. Python's exception, and which helper
+/// raised it on what kind of input (never the input itself, which can be any size).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Raised(pub &'static str);
+pub struct Raised {
+    pub exception: &'static str,
+    pub note: &'static str,
+}
+
+const UNIT_I: Raised = Raised {
+    exception: "KeyError",
+    note: "parse_css_length: a unit whose i is U+0130 or U+0131, matched by re.I as \"in\"",
+};
+const COLOUR_NUMBER: Raised = Raised {
+    exception: "ValueError",
+    note: "_rgb_alpha: float() of a colour's number of two points or no digit",
+};
+const PERCENT_INF: Raised = Raised {
+    exception: "ValueError",
+    note: "_rgb_alpha: int() of NaN, from a percentage channel too big for a float",
+};
+const CHANNEL_DIGITS: Raised = Raised {
+    exception: "ValueError",
+    note: "_rgb_alpha: int() of a channel of more than 4300 digits",
+};
 
 /// A member of a run's flag set: a string, or a (kind, value) pair.
 #[derive(Clone, Debug)]
@@ -650,9 +671,7 @@ pub fn parse_css_length(
     }
     match kfx_unit(unit) {
         Some(sym) => Ok(Some((mag, sym))),
-        None => Err(Raised(
-            "KeyError: a length unit U+0130 or U+0131 matched as the i of \"in\"",
-        )),
+        None => Err(UNIT_I),
     }
 }
 
@@ -819,11 +838,10 @@ fn digits_float(x: &str) -> Result<f64, Raised> {
             None => c,
         })
         .collect();
-    let raised = Raised("ValueError: float() of a colour's number with no digit or two points");
     if ascii.matches('.').count() > 1 || !ascii.bytes().any(|b| b.is_ascii_digit()) {
-        return Err(raised);
+        return Err(COLOUR_NUMBER);
     }
-    ascii.parse().map_err(|_| raised)
+    ascii.parse().map_err(|_| COLOUR_NUMBER)
 }
 
 /// Python's `a % b` for floats: the sign of `b` (CPython `float_rem`).
@@ -933,17 +951,11 @@ fn rgb_alpha(value: &str) -> Result<Option<(i64, f64)>, Raised> {
                 // inf // 100 is NaN, which int() refuses.
                 let c = py_floordiv(digits_float(x)? * 256.0, 100.0);
                 if c.is_nan() {
-                    return Err(Raised(
-                        "ValueError: int() of NaN, a percentage past a float",
-                    ));
+                    return Err(PERCENT_INF);
                 }
                 c.min(255.0) as i64
             } else {
-                py::py_int(x)
-                    .ok_or(Raised(
-                        "ValueError: int() of a channel of more than 4300 digits",
-                    ))?
-                    .min(255)
+                py::py_int(x).ok_or(CHANNEL_DIGITS)?.min(255)
             };
             rgb = (rgb << 8) | c;
         }
@@ -1149,9 +1161,9 @@ pub fn css_letter_spacing(value: &str) -> Result<Option<(String, &'static str)>,
     match unit {
         "$314" | "$316" => Ok(None),
         "$319" => {
-            let px: f64 = mag
-                .parse()
-                .map_err(|_| Raised("ValueError: float() of a length's magnitude"))?;
+            // The length pattern's number ([+-]?[0-9]*\.?[0-9]+), which float() and Rust
+            // both always read.
+            let px: f64 = mag.parse().unwrap_or(0.0);
             Ok(Some((py::format_g(px * 0.45, 4), "$318")))
         }
         _ => Ok(Some((mag, unit))),
@@ -1343,6 +1355,50 @@ mod tests {
 
     fn dict(pairs: Vec<(&str, PyValue)>) -> PyValue {
         PyValue::Dict(pairs.into_iter().map(|(k, v)| (s(k), v)).collect())
+    }
+
+    /// Each kind of input kfxgen raises on, through every helper that reaches it, and the
+    /// zero and sign checks that come before the unit's `KeyError`.
+    #[test]
+    fn inputs_kfxgen_raises_on_are_raised() {
+        let big = "9".repeat(400);
+        let long = "1".repeat(4301);
+        assert_eq!(parse_css_length("1\u{130}n", true), Err(UNIT_I));
+        assert_eq!(parse_css_length("1\u{131}N", false), Err(UNIT_I));
+        assert_eq!(parse_css_length("0\u{131}n", false), Ok(None));
+        assert_eq!(parse_css_length("-1\u{131}n", false), Ok(None));
+        assert_eq!(css_letter_spacing("2\u{131}n"), Err(UNIT_I));
+        for colour in [
+            "rgba(0,0,0,1.2.3)",
+            "rgba(0,0,0,.)",
+            "hsl(1.2.3,10%,10%)",
+            "hsl(0,.%,0%)",
+            "hsla(0,0%,0%,..)",
+        ] {
+            assert_eq!(css_rgb(colour), Err(COLOUR_NUMBER), "{colour}");
+            assert_eq!(is_transparent(colour), Err(COLOUR_NUMBER), "{colour}");
+            assert_eq!(css_text_colour(colour, Some(0x333333)), Err(COLOUR_NUMBER));
+            assert_eq!(css_link_colour(colour), Err(COLOUR_NUMBER), "{colour}");
+        }
+        assert_eq!(css_rgb(&format!("rgb(1,2,{big}.5%)")), Err(PERCENT_INF));
+        assert_eq!(
+            is_transparent(&format!("rgb({big}%,0,0)")),
+            Err(PERCENT_INF)
+        );
+        assert_eq!(
+            css_text_colour(&format!("rgb({long},0,0)"), None),
+            Err(CHANNEL_DIGITS)
+        );
+        // A percentage alpha is no colour at all, not an error.
+        assert_eq!(css_link_colour(&format!("rgba(0,0,0,{big}%)")), Ok(None));
+        // The first to raise wins: letter spacing comes before colour.
+        let css = dict(vec![
+            ("letter-spacing", s("1\u{131}n")),
+            ("color", s("rgba(0,0,0,.)")),
+        ]);
+        assert_eq!(css_typography(|k| css.get(k)), Err(UNIT_I));
+        let css = dict(vec![("color", s("rgba(0,0,0,.)"))]);
+        assert_eq!(css_typography(|k| css.get(k)), Err(COLOUR_NUMBER));
     }
 
     #[test]
