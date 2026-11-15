@@ -663,3 +663,26 @@ resolver's `resolve` (`converter.py` `_build_style_resolver`, a box's or cell's 
 element resolves to None; raised anywhere else in a spine item's extraction, the item is left
 out with a warning (`extract_chapters_from_oeb`'s `except Exception`, "Spine item parse
 failed"), and the book is still made.
+
+## The inline walk
+
+`_walk_inline` and its helpers (`src/convert/inline.rs`, `quotes.rs`, `bidi.rs`, at ad38ec8):
+
+- kfxgen recurses once per nested element, and past Python's recursion limit raises
+  `RecursionError`, which leaves the spine item out. The port walks with a stack of its own
+  and refuses an element nested more than 256 levels inside a paragraph (`Error::TooLarge`).
+  `read_book` refuses a file nested that deep first, so only a tree built by hand gets there.
+- A run's flags are one set object that kfxgen's segments share; the port copies them into
+  each element and each segment, and charges the text in each copy (link targets, rubies'
+  readings, languages) to the file's style text budget, as it charges the resolver's reads. A
+  file whose flags hold long text over many runs (a 1 MiB link target around 2,000 words) is
+  refused where kfxgen makes the book. So is a file whose tate-chu-yoko are nested so that their
+  text is read over and over (each is read once more for every one around it).
+- A CSS escape of a surrogate code point in a `<q>`'s `quotes` or `content` (`"\D800"`) is
+  U+FFFD; Python's `chr` gives a lone surrogate.
+- `_turned_parts` takes the `data-kfxgen-horizontal` and `-vertical` marks off every element
+  inside a turned element, in the tree, for good. The port keeps that in the walk of the file
+  (`Walk`), so the walk's output is the same. kfxgen's style resolver reads one of the marks
+  (`_vertical_box`, a vertical element's margins and paddings) and a second pass walks the same
+  tree: the port's resolver and a second pass's new `Walk` still see the marks. The inline walk
+  reads no margins or paddings; which later step would see the difference is not checked.
