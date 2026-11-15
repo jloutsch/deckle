@@ -50,10 +50,13 @@ fn slice_spans(spans: &[Span], a: i64, b: i64) -> Vec<Span> {
 /// picture in it has a float side. A preformatted paragraph is Unsupported when read.
 pub(crate) fn cut_after_picture_lines(block: &Block) -> Option<Vec<Block>> {
     let text = &block.text;
+    // Pictures alone on one line are one entry; on several, cut line by line, as Previewer
+    // writes them: a line of two or more a paragraph of its own, a line of one a picture
+    // (#762, QA's Q766 Z03, Z04; bd68f30).
     if IMG_TOKEN
         .captures_iter(text)
         .any(|m| group(&m, 4).is_some())
-        || !has_words(text)
+        || !has_words(text) && !text.contains('\n')
     {
         return None;
     }
@@ -197,12 +200,16 @@ fn inline_pictures(
     spans: &[Span],
     offsets: &BTreeMap<String, i64>,
     floats_in_words: bool,
+    apart: bool,
     images: &Images,
 ) -> Option<Inline> {
     let tokens: Vec<Captures> = IMG_TOKEN.captures_iter(para).collect();
+    // Pictures alone: entries. Two or more on one line are one paragraph, side by side, as
+    // Kindle Previewer 4.0.3 writes them (#762, probe PSS P01-P09; bd68f30); a line break
+    // between them still makes each an entry (P04), as does `display: block`.
     if tokens.is_empty()
         || tokens.iter().any(|m| group(m, 4).is_some()) && !floats_in_words
-        || !has_words(para)
+        || !has_words(para) && (tokens.len() < 2 || para.contains('\n') || apart)
     {
         return None;
     }
@@ -384,6 +391,7 @@ pub(crate) fn emit_entries(
         &block.spans,
         &block.anchors.offsets,
         float_wrapped,
+        block.pictures_apart,
         images,
     ) {
         Some(i) => (Cow::Owned(i.text), i.spans, i.offsets, Some(i.pictures)),

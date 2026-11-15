@@ -116,6 +116,8 @@ pub(crate) struct Block {
     /// A picture set `display: block`: a block picture in a vertical book's horizontal block
     /// (PVA H10, a1ba662).
     pub picture_block: bool,
+    /// Pictures set `display: block`: kept apart, an entry each (#762, bd68f30).
+    pub pictures_apart: bool,
     /// Its file's writing mode (#247), on a chapter's own blocks: what
     /// `_chapter_writing_mode` (:942) looks for.
     pub writing_mode: Option<String>,
@@ -141,6 +143,7 @@ impl Block {
             trailing: String::new(),
             picture_align: None,
             picture_block: false,
+            pictures_apart: false,
             writing_mode: None,
         }
     }
@@ -352,6 +355,7 @@ pub(crate) fn read_block(
             Some(_) => return Err(model_err(format!("{at}.picture_align: a string"))),
         },
         picture_block: truthy(b.get("picture_block")),
+        pictures_apart: truthy(b.get("pictures_apart")),
         ..Block::plain(text)
     })
 }
