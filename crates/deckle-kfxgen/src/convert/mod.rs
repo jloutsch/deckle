@@ -26,7 +26,7 @@ pub use font_table::{parse_style, parse_weight};
 pub use href::{
     external_target, is_unsafe, key_doc, normalize, resolve_doc_path, resolve_link_target, unquote,
 };
-pub use inline::{Part, Serials, Walk};
+pub use inline::{Serials, Walk};
 pub use inline_style::{
     Flag, Flags, Raised, Segment, Span, css_letter_spacing, css_link_colour, css_rgb,
     css_text_colour, normalize_runs_with_anchors, parse_css_length, parse_vertical_align,

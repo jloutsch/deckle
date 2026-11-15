@@ -8,8 +8,7 @@ use std::time::Instant;
 use deckle_kfx::fixtures;
 use deckle_kfxgen::book::read_book;
 use deckle_kfxgen::convert::{
-    Error, ItemError, Part, Resolver, Segment, Serials, TextBudget, Walk,
-    normalize_runs_with_anchors,
+    Error, ItemError, Resolver, Segment, Serials, TextBudget, Walk, normalize_runs_with_anchors,
 };
 use deckle_kfxgen::css::DEFAULT_PROFILE;
 use deckle_kfxgen::dom::NodeId;
@@ -56,18 +55,6 @@ const PICTURE_CALLS: &[(&str, &str, &[usize])] = &[
     ("pictures_side_by_side_766", "000", &[2, 4, 6, 8, 10, 14, 16]),
     ("vertical_pictures_761", "000", &[2, 4, 6, 8, 10, 12, 14, 16]),
 ];
-
-/// The walk's parts as the dump writes `segments`: (text, frozenset) tuples, the tables left
-/// out (the hook drops `(_TABLE_SPLIT, table)`).
-fn segments(parts: &[Part]) -> Vec<Segment> {
-    parts
-        .iter()
-        .filter_map(|p| match p {
-            Part::Run(s) => Some(s.clone()),
-            Part::Table(_) => None,
-        })
-        .collect()
-}
 
 fn segments_py(segs: &[Segment]) -> PyValue {
     PyValue::List(
@@ -197,8 +184,8 @@ fn runs_match_the_dump_for_every_paragraph() {
                         }
                     }
                     calls += 1;
-                    let ours = match walk.inline(n, false) {
-                        Ok(parts) => segments(&parts),
+                    let ours = match walk.inline(n) {
+                        Ok(segs) => segs,
                         Err(ItemError::Error(Error::Unsupported {
                             feature: PICTURES, ..
                         })) => {
@@ -267,7 +254,7 @@ fn math_is_refused_by_name() {
     let budget = TextBudget::new();
     let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
     let mut serials = Serials::default();
-    let got = Walk::new(&file, &resolver, &mut serials).inline(first(&file, "p"), false);
+    let got = Walk::new(&file, &resolver, &mut serials).inline(first(&file, "p"));
     match got {
         Err(ItemError::Error(Error::Unsupported { feature, file })) => {
             assert_eq!(feature, "math");
@@ -299,7 +286,7 @@ fn a_span_nested_20000_deep_is_refused_not_overflowed() {
     let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
     let mut serials = Serials::default();
     let start = Instant::now();
-    let got = Walk::new(&file, &resolver, &mut serials).inline(first(&file, "p"), false);
+    let got = Walk::new(&file, &resolver, &mut serials).inline(first(&file, "p"));
     let took = start.elapsed();
     assert!(
         matches!(got, Err(ItemError::Error(Error::TooLarge { .. }))),
@@ -316,10 +303,9 @@ fn spans_as_deep_as_a_book_may_nest_are_walked() {
     let budget = TextBudget::new();
     let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
     let mut serials = Serials::default();
-    let parts = Walk::new(&file, &resolver, &mut serials)
-        .inline(first(&file, "p"), false)
+    let segs = Walk::new(&file, &resolver, &mut serials)
+        .inline(first(&file, "p"))
         .unwrap();
-    let segs = segments(&parts);
     assert_eq!(segs.len(), 1);
     assert_eq!(segs[0].text, "x");
     assert!(segs[0].flags.has("bold"));
@@ -345,24 +331,20 @@ fn show_flag(flag: &PyValue) -> String {
     }
 }
 
-/// Each part as `text|flag flag`, a table as `TABLE`.
-fn show(parts: &[Part]) -> Vec<String> {
-    parts
-        .iter()
-        .map(|p| match p {
-            Part::Run(s) => {
-                let PyValue::Set(flags) = s.flags.to_py() else {
-                    unreachable!()
-                };
-                let flags: Vec<String> = flags.iter().map(show_flag).collect();
-                format!("{}|{}", s.text, flags.join(" "))
-            }
-            Part::Table(_) => "TABLE".into(),
+/// Each segment as `text|flag flag`.
+fn show(segs: &[Segment]) -> Vec<String> {
+    segs.iter()
+        .map(|s| {
+            let PyValue::Set(flags) = s.flags.to_py() else {
+                unreachable!()
+            };
+            let flags: Vec<String> = flags.iter().map(show_flag).collect();
+            format!("{}|{}", s.text, flags.join(" "))
         })
         .collect()
 }
 
-/// Every `<p>`, `<td>` and `<pre>` of a page walked in turn, with `split_tables`.
+/// Every `<p>`, `<td>` and `<pre>` of a page walked in turn.
 fn walk_page(body: &str, css: &str) -> Vec<Result<Vec<String>, String>> {
     let file = page(body, css);
     let budget = TextBudget::new();
@@ -376,7 +358,7 @@ fn walk_page(body: &str, css: &str) -> Vec<Result<Vec<String>, String>> {
         .collect();
     blocks
         .into_iter()
-        .map(|n| match walk.inline(n, true) {
+        .map(|n| match walk.inline(n) {
             Ok(parts) => Ok(show(&parts)),
             Err(ItemError::Raised(r)) => Err(r.exception.to_owned()),
             Err(e) => Err(format!("{e:?}")),
@@ -503,7 +485,18 @@ fn hidden_switches_and_white_space_are_kfxgens() {
         &["a|", " |", "b|", " |", "c|"],
         &["b|"],
         &["d|", " |", "o1|", " |", " |", "o2|", " |"],
-        &["x|", "|line-start", "line|", "|line-start", "y|", "TABLE"],
+        // No caller passes `split_tables`: the table is walked as content, a cell's edges
+        // spaced.
+        &[
+            "x|",
+            "|line-start",
+            "line|",
+            "|line-start",
+            "y|",
+            " |",
+            "t|",
+            " |",
+        ],
         &["t|"],
     ];
     let got: Vec<Vec<String>> = got.into_iter().map(Result::unwrap).collect();
@@ -525,7 +518,7 @@ fn a_long_link_target_over_many_runs_is_too_large() {
     let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
     let mut serials = Serials::default();
     let start = Instant::now();
-    let got = Walk::new(&file, &resolver, &mut serials).inline(first(&file, "p"), false);
+    let got = Walk::new(&file, &resolver, &mut serials).inline(first(&file, "p"));
     let took = start.elapsed();
     assert!(
         matches!(got, Err(ItemError::Error(Error::Book(_)))),
@@ -555,7 +548,7 @@ fn the_text_before_a_link_is_found_once() {
     let mut serials = Serials::default();
     let start = Instant::now();
     let parts = Walk::new(&file, &resolver, &mut serials)
-        .inline(first(&file, "p"), false)
+        .inline(first(&file, "p"))
         .unwrap();
     let took = start.elapsed();
     eprintln!("20,000 black words after 20,000 empty spans: {took:?}");
@@ -590,7 +583,7 @@ fn whether_a_word_is_all_its_link_shows_is_found_once() {
     let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
     let mut serials = Serials::default();
     let mut walk = Walk::new(&file, &resolver, &mut serials);
-    let parts = walk.inline(first(&file, "p"), false).unwrap();
+    let parts = walk.inline(first(&file, "p")).unwrap();
     let work = walk.link_work();
     eprintln!("{n} hidden and {n} black words in a link: {work} looked at");
     // The link's 2n children once, and one step up from each black word.
@@ -620,7 +613,7 @@ fn a_long_lang_is_not_copied_for_each_quote() {
         let mut serials = Serials::default();
         let (parts, bytes) = allocated_by(|| {
             Walk::new(&file, &resolver, &mut serials)
-                .inline(first(&file, "p"), false)
+                .inline(first(&file, "p"))
                 .unwrap()
         });
         (show(&parts), bytes)

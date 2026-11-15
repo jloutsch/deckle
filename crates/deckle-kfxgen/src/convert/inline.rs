@@ -177,16 +177,6 @@ fn next(counter: &mut i64) -> i64 {
     n
 }
 
-/// One item of `_walk_inline`'s list.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Part {
-    /// A (text, flags) segment.
-    Run(Segment),
-    /// `(_TABLE_SPLIT, table)`: a table nested in the content, which the caller writes as a
-    /// table of its own (with `split_tables`).
-    Table(NodeId),
-}
-
 /// `_css_emphasis(css)`: (bold, italic, monospace families, font size, typography, colour as
 /// given). The typography is `css_typography`'s, each value as its run flag carries it.
 #[derive(Clone, Debug, PartialEq)]
@@ -426,8 +416,8 @@ fn nest_shift(mut cur: Flags, inherited: &Flags, own: &[&str]) -> Flags {
 }
 
 /// `_whole_baseline_dropped(parts, depth)`: a shifted element's parts without its children's
-/// baseline shift when every part with text has it. A table among them has none.
-fn whole_baseline_dropped(parts: &mut [Part], depth: usize) {
+/// baseline shift when every part with text has it.
+fn whole_baseline_dropped(parts: &mut [Segment], depth: usize) {
     let baseline = |flags: &Flags| {
         flags
             .iter()
@@ -439,25 +429,17 @@ fn whole_baseline_dropped(parts: &mut [Part], depth: usize) {
             .cloned()
     };
     let mut any = false;
-    for p in parts.iter() {
-        match p {
-            Part::Table(_) => return,
-            Part::Run(s) if !s.text.is_empty() => {
-                if baseline(&s.flags).is_none() {
-                    return;
-                }
-                any = true;
-            }
-            Part::Run(_) => {}
+    for s in parts.iter().filter(|s| !s.text.is_empty()) {
+        if baseline(&s.flags).is_none() {
+            return;
         }
+        any = true;
     }
     if !any {
         return;
     }
-    for p in parts {
-        if let Part::Run(s) = p
-            && let Some(b) = baseline(&s.flags)
-        {
+    for s in parts {
+        if let Some(b) = baseline(&s.flags) {
             s.flags.retain(|f| *f != b);
         }
     }
@@ -536,10 +518,6 @@ struct Job {
     /// Its emphasis, its children's `parent_emphasis`.
     emphasis: Option<Emphasis>,
     own_shifts: Vec<&'static str>,
-    /// The `split_tables` its children are walked with.
-    split_tables: bool,
-    /// The `split_tables` it was given (a turned text's children are walked without).
-    split_tables_given: bool,
     depth: usize,
     /// The buffer its parts go to, and the one its children's go to.
     buf: usize,
@@ -558,7 +536,6 @@ struct Job {
 struct Opening<'f> {
     flags: &'f Flags,
     root: bool,
-    split_tables: bool,
     parent_emphasis: Option<&'f Emphasis>,
     depth: usize,
     buf: usize,
@@ -618,7 +595,7 @@ impl<'a, 's> Walk<'a, 's> {
         self.serials
     }
 
-    /// `_walk_inline(elem, style_resolver=…, base_href=…, split_tables=…)`, as a block calls
+    /// `_walk_inline(elem, style_resolver=…, base_href=…)`, as a block calls
     /// it: `n`'s inline content, `n` itself read as the block (its own shift, hiding,
     /// direction and drawn-as-block display are not its runs').
     ///
@@ -629,13 +606,15 @@ impl<'a, 's> Walk<'a, 's> {
     /// Errors: [`ItemError::Raised`] where kfxgen raises (it leaves the spine item out);
     /// [`Error::Unsupported`] for a `<math>`; [`Error::TooLarge`] past [`MAX_DEPTH`] levels of
     /// nesting, or once the file's text budget is spent.
-    pub fn inline(&mut self, n: NodeId, split_tables: bool) -> Result<Vec<Part>, ItemError> {
+    ///
+    /// No caller in kfxgen passes `split_tables`, so the port has no such argument and no
+    /// table parts: a table in the content is walked as kfxgen walks it then.
+    pub fn inline(&mut self, n: NodeId) -> Result<Vec<Segment>, ItemError> {
         let mut bufs = vec![Vec::new()];
         let mut stack: Vec<Job> = Vec::new();
         let root = Opening {
             flags: &Flags::default(),
             root: true,
-            split_tables,
             parent_emphasis: None,
             depth: 0,
             buf: 0,
@@ -645,12 +624,11 @@ impl<'a, 's> Walk<'a, 's> {
         }
         while let Some(top) = stack.last_mut() {
             match self.step(top, &mut bufs)? {
-                Some((child, split_tables)) => {
+                Some(child) => {
                     let top = &stack[stack.len() - 1];
                     let opening = Opening {
                         flags: &top.cur,
                         root: false,
-                        split_tables,
                         parent_emphasis: top.emphasis.as_ref(),
                         depth: top.depth + 1,
                         buf: top.inner,
@@ -678,30 +656,30 @@ impl<'a, 's> Walk<'a, 's> {
     }
 
     /// A segment of `text` with a copy of `flags`, the copy charged.
-    fn run(&self, text: impl Into<String>, flags: &Flags) -> Result<Part, ItemError> {
+    fn run(&self, text: impl Into<String>, flags: &Flags) -> Result<Segment, ItemError> {
         self.resolver.charge(flags_bytes(flags))?;
-        Ok(Part::Run(Segment {
+        Ok(Segment {
             text: text.into(),
             flags: flags.clone(),
-        }))
+        })
     }
 
-    fn mark(id: &str) -> Part {
-        Part::Run(make_anchor_mark(id))
+    fn mark(id: &str) -> Segment {
+        make_anchor_mark(id)
     }
 
-    fn line_start() -> Part {
-        Part::Run(Segment {
+    fn line_start() -> Segment {
+        Segment {
             text: String::new(),
             flags: [Flag::Str(LINE_START.to_owned())].into_iter().collect(),
-        })
+        }
     }
 
-    fn space() -> Part {
-        Part::Run(Segment {
+    fn space() -> Segment {
+        Segment {
             text: " ".to_owned(),
             flags: Flags::default(),
-        })
+        }
     }
 
     /// `_is_hidden(elem, style_resolver)`, given `n`'s resolved style when the caller has it.
@@ -1000,7 +978,7 @@ impl<'a, 's> Walk<'a, 's> {
         &mut self,
         n: NodeId,
         at: Opening<'_>,
-        bufs: &mut Vec<Vec<Part>>,
+        bufs: &mut Vec<Vec<Segment>>,
     ) -> Result<Option<Job>, ItemError> {
         let dom = self.dom;
         if dom.is_comment(n) {
@@ -1039,8 +1017,6 @@ impl<'a, 's> Walk<'a, 's> {
             cur: Flags::default(),
             emphasis: None,
             own_shifts: Vec::new(),
-            split_tables: at.split_tables,
-            split_tables_given: at.split_tables,
             depth: at.depth,
             buf: out,
             inner: out,
@@ -1150,7 +1126,7 @@ impl<'a, 's> Walk<'a, 's> {
 
     /// `_walk_inline` past its special cases: the `<q>`'s open mark and the element's own
     /// text; its children come next.
-    fn begin_normal(&mut self, job: &mut Job, bufs: &mut [Vec<Part>]) -> Result<(), ItemError> {
+    fn begin_normal(&mut self, job: &mut Job, bufs: &mut [Vec<Segment>]) -> Result<(), ItemError> {
         let dom = self.dom;
         let quote = if dom.tag(job.n) == "q" {
             Some(self.q_marks(job.n)?)
@@ -1182,11 +1158,13 @@ impl<'a, 's> Walk<'a, 's> {
     /// The start of `_turned_parts(elem, cur, …, mode)`: false when it holds a picture, a
     /// ruby or an equation (it stays in the line). Like kfxgen, it then takes the turn marks
     /// off every element inside it, for good, and walks its content into a buffer of its own.
+    /// When it stays in the line its marks stay too, so each marked element inside it looks
+    /// over its own subtree again, as in kfxgen: at most depth × nodes in all.
     fn begin_turned(
         &mut self,
         job: &mut Job,
         mode: &'static str,
-        bufs: &mut Vec<Vec<Part>>,
+        bufs: &mut Vec<Vec<Segment>>,
     ) -> Result<bool, ItemError> {
         let dom = self.dom;
         let n = job.n;
@@ -1217,19 +1195,17 @@ impl<'a, 's> Walk<'a, 's> {
             mode,
             close: quote.map(|(_, close)| close),
         };
-        // Not passed on: `_turned_parts` walks its children with `split_tables` False.
-        job.split_tables = false;
         Ok(true)
     }
 
-    /// The next child of `job` to walk, and its `split_tables`; None when `job` has no more.
+    /// The next child of `job` to walk; None when `job` has no more.
     /// What `job` writes between its children (tails, a picture's ids, a cell block's spaces,
     /// a ruby's readings) is written on the way.
     fn step(
         &mut self,
         job: &mut Job,
-        bufs: &mut [Vec<Part>],
-    ) -> Result<Option<(NodeId, bool)>, ItemError> {
+        bufs: &mut [Vec<Segment>],
+    ) -> Result<Option<NodeId>, ItemError> {
         let dom = self.dom;
         let kids = dom.children(job.n);
         loop {
@@ -1245,10 +1221,8 @@ impl<'a, 's> Walk<'a, 's> {
                     let Kind::Tcy { worded, .. } = &mut job.kind else {
                         unreachable!("only a tate-chu-yoko reads its children's words");
                     };
-                    for p in bufs[job.inner].drain(..) {
-                        if let Part::Run(s) = p
-                            && !py::strip(&s.text).is_empty()
-                        {
+                    for s in bufs[job.inner].drain(..) {
+                        if !py::strip(&s.text).is_empty() {
                             worded.push(s.flags);
                         }
                     }
@@ -1258,7 +1232,7 @@ impl<'a, 's> Walk<'a, 's> {
                 }
             }
             if let Kind::Switch(default) = &mut job.kind {
-                return Ok(default.take().map(|d| (d, job.split_tables)));
+                return Ok(default.take());
             }
             let Some(&child) = kids.get(job.next) else {
                 return Ok(None);
@@ -1278,17 +1252,14 @@ impl<'a, 's> Walk<'a, 's> {
                 Kind::Ruby if clocal == "rp" => self.tail(job, child, job.inner, bufs)?,
                 Kind::Ruby | Kind::Turned { .. } => {
                     job.after = After::Tail(child);
-                    return Ok(Some((child, job.split_tables)));
+                    return Ok(Some(child));
                 }
                 Kind::Tcy { .. } => {
                     job.after = After::Worded(child);
-                    return Ok(Some((child, job.split_tables)));
+                    return Ok(Some(child));
                 }
                 Kind::Normal(_) => {
-                    if job.split_tables && clocal == "table" {
-                        // The caller writes it as a table of its own (#263).
-                        bufs[job.buf].push(Part::Table(child));
-                    } else if matches!(clocal, "img" | "svg") && self.is_hidden(child, None)? {
+                    if matches!(clocal, "img" | "svg") && self.is_hidden(child, None)? {
                         // A hidden picture, as hidden text: only its ids (#428).
                         for id in subtree_anchor_ids(dom, child) {
                             bufs[job.buf].push(Self::mark(&id));
@@ -1303,10 +1274,10 @@ impl<'a, 's> Walk<'a, 's> {
                         // A block walked inline: its edges are a word boundary (#279, #477).
                         bufs[job.buf].push(Self::space());
                         job.after = After::Spaced(child);
-                        return Ok(Some((child, job.split_tables)));
+                        return Ok(Some(child));
                     } else {
                         job.after = After::Tail(child);
-                        return Ok(Some((child, job.split_tables)));
+                        return Ok(Some(child));
                     }
                     self.tail(job, child, job.buf, bufs)?;
                 }
@@ -1321,7 +1292,7 @@ impl<'a, 's> Walk<'a, 's> {
         job: &Job,
         child: NodeId,
         to: usize,
-        bufs: &mut [Vec<Part>],
+        bufs: &mut [Vec<Segment>],
     ) -> Result<(), ItemError> {
         let tail = self.dom.tail(child);
         if !tail.is_empty() {
@@ -1337,17 +1308,15 @@ impl<'a, 's> Walk<'a, 's> {
         &mut self,
         job: &Job,
         rt: NodeId,
-        bufs: &mut [Vec<Part>],
+        bufs: &mut [Vec<Segment>],
     ) -> Result<(), ItemError> {
         let dom = self.dom;
         let reading = words(&dom.itertext(rt));
         let mut base = std::mem::take(&mut bufs[job.inner]);
         if !reading.is_empty() {
             let flag = make_ruby_flag(next(&mut self.serials.ruby), &reading);
-            for p in &mut base {
-                if let Part::Run(s) = p
-                    && !s.text.is_empty()
-                {
+            for s in &mut base {
+                if !s.text.is_empty() {
                     self.resolver.charge(reading.len())?;
                     s.flags.insert(flag.clone());
                 }
@@ -1365,7 +1334,7 @@ impl<'a, 's> Walk<'a, 's> {
     fn finish(
         &mut self,
         mut job: Job,
-        bufs: &mut Vec<Vec<Part>>,
+        bufs: &mut Vec<Vec<Segment>>,
     ) -> Result<Option<Job>, ItemError> {
         let dom = self.dom;
         let out = job.buf;
@@ -1420,18 +1389,10 @@ impl<'a, 's> Walk<'a, 's> {
                 if let Some(close) = close {
                     inner.push(self.run(close, &job.cur)?);
                 }
-                let inner: Vec<Segment> = inner
-                    .into_iter()
-                    .filter_map(|p| match p {
-                        Part::Run(s) => Some(s),
-                        Part::Table(_) => None,
-                    })
-                    .collect();
                 let (mut text, spans, _) = normalize_runs_with_anchors(&inner);
                 if py::strip(&text).is_empty() {
                     // It stays in the line, walked as ordinary content.
                     job.inner = out;
-                    job.split_tables = job.split_tables_given;
                     self.begin_normal(&mut job, bufs)?;
                     return Ok(Some(job));
                 }
@@ -1454,9 +1415,7 @@ impl<'a, 's> Walk<'a, 's> {
     }
 
     /// The flags `_walk_inline` gives `n`'s own content (`cur`), its emphasis (passed to its
-    /// children as `parent_emphasis`) and the shifts it sets itself. Kept out of [`Self::walk`]
-    /// so the recursion's frames stay small.
-    #[inline(never)]
+    /// children as `parent_emphasis`) and the shifts it sets itself.
     fn element_flags(
         &mut self,
         n: NodeId,
