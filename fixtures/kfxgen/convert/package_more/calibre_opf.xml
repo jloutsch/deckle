@@ -3,7 +3,9 @@
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
 <dc:identifier id="id">urn:uuid:00000000-0000-4000-8000-000000001119</dc:identifier>
 <dc:title>Package More</dc:title><dc:creator opf:role="aut">Fixture Author</dc:creator>
-<dc:language>en</dc:language><dc:date>2020</dc:date><dc:publisher>Fixture Press</dc:publisher>
+<dc:language>en</dc:language><dc:date>
+  2020-05-06T10:00:00Z  
+</dc:date><dc:date/><dc:date>1 March 2021</dc:date><dc:date>2020</dc:date><dc:publisher>Fixture Press</dc:publisher>
 </metadata>
 <manifest>
 <item id="ncx" href="OEBPS/toc.ncx" media-type="application/x-dtbncx+xml"/>

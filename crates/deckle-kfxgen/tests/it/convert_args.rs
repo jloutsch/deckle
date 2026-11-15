@@ -249,6 +249,8 @@ fn calibre_facts(name: &str) -> CalibreOpf {
 fn calibre_opf_facts_match_what_calibre_wrote() {
     let mut failures = Vec::new();
     let mut checked = 0;
+    let mut generated = Vec::new();
+    let mut dates = Vec::new();
     for name in sources() {
         let book = read_book(&fixtures::kfxgen(&format!("sources/{name}.epub"))).unwrap();
         let ours = CalibreOpf {
@@ -261,10 +263,28 @@ fn calibre_opf_facts_match_what_calibre_wrote() {
         if ours != want {
             failures.push(format!("{name}:\n  ours {ours:?}\n  dump {want:?}"));
         }
+        // The NCX Calibre makes from a nav, compared with the one it wrote.
+        if want
+            .ncx
+            .as_ref()
+            .is_some_and(|n| n.path.ends_with("/tmpXXXXXXXX.ncx") && !n.points.is_empty())
+        {
+            generated.push(name.clone());
+        }
+        if name == "package_more" {
+            dates = want.dates.clone();
+        }
         checked += 1;
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert_eq!(checked, 55);
+    assert_eq!(generated, ["ruby"]);
+    // Calibre's OPF keeps each date as written: padded, empty, in words, a year alone.
+    let dates: Vec<&str> = dates.iter().map(String::as_str).collect();
+    assert_eq!(
+        dates,
+        ["\n  2020-05-06T10:00:00Z  \n", "", "1 March 2021", "2020"]
+    );
 }
 
 /// `n` layers of percent-encoding of `s`: every byte `%XX`, then each `%` written `%25` once

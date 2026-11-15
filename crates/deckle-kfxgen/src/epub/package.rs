@@ -709,12 +709,12 @@ fn opf2_metadata(meta: &[Node]) -> CalibreMeta {
         })
         .filter(|l| l != "und")
         .collect();
-    // `OPF.pubdate`: the earliest date that parses; an empty one is the undefined date.
+    // `OPF.pubdate`: the earliest date that parses; an empty one is the undefined date, which
+    // Calibre keeps when it is the earliest (`package_more`'s `<dc:date/>`).
     let pubdate = named("date")
         .into_iter()
         .filter_map(|n| parse_date(string_value(n).trim(), false))
-        .min()
-        .filter(|d| !d.is_undefined());
+        .min();
     CalibreMeta {
         title,
         authors,

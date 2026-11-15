@@ -20,8 +20,9 @@ each a few kilobytes of hand-written markup, named for what it holds:
   an <image>, and a page drawn by a CSS background picture. No SVG file, no SVG of shapes.
 - fonts_woff.epub: one WOFF 1 face, Liberation Serif (from fixtures/kfxgen/sources/fonts.epub,
   licence beside it as LiberationSerif-OFL.txt) cut to the glyphs the book uses. No WOFF 2.
-- package_more.epub: landmarks from the OPF guide only, an NCX pageList, a year-only date, a
-  publisher, a contents page listing in a class="toc" block, and a dedication.
+- package_more.epub: landmarks from the OPF guide only, an NCX pageList, four dates (a full
+  one padded with white space first, an empty one, one in words, a year alone), a publisher,
+  a contents page listing in a class="toc" block, and a dedication.
 - listing_rerun.epub: a contents listing (class="toc") on an opening page that also holds the
   title and a byline, no chapter titled Contents and no heading-sized page with the listing,
   so kfxgen gets no Contents page and converts the book again keeping the listing
@@ -389,7 +390,10 @@ def package_more(out):
             ("c1", "Chapter One", c1),
             ("c2", "Chapter Two", c2),
         ],
-        metadata="<dc:date>2020</dc:date><dc:publisher>Fixture Press</dc:publisher>",
+        # Dates as written stay so in calibre's OPF: kfxgen takes the first, stripped.
+        metadata="<dc:date>\n  2020-05-06T10:00:00Z  \n</dc:date><dc:date/>"
+        "<dc:date>1 March 2021</dc:date><dc:date>2020</dc:date>"
+        "<dc:publisher>Fixture Press</dc:publisher>",
         guide=guide,
         ncx_extra=page_list,
     )

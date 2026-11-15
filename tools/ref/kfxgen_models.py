@@ -120,16 +120,18 @@ def shim(kfxgen, out):
             print(f"shim {name}: {len(replay)} bytes")
 
 
-def _epub(path, title, lang, chapters, css="", rtl=False, extra=(), bare=(), vertical=()):
-    """A small EPUB 3 with an NCX: chapters are (id, title, body_xhtml_inner), each opening
-    with its title as an <h1> unless its id is in `bare`, written vertical-rl if its id is in
-    `vertical`."""
-    items, spine, nav, ncx = [], [], [], []
+def _epub(
+    path, title, lang, chapters, css="", rtl=False, extra=(), bare=(), vertical=(), ncx=True
+):
+    """A small EPUB 3 with an NCX (none when `ncx` is false, so calibre makes one from the
+    nav): chapters are (id, title, body_xhtml_inner), each opening with its title as an <h1>
+    unless its id is in `bare`, written vertical-rl if its id is in `vertical`."""
+    items, spine, nav, points = [], [], [], []
     for i, (cid, ctitle, body) in enumerate(chapters, 1):
         items.append(f'<item id="{cid}" href="{cid}.xhtml" media-type="application/xhtml+xml"/>')
         spine.append(f'<itemref idref="{cid}"/>')
         nav.append(f'<li><a href="{cid}.xhtml">{ctitle}</a></li>')
-        ncx.append(
+        points.append(
             f'<navPoint id="n{i}" playOrder="{i}"><navLabel><text>{ctitle}</text></navLabel>'
             f'<content src="{cid}.xhtml"/></navPoint>'
         )
@@ -146,11 +148,11 @@ def _epub(path, title, lang, chapters, css="", rtl=False, extra=(), bare=(), ver
 </metadata>
 <manifest>
 <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
-<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+{'<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>' if ncx else ""}
 <item id="css" href="style.css" media-type="text/css"/>
 {chr(10).join(items)}
 </manifest>
-<spine toc="ncx"{direction}>{"".join(spine)}</spine>
+<spine{' toc="ncx"' if ncx else ""}{direction}>{"".join(spine)}</spine>
 </package>"""
     with zipfile.ZipFile(path, "w") as zf:
         # A fixed date, so the same inputs make the same bytes.
@@ -175,12 +177,13 @@ def _epub(path, title, lang, chapters, css="", rtl=False, extra=(), bare=(), ver
             f'xmlns:epub="http://www.idpf.org/2007/ops"{dir_attr}><head><title>Contents</title></head>'
             f'<body><nav epub:type="toc"><ol>{"".join(nav)}</ol></nav></body></html>',
         )
-        write(
-            "OEBPS/toc.ncx",
-            '<?xml version="1.0" encoding="utf-8"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" '
-            f'version="2005-1"><head/><docTitle><text>{title}</text></docTitle>'
-            f'<navMap>{"".join(ncx)}</navMap></ncx>',
-        )
+        if ncx:
+            write(
+                "OEBPS/toc.ncx",
+                '<?xml version="1.0" encoding="utf-8"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" '
+                f'version="2005-1"><head/><docTitle><text>{title}</text></docTitle>'
+                f'<navMap>{"".join(points)}</navMap></ncx>',
+            )
         for cid, ctitle, body in chapters:
             write(
                 f"OEBPS/{cid}.xhtml",
@@ -363,6 +366,8 @@ def synth(out):
         "div.box { border: 1px solid black; padding: 1em 0.5em 0.25em 2em; }",
         bare=("c1", "c2", "c3", "c4"),
         vertical=("c5",),
+        # No NCX of its own: kfxgen reads the one calibre makes from the nav.
+        ncx=False,
     )
     # A vertical book's rebuilt contents page, a chapter of no writing mode (#247).
     _epub(

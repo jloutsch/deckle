@@ -97,12 +97,12 @@
    "Fixture Press"
   ],
   "date": [
-   "2020-11-15T00:00:00+00:00"
+   "0101-01-01T00:00:00+00:00"
   ],
   "cover": []
  },
  "raw": {
   "opfname": "OEBPS/content.opf",
-  "sha256": "6099732fbe14b5e8cf3da72352294cacca26274ecaedd5e25ca1ced2bbf97cfc"
+  "sha256": "5c061c7d8b4fc5d24116ffd7bb09ab7caba1a906bc40bbd3a5de49ba4d84e242"
  }
 }
