@@ -717,6 +717,116 @@ fn native_lists_as_deep_as_a_book_may_nest_are_walked() {
     assert_eq!(innermost_text(&got.blocks), "x");
 }
 
+/// `levels` of a `<div>` holding a native list whose last item holds the next level; the
+/// innermost list has `inner` more items of text before that one. Every item has an id, so
+/// anchor keys go into the boxes' items.
+fn lists_in_divs(levels: usize, inner: usize, css: &str) -> deckle_kfxgen::book::File {
+    let (mut dom, body) = empty_page();
+    let mut n = body;
+    let mut id = 0;
+    let mut item = |dom: &mut deckle_kfxgen::dom::Dom, list| {
+        let li = dom.append_child(list, "li");
+        dom.set_attr(li, "id", Some(&format!("i{id}")));
+        id += 1;
+        li
+    };
+    for level in 0..levels {
+        let div = dom.append_child(n, "div");
+        let list = dom.append_child(div, "ul");
+        if level + 1 == levels {
+            for _ in 0..inner {
+                let li = item(&mut dom, list);
+                dom.set_text(li, "item");
+            }
+        }
+        n = item(&mut dom, list);
+    }
+    dom.set_text(n, "item");
+    file_of(dom, css)
+}
+
+/// What `extract` charges to the file's budget, allocates and takes on `file`.
+fn cost_of(file: &deckle_kfxgen::book::File) -> (usize, u64, Duration) {
+    let budget = TextBudget::new();
+    let resolver = Resolver::new(file, &DEFAULT_PROFILE, &budget);
+    let mut serials = Serials::default();
+    let none = HashSet::new();
+    let opts = ExtractOptions {
+        native_tables: true,
+        toc_targets: &none,
+        link_targets: &none,
+        keep_nav_listings: false,
+    };
+    let start = Instant::now();
+    let (got, bytes) =
+        allocated_by(|| extract_blocks(&mut Walk::new(file, &resolver, &mut serials), &opts));
+    let took = start.elapsed();
+    got.unwrap();
+    assert!(took < COST_LIMIT, "{took:?}");
+    (budget.charged(), bytes, took)
+}
+
+/// A finished list is one box: a margined container round it carries its side margins onto
+/// the box, one step, not onto each item again. Each list round a nested one copies its
+/// items' texts and ids into its own box, as kfxgen's model holds them, each copy charged:
+/// twice the depth costs about twice as much, not four times. 84 levels of `<div><ul><li>`
+/// are as deep as `read_book` lets a tree be.
+#[test]
+fn nested_lists_in_margined_containers_are_worked_once() {
+    let levels = (deckle_limits::MAX_DEPTH - 2) / 3;
+    let margined = "div { margin: 1px 2px 3px 4px }";
+    let items = 1_000 - levels;
+    let (plain, _, _) = cost_of(&lists_in_divs(levels, items, ""));
+    let (deep, bytes, took) = cost_of(&lists_in_divs(levels, items, margined));
+    eprintln!(
+        "1,000 items in {levels} lists in margined divs: {deep} units ({plain} unmargined), \
+         {bytes} bytes, {took:?}"
+    );
+    assert!(
+        deep - plain <= 2 * levels,
+        "{plain} units unmargined, {deep} margined"
+    );
+    let (half, half_bytes, _) = cost_of(&lists_in_divs(levels / 2, items, margined));
+    eprintln!("in {}: {half} units, {half_bytes} bytes", levels / 2);
+    assert!(
+        deep < 3 * half,
+        "{half} units, then {deep} on twice the depth"
+    );
+    assert!(bytes < 3 * half_bytes, "{half_bytes} bytes, then {bytes}");
+}
+
+/// Native lists nested one level past that: the block walk refuses them by name, on a test
+/// thread's stack, before any box is spaced.
+///
+/// Far past it, in a `File` built by hand, each list first reads the start of its items'
+/// text (`_list_settings`), down through every list below to the first word: those reads
+/// are charged, and the file's budget refuses it after bounded work, before the walk is deep
+/// enough for its own refusal.
+#[test]
+fn native_lists_nested_past_the_limit_are_refused_not_overflowed() {
+    let refused = |levels: usize| {
+        let file = nested_lists(levels, "ul", &[], "");
+        let start = Instant::now();
+        let got = extract(&file);
+        let took = start.elapsed();
+        assert!(took < COST_LIMIT, "{levels}: {took:?}");
+        got
+    };
+    match refused(deckle_limits::MAX_DEPTH / 2 + 1) {
+        Err(ItemError::Error(Error::TooLarge { what })) => assert!(
+            what.ends_with("levels below the body"),
+            "not the block walk's: {what}"
+        ),
+        other => panic!("{:?}", other.map(|b| b.blocks.len())),
+    }
+    let got = refused(10_000);
+    assert!(
+        matches!(got, Err(ItemError::Error(Error::Book(_)))),
+        "{:?}",
+        got.map(|b| b.blocks.len())
+    );
+}
+
 /// Typed markers wait for the first text, however many items open before it: each item's
 /// marker goes in front of the innermost item's text, the outermost first.
 #[test]

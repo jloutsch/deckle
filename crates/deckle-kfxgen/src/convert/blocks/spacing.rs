@@ -13,8 +13,11 @@
 //!
 //! A box (a native list's, Task 13) is spaced as kfxgen spaces any: `_note_box_margins`, its
 //! side margins in `_carry_container_margins`, and the box part of `_space_between` (its
-//! blocks spaced inside it, what leaves it). A box drawn vertical, or horizontal in vertical
-//! text, is Task 15's: each such branch stops the file with "boxes (Task 15)".
+//! blocks spaced inside it, what leaves it, along a vertical box's axis too). Only
+//! `_make_box` makes a vertical box or a horizontal one in vertical text: their margins and
+//! paddings (`_note_box_margins`' vertical branch, the horizontal branches of `_note_padding`,
+//! `_note_margins` and `_carry_container_margins`) are Task 15's, and each stops the file with
+//! "boxes (Task 15)".
 
 use std::collections::HashMap;
 
@@ -24,7 +27,7 @@ use crate::convert::block_style::compute_block_style;
 use crate::convert::inline::{keyword, text_of};
 use crate::convert::inline_style::parse_css_length;
 use crate::convert::resolver::Resolved;
-use crate::convert::{Error, ItemError, Raised};
+use crate::convert::{ItemError, Raised};
 use crate::css::TEXT_UNIT;
 use crate::dom::{Dom, NodeId};
 use crate::generate::images::IMG_TOKEN;
@@ -1125,12 +1128,11 @@ struct OpenBox {
 /// Linear in the blocks: one pass builds each new list, a second marks tight runs, a third
 /// writes the breaks; the gaps are counted in a hash map.
 pub(super) fn space_between(
-    href: &str,
     blocks: Vec<Block>,
     margins: &mut HashMap<BlockId, [f64; 2]>,
     measured: bool,
     paddings: &mut HashMap<BlockId, [f64; 4]>,
-) -> Result<Vec<Block>, ItemError> {
+) -> Vec<Block> {
     let mut open: Vec<OpenBox> = Vec::new();
     let mut run = Run::new(blocks);
     loop {
@@ -1142,10 +1144,10 @@ pub(super) fn space_between(
                 bottom,
             }) = open.pop()
             else {
-                return Ok(out);
+                return out;
             };
             run = outer;
-            let bottom = box_tail(href, &mut bx, out, margins, bottom)?;
+            let bottom = box_tail(&mut bx, out, margins, bottom);
             next_block(&mut run, bx, None, bottom, Some("box"), paddings);
             continue;
         };
@@ -1279,28 +1281,22 @@ fn next_block(
 /// the space below a last block with words when nothing marks the box's bottom edge, go in
 /// its padding (with an edge) or meet its margin-bottom. Returns that margin-bottom.
 fn box_tail(
-    href: &str,
     bx: &mut Block,
     mut out: Vec<Block>,
     margins: &mut HashMap<BlockId, [f64; 2]>,
     mut bottom: f64,
-) -> Result<f64, ItemError> {
+) -> f64 {
     let look = bx.get("box");
     let side = |key: &str| look.and_then(|d| d.get(key)).filter(|v| v.is_truthy());
-    if look
+    // A vertical block's blocks end at its left.
+    let vertical = look
         .and_then(|d| d.get("vertical"))
-        .is_some_and(PyValue::is_truthy)
-    {
-        // A vertical block's blocks end at its left: Task 15.
-        return Err(ItemError::Error(Error::Unsupported {
-            feature: "boxes (Task 15)",
-            file: href.to_owned(),
-        }));
-    }
+        .is_some_and(PyValue::is_truthy);
+    let end_side = if vertical { "left" } else { "bottom" };
     let edge = side("border")
-        .and_then(|d| d.get("bottom"))
+        .and_then(|d| d.get(end_side))
         .filter(|v| v.is_truthy())
-        .or_else(|| side("padding").and_then(|d| d.get("bottom")))
+        .or_else(|| side("padding").and_then(|d| d.get(end_side)))
         .is_some_and(PyValue::is_truthy);
     let mut tail = 0.0;
     if let Some(last) = out.last_mut() {
@@ -1337,6 +1333,17 @@ fn box_tail(
             dict_set(&mut pad, "bottom", PyValue::Float(was + tail / own));
             dict_set(d, "padding", PyValue::Dict(pad));
         }
+    } else if truthy(tail) && vertical {
+        // Along its own axis: its space after it, its left.
+        if let Some(PyValue::Dict(d)) = bx.get_mut("box") {
+            let end = d
+                .iter()
+                .find(|(k, _)| k.as_str() == Some("end"))
+                .map(|(_, v)| v)
+                .filter(|v| v.is_truthy())
+                .map_or(0.0, |v| number(Some(v)));
+            dict_set(d, "end", PyValue::Float(collapse(end, tail)));
+        }
     } else if truthy(tail) {
         // It meets the box's margin-bottom, where the run around the box meets it.
         let mine = margins.entry(bx.id()).or_insert([0.0; 2]);
@@ -1344,7 +1351,7 @@ fn box_tail(
         bottom = mine[1];
     }
     bx.put_blocks(out);
-    Ok(bottom)
+    bottom
 }
 
 /// The end of a `_space_between` call: the last block's space below, then the gaps.
@@ -1786,6 +1793,8 @@ mod tests {
             Para(&'static str, Vec<(&'static str, PyValue)>),
             Space(f64, f64, f64, f64),
             Table,
+            /// A box of 16px holding these blocks, with this `box` dict.
+            Box(Vec<B>, PyValue),
         }
 
         fn para(text: &'static str) -> B {
@@ -1796,58 +1805,77 @@ mod tests {
             PyValue::Dict(pairs.into_iter().map(|(k, v)| (s(k), v)).collect())
         }
 
-        /// The spacing keys of `_space_between(blocks, margins, True, paddings)`'s blocks:
-        /// `key=repr` joined by `,`, the blocks by `|`.
-        fn run(
-            blocks: Vec<B>,
-            margins: &[(usize, [f64; 2])],
-            paddings: &[(usize, [f64; 4])],
-        ) -> String {
-            let blocks: Vec<Block> = blocks
-                .into_iter()
-                .enumerate()
-                .map(|(i, b)| {
-                    let mut fields = vec![
-                        ("text", Field::Py(s(""))),
-                        ("spans", Field::Py(PyValue::List(Vec::new()))),
-                        ("block_style", Field::Py(PyValue::None)),
-                        ("anchor_ids", Field::Py(PyValue::List(Vec::new()))),
-                        ("anchor_offsets", Field::Py(PyValue::Dict(Vec::new()))),
-                    ];
-                    let mut block = |extra: Vec<(&'static str, PyValue)>| {
-                        for (k, v) in extra {
-                            match fields.iter_mut().find(|(f, _)| *f == k) {
-                                Some((_, slot)) => *slot = Field::Py(v),
-                                None => fields.push((k, Field::Py(v))),
-                            }
-                        }
-                    };
-                    match b {
-                        B::Para(text, extra) => {
-                            block(vec![("text", s(text))]);
-                            block(extra);
-                        }
-                        B::Space(margin, line, height, after) => block(vec![
-                            ("type", s("space")),
-                            ("margin", PyValue::Float(margin)),
-                            ("line", PyValue::Float(line)),
-                            ("height", PyValue::Float(height)),
-                            ("margin_after", PyValue::Float(after)),
-                        ]),
-                        B::Table => block(vec![("type", s("table"))]),
+        /// A block of `b`, its id the next of a count of all blocks, a box's inside it.
+        fn build(b: B, next: &mut usize) -> Block {
+            let mut fields = vec![
+                ("text", Field::Py(s(""))),
+                ("spans", Field::Py(PyValue::List(Vec::new()))),
+                ("block_style", Field::Py(PyValue::None)),
+                ("anchor_ids", Field::Py(PyValue::List(Vec::new()))),
+                ("anchor_offsets", Field::Py(PyValue::Dict(Vec::new()))),
+            ];
+            let mut block = |extra: Vec<(&'static str, PyValue)>| {
+                for (k, v) in extra {
+                    match fields.iter_mut().find(|(f, _)| *f == k) {
+                        Some((_, slot)) => *slot = Field::Py(v),
+                        None => fields.push((k, Field::Py(v))),
                     }
-                    Block {
-                        id: BlockId(i),
-                        fields,
-                    }
-                })
-                .collect();
-            let mut m = margins.iter().map(|&(i, v)| (BlockId(i), v)).collect();
-            let mut p = paddings.iter().map(|&(i, v)| (BlockId(i), v)).collect();
-            let out = space_between("t.xhtml", blocks, &mut m, true, &mut p).unwrap();
+                }
+            };
+            let id = BlockId(*next);
+            *next += 1;
+            match b {
+                B::Para(text, extra) => {
+                    block(vec![("text", s(text))]);
+                    block(extra);
+                }
+                B::Space(margin, line, height, after) => block(vec![
+                    ("type", s("space")),
+                    ("margin", PyValue::Float(margin)),
+                    ("line", PyValue::Float(line)),
+                    ("height", PyValue::Float(height)),
+                    ("margin_after", PyValue::Float(after)),
+                ]),
+                B::Table => block(vec![("type", s("table"))]),
+                B::Box(kids, look) => {
+                    block(vec![
+                        ("type", s("box")),
+                        ("box", look),
+                        ("font_px", PyValue::Float(16.0)),
+                    ]);
+                    let kids = kids.into_iter().map(|k| build(k, next)).collect();
+                    fields.push(("blocks", Field::Blocks(kids)));
+                }
+            }
+            Block { id, fields }
+        }
+
+        /// Python's `repr` of the values a `box` dict holds here.
+        fn repr(v: &PyValue) -> String {
+            match v {
+                PyValue::Dict(pairs) => {
+                    let items: Vec<String> = pairs
+                        .iter()
+                        .map(|(k, v)| format!("{}: {}", repr(k), repr(v)))
+                        .collect();
+                    format!("{{{}}}", items.join(", "))
+                }
+                PyValue::Str(x) => format!("'{x}'"),
+                PyValue::Float(x) => show(*x),
+                PyValue::Bool(true) => "True".into(),
+                PyValue::Bool(false) => "False".into(),
+                PyValue::None => "None".into(),
+                other => format!("{other:?}"),
+            }
+        }
+
+        /// The spacing keys of blocks, `key=repr` joined by `,`, the blocks by `|`; a box's
+        /// `box` dict and its blocks after them.
+        fn keys(out: &[Block]) -> String {
             out.iter()
                 .map(|b| {
-                    KEYS.iter()
+                    let mut part = KEYS
+                        .iter()
                         .filter_map(|k| {
                             b.get(k).map(|v| match v {
                                 PyValue::Float(x) => format!("{k}={}", show(*x)),
@@ -1856,10 +1884,140 @@ mod tests {
                             })
                         })
                         .collect::<Vec<_>>()
-                        .join(",")
+                        .join(",");
+                    if let Some(kids) = b.blocks() {
+                        let look = b.get("box").map_or_else(String::new, repr);
+                        part += &format!(",box={look},[{}]", keys(kids));
+                    }
+                    part
                 })
                 .collect::<Vec<_>>()
                 .join("|")
+        }
+
+        /// The spacing keys of `_space_between(blocks, margins, True, paddings)`'s blocks;
+        /// `margins` and `paddings` by each block's place in a count of all blocks, a box's
+        /// after it.
+        fn run(
+            blocks: Vec<B>,
+            margins: &[(usize, [f64; 2])],
+            paddings: &[(usize, [f64; 4])],
+        ) -> String {
+            run_with(blocks, margins, paddings).0
+        }
+
+        /// [`run`], and the margins after it.
+        fn run_with(
+            blocks: Vec<B>,
+            margins: &[(usize, [f64; 2])],
+            paddings: &[(usize, [f64; 4])],
+        ) -> (String, HashMap<BlockId, [f64; 2]>) {
+            let mut next = 0;
+            let blocks: Vec<Block> = blocks.into_iter().map(|b| build(b, &mut next)).collect();
+            let mut m = margins.iter().map(|&(i, v)| (BlockId(i), v)).collect();
+            let mut p = paddings.iter().map(|&(i, v)| (BlockId(i), v)).collect();
+            let out = space_between(blocks, &mut m, true, &mut p);
+            (keys(&out), m)
+        }
+
+        /// A box's tail, each branch, against the pinned `_space_between` copied into a
+        /// scratch module and run under Python 3 on the same blocks. List boxes reach only
+        /// the last; the others need `_make_box` (Task 15) or a table ending a box (16).
+        #[test]
+        fn what_leaves_a_box_goes_where_kfxgen_puts_it() {
+            let spacers = || vec![para("a"), B::Table, B::Space(0.5, 0.0, 0.0, 0.0)];
+            let vertical = || ("vertical", PyValue::Bool(true));
+            // A vertical box's last paragraph with words: its space below leaves along the
+            // box's axis, into `end`.
+            let got = run_with(
+                vec![
+                    para("x"),
+                    B::Box(vec![para("a"), para("b")], style(vec![vertical()])),
+                    para("y"),
+                ],
+                &[(3, [0.0, 1.5])],
+                &[],
+            );
+            assert_eq!(
+                got.0,
+                "margin_above=0.0,margin_below=0.0|margin_above=0.0,margin_below=0.0,\
+                 box={'vertical': True, 'end': 1.5},[margin_above=0.0,margin_below=0.0|\
+                 margin_above=0.0,margin_below=0.0,padding_below=0.0,tight=True]|\
+                 margin_above=0.0,margin_below=0.0,padding_below=0.0"
+            );
+            assert_eq!(got.1.get(&BlockId(3)), Some(&[0.0, 1.5]));
+            // Spacers after a table that ends it: the same.
+            let got = run(
+                vec![B::Box(spacers(), style(vec![vertical()])), para("y")],
+                &[],
+                &[],
+            );
+            assert_eq!(
+                got,
+                "margin_above=0.0,margin_below=0.0,box={'vertical': True, 'end': 0.5},\
+                 [margin_above=0.0,margin_below=0.0|]|\
+                 margin_above=0.0,margin_below=0.0,padding_below=0.0"
+            );
+            // With a border on its left, its end: into its padding, at the bottom (kfxgen's
+            // key, whichever side the edge is on).
+            let border = style(vec![("left", s("1px")), ("bottom", PyValue::None)]);
+            let got = run(
+                vec![
+                    B::Box(
+                        spacers(),
+                        style(vec![
+                            vertical(),
+                            ("border", border),
+                            ("padding", PyValue::None),
+                        ]),
+                    ),
+                    para("y"),
+                ],
+                &[],
+                &[],
+            );
+            assert_eq!(
+                got,
+                "margin_above=0.0,margin_below=0.0,box={'vertical': True, \
+                 'border': {'left': '1px', 'bottom': None}, \
+                 'padding': {'top': 0.0, 'right': 0.0, 'bottom': 0.5, 'left': 0.0}},\
+                 [margin_above=0.0,margin_below=0.0|]|\
+                 margin_above=0.0,margin_below=0.0,padding_below=0.0"
+            );
+            // A padding at its bottom takes them, added to it.
+            let padding = style(vec![
+                ("top", PyValue::Float(0.0)),
+                ("right", PyValue::Float(0.0)),
+                ("bottom", PyValue::Float(0.25)),
+                ("left", PyValue::Float(0.0)),
+            ]);
+            let got = run(
+                vec![
+                    B::Box(spacers(), style(vec![("padding", padding)])),
+                    para("y"),
+                ],
+                &[],
+                &[],
+            );
+            assert_eq!(
+                got,
+                "margin_above=0.0,margin_below=0.0,\
+                 box={'padding': {'top': 0.0, 'right': 0.0, 'bottom': 0.75, 'left': 0.0}},\
+                 [margin_above=0.0,margin_below=0.0|]|\
+                 margin_above=0.0,margin_below=0.0,padding_below=0.0"
+            );
+            // Nothing at its edge: they meet the box's margin-bottom.
+            let got = run_with(
+                vec![B::Box(spacers(), style(vec![])), para("y")],
+                &[(0, [0.0, 0.2])],
+                &[],
+            );
+            assert_eq!(
+                got.0,
+                "margin_above=0.0,margin_below=0.5,box={},[margin_above=0.0,margin_below=0.0|]|\
+                 margin_above=0.0,margin_below=0.0,padding_below=0.0"
+            );
+            assert_eq!(got.1.get(&BlockId(0)), Some(&[0.0, 0.5]));
         }
 
         #[test]

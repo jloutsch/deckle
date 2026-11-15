@@ -32,7 +32,7 @@ pub(super) fn finish(w: &mut Walk, walked: Walked) -> Result<FileBlocks, ItemErr
     } = walked;
     // `measured=style_resolver is not None`: a file always has one here.
     let href = w.file().href.clone();
-    let mut blocks = space_between(&href, blocks, &mut margins, true, &mut paddings)?;
+    let mut blocks = space_between(blocks, &mut margins, true, &mut paddings);
     let mut trailing_ids = Vec::new();
     let mut end_ids = Vec::new();
     if !blocks.is_empty() {
