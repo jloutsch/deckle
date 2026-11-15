@@ -16,7 +16,8 @@ use deckle_limits::MAX_SELECTOR_WORK;
 use serde_json::Value;
 
 /// Every book under `fixtures/kfxgen/cascade/`.
-const BOOKS: [&str; 13] = [
+const BOOKS: [&str; 14] = [
+    "comments_in_tree",
     "css_quirks",
     "directions",
     "fake_margins",

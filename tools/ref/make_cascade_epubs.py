@@ -21,6 +21,13 @@ Writes, into OUT_DIR (fixtures/kfxgen/sources):
   character reference, and uses an HTML entity XML does not know; html4.xhtml is HTML 4 with
   upper-case tags and attributes and an HTML 4.0 DOCTYPE (names lower-cased); cp1252.xhtml is
   windows-1252, declared in its XML declaration, with curly quotes, a euro sign and an e-acute.
+- comments_in_tree.epub: comments where Calibre's steps read lxml's children, which count
+  them: an empty <b> holding only a comment beside one holding nothing (parse_html's
+  remove_elem), a <br> holding only a comment (made a <div> when it has children), a comment
+  between the head's children (its whitespace reset), a rule inside a comment in a <style>
+  (the Stylizer reads a child's text), a left-floated drop cap holding a comment beside one
+  without (flatcss is_drop_cap counts children), and a comment before the first child of a
+  <div> whose children :first-child and :nth-child(2) pick (css_selectors counts it).
 
 tools/ref/kfxgen_models.sh --cascade runs it. Fixed zip dates: the same script makes the same
 bytes. The dumps are the reference; nothing here says what Calibre does with them.
@@ -310,6 +317,63 @@ def malformed(out):
     )
 
 
+def comments_in_tree(out):
+    css = (
+        "p { margin: 0 }\n"
+        "span.cap { float: left; font-size: 3em; line-height: 0.5 }\n"
+        "div.picks p:first-child { color: green }\n"
+        "div.picks p:nth-child(2) { color: blue }\n"
+    )
+    body = (
+        '<p id="b1">Before <b><!--c--></b>after a bold holding only a comment.</p>\n'
+        '<p id="b2">Before <b></b>after a bold holding nothing.</p>\n'
+        '<p id="br1">A break holding a comment<br><!--c--></br>after it.</p>\n'
+        '<p class="ruled">Coloured by the rule inside the comment in the style element.</p>\n'
+        '<p id="cap1"><span class="cap">T<!--c--></span>he drop cap holds a comment.</p>\n'
+        '<p id="cap2"><span class="cap">T</span>he drop cap holds none.</p>\n'
+        '<div class="picks"><!-- c --><p>First paragraph.</p><p>Second paragraph.</p></div>'
+    )
+    text = (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        f'<html xmlns="{XHTML_NS}"><head><title>Comments</title>\n'
+        "<!-- a comment between the head's children -->\n"
+        '<link rel="stylesheet" type="text/css" href="style.css"/>\n'
+        '<style type="text/css"><!-- p.ruled { color: red } --></style>\n'
+        f"</head>\n<body>\n{body}\n</body>\n</html>\n"
+    )
+    manifest = "\n".join(
+        [
+            '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>',
+            '<item id="css" href="style.css" media-type="text/css"/>',
+            '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>',
+        ]
+    )
+    ncx = (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head/>'
+        "<docTitle><text>Comments</text></docTitle><navMap>"
+        '<navPoint id="n1" playOrder="1"><navLabel><text>Comments</text></navLabel>'
+        '<content src="c1.xhtml"/></navPoint></navMap></ncx>\n'
+    )
+    write_epub(
+        out / "comments_in_tree.epub",
+        [
+            (
+                "content.opf",
+                opf2(
+                    "Comments In Tree",
+                    "<dc:language>en</dc:language>",
+                    manifest,
+                    '<itemref idref="c1"/>',
+                ),
+            ),
+            ("toc.ncx", ncx),
+            ("style.css", css),
+            ("c1.xhtml", text),
+        ],
+    )
+
+
 def main(out):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
@@ -317,6 +381,7 @@ def main(out):
     no_toc(out)
     fake_margins(out)
     malformed(out)
+    comments_in_tree(out)
 
 
 if __name__ == "__main__":

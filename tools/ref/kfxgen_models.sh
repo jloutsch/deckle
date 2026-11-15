@@ -15,6 +15,14 @@
 #   DECKLE_KFXGEN_CORPUS_OUT=gutenberg/models \
 #     tools/ref/kfxgen_models.sh --corpus gutenberg/*.epub       # a corpus, outside git;
 #                                                                # each book's cascade dump too
+#   KFXGEN_ONLY=comments_in_tree tools/ref/kfxgen_models.sh     # one committed source only:
+#                                                                # with no flag, --cascade or
+#                                                                # --convert, only its folder is
+#                                                                # made and replaced
+#
+# KFXGEN_ONLY makes no source and leaves every other folder as it is. Its run must have the
+# kfxgen commit and tools (and, for --cascade, the month and user-agent rules) of the folder it
+# goes into, or nothing is replaced.
 #
 # Needs a kfxgen repo (KFXGEN, default ../kfxgen-public; only read) with its .venv, and calibre.
 # KFXGEN_REF is the kfxgen commit to take (default ad38ec8, the one the port targets); it must
@@ -30,6 +38,7 @@ KFXGEN="$(cd "${KFXGEN:-$ROOT/../kfxgen-public}" && pwd)"
 # The commit the port targets, and the oldest the script takes.
 KFXGEN_MIN=ad38ec8f192126f8cf2b9b61814c6dabe3d12c52
 KFXGEN_REF="${KFXGEN_REF:-$KFXGEN_MIN}"
+ONLY="${KFXGEN_ONLY:-}"
 PY="${KFXGEN_PYTHON:-$KFXGEN/.venv/bin/python}"
 EBOOK_CONVERT="${EBOOK_CONVERT:-ebook-convert}"
 CALIBRE_CUSTOMIZE="${CALIBRE_CUSTOMIZE:-calibre-customize}"
@@ -111,6 +120,22 @@ record_tools() {
   } >"$1/TOOLS"
 }
 
+# replace_only BUILD DEST: with KFXGEN_ONLY, DEST/$ONLY replaced by BUILD/$ONLY, once BUILD's
+# KFXGEN_COMMIT and TOOLS (written by record_tools) are DEST's.
+replace_only() {
+  local f
+  for f in KFXGEN_COMMIT TOOLS; do
+    cmp -s "$1/$f" "$2/$f" || {
+      echo "$ONLY: this run's $f is not the one in $2:" >&2
+      diff "$1/$f" "$2/$f" >&2 || true
+      exit 1
+    }
+  done
+  rm -rf "${2:?}/$ONLY"
+  mv "$1/$ONLY" "$2/$ONLY"
+  du -sh "$2/$ONLY" "$ROOT/fixtures/kfxgen"
+}
+
 # record_cascade_run DIR: the time zone and month of a run that dumped cascades, after
 # record_tools. A year-only dc:date takes day 15 of this month
 # (calibre.utils.date.parse_only_date).
@@ -119,6 +144,19 @@ record_cascade_run() {
     echo "TZ: UTC"
     echo "month of the run: $(TZ=UTC date +%Y-%m)"
   } >>"$1/TOOLS"
+}
+
+# gzip_models DIR: each DIR/*/model.json stored compressed, with no name or time in the header,
+# so two runs give the same bytes; deckle_kfxgen::load reads either form. Corpus models
+# (--corpus) stay plain.
+gzip_models() {
+  "$PY" -I -c '
+import gzip, sys
+from pathlib import Path
+for p in sorted(Path(sys.argv[1]).glob("*/model.json")):
+    p.with_name("model.json.gz").write_bytes(gzip.compress(p.read_bytes(), 9, mtime=0))
+    p.unlink()
+' "$1"
 }
 
 if [ "${1:-}" = "--corpus" ]; then
@@ -165,8 +203,27 @@ calibre_book() {
 # The cascade fixtures (fixtures/kfxgen/README.md, cascade/): the sources built here, and
 # committed sources that between them hold lists, tables, pictures, notes, vertical and
 # right-to-left text and an embedded font. Kept under 1.5 MB.
-CASCADE_BUILT="css_quirks package_quirks no_toc fake_margins malformed"
+CASCADE_BUILT="css_quirks package_quirks no_toc fake_margins malformed comments_in_tree"
 CASCADE_SOURCES="$CASCADE_BUILT lists notes vertical rtl fonts directions frames navigation"
+
+if [ "${1:-}" = "--cascade" ] && [ -n "$ONLY" ]; then
+  case " $CASCADE_SOURCES " in
+    *" $ONLY "*) ;;
+    *) echo "$ONLY is not in CASCADE_SOURCES" >&2; exit 1 ;;
+  esac
+  rm -rf "$CASCADE_BUILD"
+  mkdir -p "$CASCADE_BUILD"
+  calibre_book "$ONLY" "$SOURCES/$ONLY.epub" "$CASCADE_BUILD"
+  cmp -s "$CASCADE/ua_rules.json" "$CASCADE_BUILD/$ONLY/ua_rules.json" || {
+    echo "$ONLY: other user-agent rules than cascade/ua_rules.json" >&2
+    exit 1
+  }
+  rm "$CASCADE_BUILD/$ONLY/ua_rules.json"
+  record_tools "$CASCADE_BUILD"
+  record_cascade_run "$CASCADE_BUILD"
+  replace_only "$CASCADE_BUILD" "$CASCADE"
+  exit 0
+fi
 
 if [ "${1:-}" = "--cascade" ]; then
   rm -rf "$CASCADE_BUILD"
@@ -201,7 +258,9 @@ if [ "${1:-}" = "--convert" ]; then
   rm -rf "$CONVERT_BUILD"
   mkdir -p "$CONVERT_BUILD/units"
   "$PY" -I "$HOOK/convert_dump.py" units "$TREE" "$CONVERT_BUILD/units/inline_style.json"
-  for epub in "$SOURCES"/*.epub; do
+  epubs=("$SOURCES"/*.epub)
+  [ -z "$ONLY" ] || epubs=("$SOURCES/$ONLY.epub")
+  for epub in "${epubs[@]}"; do
     name="$(basename "$epub" .epub)"
     model="$OUT/$name"
     [ -f "$model/model.json.gz" ] || {
@@ -247,6 +306,14 @@ sys.exit(not same)
     echo "convert $name: $(du -sk "$CONVERT_BUILD/$name" | cut -f1) KB"
   done
   record_tools "$CONVERT_BUILD"
+  if [ -n "$ONLY" ]; then
+    cmp -s "$CONVERT_BUILD/units/inline_style.json" "$CONVERT/units/inline_style.json" || {
+      echo "$ONLY: this run's units/inline_style.json is not the committed one" >&2
+      exit 1
+    }
+    replace_only "$CONVERT_BUILD" "$CONVERT"
+    exit 0
+  fi
   rm -rf "$CONVERT"
   mv "$CONVERT_BUILD" "$CONVERT"
   du -sh "$CONVERT" "$ROOT/fixtures/kfxgen"
@@ -262,6 +329,16 @@ esac
 
 rm -rf "$BUILD"
 mkdir -p "$BUILD" "$SOURCES"
+
+if [ -n "$ONLY" ]; then
+  [ -f "$SOURCES/$ONLY.epub" ] || { echo "$ONLY: no sources/$ONLY.epub" >&2; exit 1; }
+  calibre_model "$ONLY" "$SOURCES/$ONLY.epub" "$BUILD"
+  record_tools "$BUILD"
+  gzip_models "$BUILD"
+  replace_only "$BUILD" "$OUT"
+  exit 0
+fi
+
 "$PY" "$ROOT/tools/ref/kfxgen_models.py" shim "$TREE" "$BUILD"
 "$PY" "$ROOT/tools/ref/kfxgen_models.py" args "$TREE" "$BUILD"
 
@@ -315,15 +392,7 @@ for epub in "$SOURCES"/*.epub; do
   calibre_model "$(basename "$epub" .epub)" "$epub" "$BUILD"
 done
 record_tools "$BUILD"
-# Stored compressed, with no name or time in the header, so two runs give the same bytes;
-# deckle_kfxgen::load reads either form. Corpus models (--corpus) stay plain.
-"$PY" -I -c '
-import gzip, sys
-from pathlib import Path
-for p in sorted(Path(sys.argv[1]).glob("*/model.json")):
-    p.with_name("model.json.gz").write_bytes(gzip.compress(p.read_bytes(), 9, mtime=0))
-    p.unlink()
-' "$BUILD"
+gzip_models "$BUILD"
 rm -rf "$OUT"
 mv "$BUILD" "$OUT"
 du -sh "$ROOT/fixtures/kfxgen"

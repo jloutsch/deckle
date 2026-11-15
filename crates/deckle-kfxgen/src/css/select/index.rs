@@ -28,8 +28,8 @@ pub struct DocIndex {
     pub(super) parent: Vec<u32>,
     /// One past the last position in the element's subtree.
     pub(super) end: Vec<u32>,
-    /// The element's index among its parent's children, and how many they are (the root: 0
-    /// of 1).
+    /// The element's index among its parent's child nodes, and how many they are (the root: 0
+    /// of 1). Comments count, as in `sibling_count`, which reads lxml's `index` and `len`.
     pub(super) child_index: Vec<u32>,
     pub(super) siblings: Vec<u32>,
     /// The root is in a namespace (Calibre's `'{' in self.root.tag`), so names drop theirs.
@@ -82,10 +82,10 @@ impl DocIndex {
             }
         }
         let end = (0..n).map(|i| at(i).saturating_add(size[i])).collect();
-        let child_index = nodes.iter().map(|&e| at(dom.index_in_parent(e))).collect();
+        let child_index = nodes.iter().map(|&e| at(dom.node_index(e))).collect();
         let siblings = nodes
             .iter()
-            .map(|&e| dom.parent(e).map_or(1, |p| at(dom.element_count(p))))
+            .map(|&e| dom.parent(e).map_or(1, |p| at(dom.children(p).len())))
             .collect();
         let root_ns = dom.namespace(dom.root()).is_some();
 

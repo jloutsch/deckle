@@ -25,10 +25,10 @@ fn read_book_matches_every_dump() {
         check_book(&book, &Dump::fixture(name), &mut tally);
     }
     tally.assert_clean(&allowed());
-    assert_eq!(tally.books.len(), 13);
+    assert_eq!(tally.books.len(), 14);
     assert_eq!(
         (tally.files, tally.rules, tally.font_faces),
-        (49, 306, 3),
+        (50, 311, 3),
         "files, book rules, @font-face rules"
     );
     assert!(tally.marks >= 3, "{} marks", tally.marks);

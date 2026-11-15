@@ -35,7 +35,10 @@ stay plain `model.json`. `KFXGEN_COMMIT` names the kfxgen commit they came from,
 `TOOLS` the Calibre (`ebook-convert --version`) and the kfxgen venv's Python and lxml that made
 them (calibre 9.18.0, Python 3.13.18, lxml 6.0.2). Regenerating expects the same Calibre: its CSS
 handling shapes a Calibre-path fixture's `model.json`, so another version can change those, and
-possibly their `expected.kfx`. Rebuild all of them with `tools/ref/kfxgen_models.sh`; two runs
+possibly their `expected.kfx`. Rebuild all of them with `tools/ref/kfxgen_models.sh`, or one
+committed source with `KFXGEN_ONLY=<name>` (also with `--cascade` and `--convert`: only that
+source's folder is made and replaced, and only when the run's kfxgen commit and tools are the
+folder's); two runs
 give the same `expected.kfx`, and the same `model.json` but for the order of the `images`
 argument of a book with several pictures, which calibre lists in another order from run to run
 (`block_picture_769`, `block_picture_770`, `pictures_side_by_side_766` and
@@ -155,6 +158,7 @@ the macOS app's).
 | `no_toc` | synthetic, the same script | neither NCX nor nav: Calibre makes the contents |
 | `fake_margins` | synthetic, the same script | margins Calibre's RemoveFakeMargins removes and keeps |
 | `malformed` | synthetic, the same script | files Calibre reads with its HTML parser, entities, HTML 4, windows-1252 |
+| `comments_in_tree` | synthetic, the same script | comments where Calibre's steps count lxml's children: an empty `<b>` and a `<br>` holding one, one between the head's children, a rule inside one in `<style>`, a drop cap holding one, one before the children `:first-child` and `:nth-child(2)` pick |
 | `text_edges` | synthetic (`tools/ref/make_convert_epubs.py`) | paragraphs of only no-break spaces, U+001C in text (Calibre drops it), a tab in `<pre>`, a literal U+2028, astral characters before a link; shifts in shifts, a not-bold span in bold and in a heading, `<sub>`, line-through by `<s>`, `<del>` and CSS |
 | `block_edges` | synthetic, the same script | `<pre>` with spaces, tabs and blank lines; hidden elements; an `<epub:switch>`; page breaks before and after; `clear` after a float; comments in and between paragraphs |
 | `tables_more` | synthetic, the same script | a rows-path table (a hidden row, loose text), a notes table, a row holding a table, a caption, colspan and rowspan, cells of paragraphs |
@@ -267,6 +271,7 @@ The manifest is Calibre's after its transforms: the book's stylesheets are gone,
 | `no_toc` | 2 | 17 KB | the same script: no NCX and no nav, so Calibre makes the contents |
 | `fake_margins` | 2 | 20 KB | the same script: a margin `RemoveFakeMargins` removes, and one it keeps |
 | `malformed` | 4 | 29 KB | the same script: files Calibre does not read as plain XHTML: tags left open and an unquoted attribute (its HTML parser), DOCTYPE entities, HTML 4 in upper case, windows-1252 |
+| `comments_in_tree` | 1 | 12 KB | the same script: comments where Calibre's steps count or read lxml's children (`parse_html`'s empty-element removal, `<br>` and head whitespace, the Stylizer's `<style>` text, a drop cap, `:first-child` and `:nth-child`) |
 | `lists` | 2 | 28 KB | lists |
 | `notes` | 6 | 62 KB | pop-up notes (`noteref`), notes lists |
 | `vertical` | 3 | 51 KB | vertical-rl Japanese, rtl spine, ruby |
@@ -276,7 +281,7 @@ The manifest is Calibre's after its transforms: the book's stylesheets are gone,
 | `frames` | 6 | 78 KB | figures, pictures, floats |
 | `navigation` | 4 | 37 KB | an NCX naming places inside chapters |
 
-747 KB in all, with `ua_rules.json` (19 KB).
+759 KB in all, with `ua_rules.json` (19 KB).
 
 ## convert/
 

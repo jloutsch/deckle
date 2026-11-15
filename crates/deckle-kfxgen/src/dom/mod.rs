@@ -337,6 +337,15 @@ impl Dom {
         }
     }
 
+    /// lxml's `parent.index(n)`: `n`'s index among all its parent's child nodes, comments
+    /// counted; 0 for the root and for a removed node.
+    pub(crate) fn node_index(&self, n: NodeId) -> usize {
+        match self.el(n).parent {
+            Some(_) => self.el(n).pos as usize,
+            None => 0,
+        }
+    }
+
     /// The child node of the same parent just before `n`, a comment or an element: lxml's
     /// `getprevious()`.
     pub fn prev_sibling(&self, n: NodeId) -> Option<NodeId> {

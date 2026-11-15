@@ -388,10 +388,6 @@ records the cost; the outcome note's "Before phase 4" lists the options.
   are one kind of node: the tree does not say which, and a processing instruction keeps its
   value, not its target. A comment made only of dashes keeps them, where Calibre's HTML 4
   fallback parser strips the dashes first.
-- Paths, `:nth-child`, `:first-child`, `:last-child` and `:nth-last-child` count elements only.
-  Calibre's `css_selectors` counts comments there too (`sibling_count` uses lxml's `index` and
-  `len`), so in a parent with a comment among its children those selectors can match other
-  elements.
 - `HTMLPreProcessor`'s rule sets for Baen books, Book Designer and calibre's own pdftohtml
   output, and the user's search and replace, are not run.
 - A document whose root is `<ncx>` is kept as parsed; Calibre parses it again as XML

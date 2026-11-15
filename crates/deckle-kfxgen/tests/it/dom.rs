@@ -16,7 +16,8 @@ use serde_json::Value;
 use crate::support::Dump;
 
 /// Every book under `fixtures/kfxgen/cascade/`.
-const BOOKS: [&str; 13] = [
+const BOOKS: [&str; 14] = [
+    "comments_in_tree",
     "css_quirks",
     "directions",
     "fake_margins",
@@ -393,8 +394,8 @@ fn parse_cleanups_match_calibre() {
     }
     assert_eq!(
         matched + failed.len(),
-        49,
-        "the 13 books have 49 spine files"
+        50,
+        "the 14 books have 50 spine files"
     );
 }
 
@@ -917,5 +918,49 @@ fn itertext_matches_the_dump() {
             files += 1;
         }
     }
-    assert_eq!(files, 49, "the 13 books have 49 spine files");
+    assert_eq!(files, 50, "the 14 books have 50 spine files");
+}
+
+#[test]
+fn head_whitespace_resets_comment_tails_as_calibre() {
+    // `comments_in_tree` has a comment between the head's children: `parse_html` resets the
+    // tail of each child of the head, the comment's too. The dump's head ends in the
+    // stylesheet links Calibre adds later, after the children compared here.
+    let dump = Dump::fixture("comments_in_tree");
+    let doc_text = dump.xhtml("OEBPS/c1.xhtml");
+    let doc = deckle_limits::parse_xml(&doc_text, ParsingOptions::default()).unwrap();
+    let head = doc.root_element().first_element_child().unwrap();
+    let want: Vec<(bool, String, String)> = head
+        .children()
+        .filter(|n| n.is_element() || n.is_comment())
+        .map(|n| {
+            let name = if n.is_comment() {
+                n.text().unwrap_or("").to_owned()
+            } else {
+                n.tag_name().name().to_owned()
+            };
+            (n.is_comment(), name, text_run(n.next_sibling()))
+        })
+        .collect();
+
+    let mut zip = EpubReader::open(&fixtures::kfxgen("sources/comments_in_tree.epub")).unwrap();
+    let dom = dom::parse(&read_spine_file(&mut zip, "OEBPS/c1.xhtml")).unwrap();
+    let head = dom.children(dom.root())[0];
+    // The book's own `<link>` and `<style>` go when the styles are flattened.
+    let got: Vec<(bool, String, String)> = dom
+        .children(head)
+        .iter()
+        .filter(|&&c| !matches!(dom.tag(c), "link" | "style"))
+        .map(|&c| {
+            let name = if dom.is_comment(c) {
+                dom.text(c)
+            } else {
+                dom.tag(c)
+            };
+            (dom.is_comment(c), name.to_owned(), dom.tail(c).to_owned())
+        })
+        .collect();
+    assert_eq!(got.len(), 3, "{got:?}");
+    assert_eq!(got, want[..3]);
+    assert!(got[1].0, "the comment is the head's second child");
 }
