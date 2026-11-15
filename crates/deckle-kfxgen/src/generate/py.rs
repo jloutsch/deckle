@@ -786,8 +786,18 @@ mod tests {
             ("1 2", None),
             ("2\u{2028}1", None),
             ("1,5", None),
+            ("\u{85}1.5\u{85}", Some(1.5)),
+            ("\u{85} 2 \u{85}", Some(2.0)),
+            ("+ 1", None),
         ] {
             assert_eq!(py_float(s), want, "{s:?}");
+        }
+        // float() has no limit on digits, unlike int(): 4301 digits read as Python reads them.
+        let ones = "1".repeat(4301);
+        let one = format!("{}1", "0".repeat(4300));
+        let tiny = format!("0.{}1", "0".repeat(4299));
+        for (s, want) in [(&ones, f64::INFINITY), (&one, 1.0), (&tiny, 0.0)] {
+            assert_eq!(py_float(s), Some(want), "{} digits", s.len());
         }
         for nan in ["nan", "-nan", "+nan", "NaN"] {
             assert!(py_float(nan).is_some_and(f64::is_nan), "{nan}");
