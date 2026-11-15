@@ -346,3 +346,28 @@ fn empty_paragraphs_in_a_row_carry_their_ids_in_linear_time() {
     let ids = got.blocks[0].get("anchor_ids").unwrap();
     assert_eq!(ids.as_list().map(<[PyValue]>::len), Some(3));
 }
+
+/// Where kfxgen raises inside the walk (it leaves the spine item out), the port gives
+/// `ItemError::Raised` with Python's exception: a box tag's width in `in` spelt with U+0131
+/// (`_box_width` → `parse_css_length`), and a paragraph's `text-align` that calibre reads as
+/// a length (`compute_block_style`).
+#[test]
+fn what_kfxgen_raises_on_in_the_walk_is_raised() {
+    for (body, css, exception) in [
+        (
+            "<div class=\"w\">x</div>",
+            ".w { width: 2\u{131}n }",
+            "KeyError",
+        ),
+        (
+            "<p class=\"a\">x</p>",
+            ".a { text-align: 5px }",
+            "AttributeError",
+        ),
+    ] {
+        match extract(&page(body, css)) {
+            Err(ItemError::Raised(r)) => assert_eq!(r.exception, exception, "{css}"),
+            other => panic!("{css}: {:?}", other.map(|b| b.blocks.len())),
+        }
+    }
+}
