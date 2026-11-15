@@ -712,3 +712,24 @@ The picture tokens and the initial (`src/convert/pictures.rs`, `initial.rs`, at 
   recursion limit raise `RecursionError`, which leaves the spine item out. The port uses loops.
   `read_book` refuses a file nested deep enough for either, so only a tree built by hand gets
   there.
+
+## The block walk
+
+`extract_blocks_from_html`'s walk (`src/convert/blocks/`, `block_bidi.rs`, at ad38ec8):
+
+- kfxgen recurses four calls per nested container (`_walk`, `_walk_flow`, `_walk_element`,
+  `_walk_container`), and past Python's recursion limit raises `RecursionError`, which leaves
+  the spine item out. The pinned `extract_blocks_from_html`, called from a script under Python
+  3.14's default limit (1,000) with lxml 6.0.2 and no style resolver, raises at 249 `<div>`s
+  nested in the `<body>`; inside a calibre conversion its stack starts deeper, so it raises a
+  little sooner (not run). `read_book` lets a file through up to 256 levels below the root, so a
+  file nested about 245 to 254 levels deep is left out by kfxgen and converted here. The port
+  walks with a stack of its own and refuses an element more than 256 levels below the body
+  (`Error::TooLarge`), which only a tree built by hand reaches.
+- A block holding a MathML `<math>` that is not shown (hidden, or in a part the walk leaves
+  out) is refused (`Error::Unsupported`, "math"), as a shown one is (plan decision 2). kfxgen
+  writes the block with `label_texts`, its equations' text for matching a contents label;
+  the generator refuses `label_texts` anyway.
+- Each anchor key a block gets is a copy of the file's href and an id. The copies are charged to
+  the file's style text budget, so a file with a very long href and very many ids is refused
+  where kfxgen makes the book.
