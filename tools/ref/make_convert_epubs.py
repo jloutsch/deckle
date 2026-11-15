@@ -22,6 +22,10 @@ each a few kilobytes of hand-written markup, named for what it holds:
   licence beside it as LiberationSerif-OFL.txt) cut to the glyphs the book uses. No WOFF 2.
 - package_more.epub: landmarks from the OPF guide only, an NCX pageList, a year-only date, a
   publisher, a contents page listing in a class="toc" block, and a dedication.
+- listing_rerun.epub: a contents listing (class="toc") on an opening page that also holds the
+  title and a byline, no chapter titled Contents and no heading-sized page with the listing,
+  so kfxgen gets no Contents page and converts the book again keeping the listing
+  (_listing_without_contents, the second pass with keep_nav_listings).
 - marks.epub: link colours (a:link, a class's a:visited, a bare a:visited, a link's own style
   colour, a link with no href) in a horizontal file of a vertical Japanese book, and a
   vertical-rl file with a horizontal block, vertical text again inside it.
@@ -391,6 +395,23 @@ def package_more(out):
     )
 
 
+def listing_rerun(out):
+    opening = page(
+        "Opening",
+        "<h1>Listing Rerun</h1>\n<p>By Fixture Author</p>\n"
+        '<div class="toc"><p><a href="c1.xhtml">Chapter One</a></p>'
+        '<p><a href="c2.xhtml">Chapter Two</a></p></div>',
+    )
+    c1 = page("Chapter One", "<h1>Chapter One</h1>\n<p>The first chapter.</p>")
+    c2 = page("Chapter Two", "<h1>Chapter Two</h1>\n<p>The second chapter.</p>")
+    book(
+        out,
+        "listing_rerun",
+        "Listing Rerun",
+        [("opening", "Opening", opening), ("c1", "Chapter One", c1), ("c2", "Chapter Two", c2)],
+    )
+
+
 def marks(out):
     links = page(
         "リンク",
@@ -436,6 +457,7 @@ def main(out):
         pictures_more,
         fonts_woff,
         package_more,
+        listing_rerun,
         marks,
     ):
         build(out)

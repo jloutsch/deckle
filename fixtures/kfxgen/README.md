@@ -38,8 +38,8 @@ handling shapes a Calibre-path fixture's `model.json`, so another version can ch
 possibly their `expected.kfx`. Rebuild all of them with `tools/ref/kfxgen_models.sh`; two runs
 give the same `expected.kfx`, and the same `model.json` but for the order of the `images`
 argument of a book with several pictures, which calibre lists in another order from run to run
-(`block_picture_770`, `pictures_side_by_side_766` and `vertical_pictures_761` on 2026-11-14;
-the committed models were kept). The script
+(`block_picture_769`, `block_picture_770`, `pictures_side_by_side_766` and
+`vertical_pictures_761` on 2026-11-14; the committed models were kept). The script
 needs kfxgen `ad38ec8` or later (the commit the port follows), and stops on a
 `KFXGEN_REF` that doesn't contain it. It exports commit
 `KFXGEN_REF` (default `ad38ec8`) of the kfxgen repo `KFXGEN` (default `../kfxgen-public`, only
@@ -161,6 +161,7 @@ the macOS app's).
 | `pictures_more` | synthetic, the same script | a GIF, a CMYK JPEG, a 2,400 px PNG, an `<svg>` around an `<image>`, a page drawn by a CSS background picture |
 | `fonts_woff` | synthetic, the same script | one WOFF 1 face (Liberation Serif cut to the book's glyphs) |
 | `package_more` | synthetic, the same script | landmarks from the OPF guide only, an NCX `pageList`, a year-only date, a publisher, a `class="toc"` listing, a dedication |
+| `listing_rerun` | synthetic, the same script | a `class="toc"` listing on an opening page holding the title and a byline, and no Contents chapter: kfxgen converts the book a second time keeping the listing (`keep_nav_listings`) |
 | `marks` | synthetic, the same script | link colours by `a:link`, a class's `a:visited`, a bare `a:visited` and a link's own style, in a vertical Japanese book; a horizontal block in a vertical-rl file, vertical text inside it |
 
 The generator refuses four of these models, as it refuses any book needing a feature not ported
@@ -294,8 +295,8 @@ docstring has every key):
 |---|---|
 | `files.json` | spine href to `NNN`, its place in calibre's spine |
 | `resolver/NNN.json.gz` | kfxgen's style resolver on every element of the file, and `compute_block_style` of it |
-| `inline/NNN.json.gz` | each paragraph's runs (`_walk_inline` from a block) and `normalize_runs_with_anchors` of them |
-| `blocks/NNN.json.gz` | `extract_blocks_from_html`'s blocks and out-lists, and the input of each `_space_between` call with its margins |
+| `inline/NNN.json.gz` | each paragraph's runs (`_walk_inline` from a block) and `normalize_runs_with_anchors` of them, first pass; a second pass's in `inline/NNN.pass1.json.gz` |
+| `blocks/NNN.json.gz` | `extract_blocks_from_html`'s blocks and out-lists, and the input of each `_space_between` call with its margins: one record per pass, its `pass` 0 or 1 |
 | `toc.json.gz` | contents entries, spine order, note ids, link targets |
 | `assembly.json.gz` | per pass, the files before chapter assembly and the chapters after it |
 | `calibre_opf.xml`, `calibre_ncx.xml` | the OPF calibre wrote and the NCX it names, verbatim but for the random name of an NCX calibre makes from a nav (`tmpXXXXXXXX.ncx`) |
@@ -303,8 +304,10 @@ docstring has every key):
 `convert/units/inline_style.json` is a table of inputs and outputs of the pure functions of
 kfxgen's `inline_style.py` and `font_table.py`, made by importing them, without Calibre.
 `crates/deckle-kfxgen/tests/it/convert_support.rs` reads the dumps (`dump`) and compares a value
-with one (`model_diff`). No source makes a second pass (`keep_nav_listings`), so `assembly.json.gz`
-holds one pass each.
+with one (`model_diff`). Only `listing_rerun` makes a second pass (`keep_nav_listings`): its `assembly.json.gz` holds two
+passes, its `blocks/` two records, and it has `inline/NNN.pass1.json.gz`; every other book one.
+`resolver/` is the first resolver built for each file; the dump stops if any later one (the second
+pass's, `_footnote_keys`') gives other values, so it holds for every pass.
 
 ## Phase 1 timings
 

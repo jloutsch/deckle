@@ -252,6 +252,45 @@ fn model_diff_sees_order_presence_and_float_bits() {
         model_diff(&set(vec![s("x")]), &set(vec![s("y"), s("x")])),
         vec![": 1 items != dump 2"]
     );
+    // Same length, other members.
+    assert_eq!(
+        model_diff(&set(vec![s("x"), s("z")]), &set(vec![s("x"), s("y")])),
+        vec!["[1]: \"z\" != dump \"y\""]
+    );
+
+    // Objects: the class, then the state.
+    let obj = |class: &str, a: i64| P::Obj {
+        class: class.into(),
+        state: Box::new(dict(vec![("a", P::Int(a))])),
+    };
+    assert!(model_diff(&obj("kfxgen.x.A", 1), &obj("kfxgen.x.A", 1)).is_empty());
+    assert_eq!(
+        model_diff(&obj("kfxgen.x.A", 1), &obj("kfxgen.x.B", 1)),
+        vec![": object kfxgen.x.A != dump kfxgen.x.B"]
+    );
+    assert_eq!(
+        model_diff(&obj("kfxgen.x.A", 1), &obj("kfxgen.x.A", 2)),
+        vec![".kfxgen.x.A[\"a\"]: Int(1) != dump Int(2)"]
+    );
+
+    // A dict key 1 is not a key 1.0.
+    let keyed = |k: PyValue| P::Dict(vec![(k, P::None)]);
+    let d = model_diff(&keyed(P::Int(1)), &keyed(P::Float(1.0)));
+    assert_eq!(d.len(), 2, "{d:?}");
+    assert!(
+        d[0].starts_with(": key 1.0") && d[0].ends_with("missing"),
+        "{d:?}"
+    );
+    assert!(d[1].starts_with(": key Int(1) not in the dump"), "{d:?}");
+
+    // NaN: equal to a NaN of the same bits, not to a number or a NaN of other bits.
+    let nan = f64::NAN;
+    assert!(model_diff(&P::Float(nan), &P::Float(nan)).is_empty());
+    assert_eq!(model_diff(&P::Float(nan), &P::Float(1.0)).len(), 1);
+    assert_eq!(
+        model_diff(&P::Float(nan), &P::Float(f64::from_bits(nan.to_bits() ^ 1))).len(),
+        1
+    );
 }
 
 /// Every dump of every source loads, and each spine file has its resolver and blocks dumps.
@@ -281,9 +320,24 @@ fn every_convert_dump_loads() {
                     "{book} {kind}/{n}"
                 );
             }
-            let inline = format!("inline/{n}.json.gz");
-            if root.join(book).join(&inline).exists() {
-                assert!(matches!(dump(book, &inline), PyValue::List(_)));
+            let PyValue::List(calls) = dump(book, &format!("blocks/{n}.json.gz")) else {
+                unreachable!()
+            };
+            for (i, call) in calls.iter().enumerate() {
+                assert_eq!(
+                    call.get("pass"),
+                    Some(&PyValue::Int(i as i64)),
+                    "{book} {n}"
+                );
+            }
+            // The first pass's runs, then a second pass's when there was one.
+            for inline in [
+                format!("inline/{n}.json.gz"),
+                format!("inline/{n}.pass1.json.gz"),
+            ] {
+                if root.join(book).join(&inline).exists() {
+                    assert!(matches!(dump(book, &inline), PyValue::List(_)));
+                }
             }
         }
         assert!(dump(book, "toc.json.gz").get("spine").is_some(), "{book}");
@@ -294,7 +348,13 @@ fn every_convert_dump_loads() {
             !passes.is_empty() && passes.iter().all(|p| p.get("chapters").is_some()),
             "{book}: a pass with no chapters"
         );
+        let rerun = root.join(book).join("inline/000.pass1.json.gz").exists();
+        assert_eq!(passes.len(), if rerun { 2 } else { 1 }, "{book}");
     }
+    assert!(
+        root.join("listing_rerun/inline/000.pass1.json.gz").exists(),
+        "listing_rerun makes a second pass"
+    );
     assert!(
         dump("units", "inline_style.json")
             .get("emitted_name")

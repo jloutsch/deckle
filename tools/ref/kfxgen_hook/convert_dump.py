@@ -13,18 +13,21 @@ assembly, and ``write_if_asked`` at the end of ``convert_oeb_to_kfx``, which wri
 
 - ``files.json``: spine href to ``NNN``, its position in calibre's spine (as ``book_dump``).
 - ``resolver/NNN.json.gz`` (D1), from ``_build_style_resolver``, once per href (the first
-  resolver built for it: the per-file loop's): ``[path, resolve(e),
+  resolver built for it: the first pass's per-file loop's; every later one, in a second pass or
+  ``_footnote_keys``, must give the same rows, or the dump fails): ``[path, resolve(e),
   compute_block_style(resolve(e))]`` for every element in document order, ``path`` being
   element-child indexes from the root (comments and processing instructions not counted),
   the last item None where ``resolve`` gives None.
-- ``inline/NNN.json.gz`` (W), from ``_walk_inline``: for each call with ``is_root`` true, in
-  the order the calls start, ``[path, segments, normalize_runs_with_anchors(segments)]``,
+- ``inline/NNN.json.gz`` (W), from ``_walk_inline``: for each call with ``is_root`` true in the
+  first pass, in the order the calls start, ``[path, segments,
+  normalize_runs_with_anchors(segments)]``; a second pass's in ``inline/NNN.pass1.json.gz``;
   the ``(_TABLE_SPLIT, table)`` items left out of ``segments``. A call that raises is
   ``[path, None, {"error": "<exception class>"}]``.
 - ``blocks/NNN.json.gz`` (D2), from ``extract_blocks_from_html``: one record per call (one
-  per pass), ``{"args", "blocks", "nav_listing_at", "tables_seen", "notes_seen",
-  "trailing_ids", "end_ids", "spacing"}``. ``args`` holds ``native_tables``,
-  ``keep_nav_listings`` and ``toc_targets`` (sorted, or None). ``blocks`` is the return value,
+  per pass), ``{"pass", "args", "blocks", "nav_listing_at", "tables_seen", "notes_seen",
+  "trailing_ids", "end_ids", "spacing"}``. ``pass`` is 0, or 1 in the rerun with
+  ``keep_nav_listings`` (a pass is counted at each ``note_assembly``). ``args`` holds
+  ``native_tables``, ``keep_nav_listings`` and ``toc_targets`` (sorted, or None). ``blocks`` is the return value,
   deep-copied at return; the out-lists are as the call left them, ``tables_seen`` and
   ``notes_seen`` written as each block's place in ``blocks`` (a list of indexes and keys,
   ``[3, "blocks", 0]``, or None when the block is not there). ``spacing`` (D2a) is every
@@ -157,7 +160,7 @@ def _wrap_build_style_resolver(original):
         resolve = original(oeb_book, item, log, *args, **kwargs)
         href = getattr(item, "href", "") or ""
         data = getattr(item, "data", None)
-        if _state is None or resolve is None or data is None or href in _state.resolver:
+        if _state is None or resolve is None or data is None:
             return resolve
 
         def note():
@@ -165,7 +168,11 @@ def _wrap_build_style_resolver(original):
             for path, el in _elements(data):
                 css = copy.deepcopy(resolve(el))
                 rows.append([list(path), css, None if css is None else compute_block_style(css)])
-            _state.resolver[href] = rows
+            if href not in _state.resolver:
+                _state.resolver[href] = rows
+            elif rows != _state.resolver[href]:
+                # A later build (a second pass, _footnote_keys) on a tree that changed.
+                raise RuntimeError(f"convert_dump: {href!r}: a resolver unlike the first")
 
         _noting(note)
         return resolve
@@ -187,7 +194,7 @@ def _wrap_walk_inline(original):
         href = (
             _state.calls[-1]["href"] if _state.calls else bound.arguments.get("base_href") or ""
         )
-        records = _state.inline.setdefault(href, [])
+        records = _state.inline.setdefault((href, len(_state.assembly)), [])
         at = len(records)
         records.append(None)  # its place: the calls inside it come after it
         path = _path(elem) if isinstance(elem.tag, str) else None
@@ -244,6 +251,7 @@ def _wrap_extract_blocks(original):
 
             _state.blocks.setdefault(call.pop("href"), []).append(
                 {
+                    "pass": len(_state.assembly),
                     "args": call["args"],
                     "blocks": copy.deepcopy(blocks),
                     "nav_listing_at": kept("nav_listing_at"),
@@ -435,15 +443,19 @@ def write(directory, state):
     (directory / "files.json").write_text(
         json.dumps(files, ensure_ascii=False, indent=1) + "\n", encoding="utf-8"
     )
+    # The first pass's runs in inline/NNN.json.gz, a second pass's in inline/NNN.pass1.json.gz.
+    inline = {
+        (href, f".pass{n}" if n else ""): records for (href, n), records in state.inline.items()
+    }
     for kind, noted in (
-        ("resolver", state.resolver),
-        ("inline", state.inline),
-        ("blocks", state.blocks),
+        ("resolver", {(href, ""): v for href, v in state.resolver.items()}),
+        ("inline", inline),
+        ("blocks", {(href, ""): v for href, v in state.blocks.items()}),
     ):
-        for href, value in noted.items():
+        for (href, suffix), value in noted.items():
             if href not in files:
                 raise RuntimeError(f"convert_dump: {kind} of {href!r}, not a spine file")
-            _gz_json(directory / kind / f"{files[href]}.json.gz", value, encoder)
+            _gz_json(directory / kind / f"{files[href]}{suffix}.json.gz", value, encoder)
     if state.toc is not None:
         _gz_json(directory / "toc.json.gz", state.toc, encoder)
     _gz_json(directory / "assembly.json.gz", state.assembly, encoder)
