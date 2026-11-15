@@ -45,7 +45,7 @@ mod sheet;
 mod style;
 mod value;
 
-pub(crate) use budget::Budget;
+pub(crate) use budget::{Budget, TEXT_UNIT};
 pub use cascade::{Cascaded, cascade};
 pub(crate) use cascade::{Units, decl_units};
 pub use defaults::{DEFAULTS, INHERITED};

@@ -9,7 +9,9 @@
 //! recurses once per level. Here every walk up the tree is a loop that stops at the nearest
 //! element already answered and gives each element on the way the answer, so each element is
 //! walked through once per kind of walk, however many descendants ask: a file costs one pass.
-//! The memos hold a few words per element.
+//! The memos hold a few words per element. Every copy, parse or case-fold of a value from the
+//! book is charged first ([`Resolver::charge`]), so a long value read for many elements ends in
+//! [`css::Error::Cascade`] after bounded work; kfxgen does that work for every element.
 
 use std::cell::{Cell, RefCell};
 use std::sync::LazyLock;
@@ -18,7 +20,7 @@ use regex::Regex;
 
 use super::inline_style::{Raised, css_rgb, is_transparent};
 use crate::book::File;
-use crate::css::{Profile, Styles, Value};
+use crate::css::{self, Profile, Styles, TEXT_UNIT, Units, Value};
 use crate::dom::{Dom, NodeId};
 use crate::generate::py;
 use crate::pyvalue::PyValue;
@@ -158,6 +160,8 @@ pub struct Resolver<'a> {
     /// `_calibre_keyword_table`: the rem value Calibre writes for a keyword, and Kindle
     /// Previewer's px for it.
     keyword_px: Vec<(String, f64)>,
+    /// The book text copied or read so far, in [`MAX_CASCADE_DECLS`](deckle_limits::MAX_CASCADE_DECLS) units ([`Self::charge`]).
+    units: RefCell<Units>,
     /// `sizes`: each element's font size in CSS px.
     sizes: Box<[Cell<Option<f64>>]>,
     /// Each [`INHERITED`] property's nearest element declaring it.
@@ -186,6 +190,7 @@ impl<'a> Resolver<'a> {
             dom: &file.dom,
             styles: file.styles(profile),
             keyword_px: keyword_table(profile),
+            units: RefCell::new(Units(0)),
             sizes: memos(n, None),
             inherited: std::array::from_fn(|_| memos(n, Memo::Unknown)),
             line_height: memos(n, Memo::Unknown),
@@ -197,33 +202,52 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// Charges `bytes` of the book's text about to be copied or read through: a unit of
+    /// [`MAX_CASCADE_DECLS`](deckle_limits::MAX_CASCADE_DECLS) for every [`TEXT_UNIT`] bytes, as the cascade charges a
+    /// declaration's text, counted for this resolver alone. Past the limit,
+    /// [`css::Error::Cascade`], as a cascade past it gives: the file is refused. Called before
+    /// every copy, parse or case-fold of a value, so a value of length L costs O(L) only while
+    /// the budget lasts; a value under [`TEXT_UNIT`] bytes costs nothing.
+    pub(crate) fn charge(&self, bytes: usize) -> Result<(), css::Error> {
+        self.units.borrow_mut().charge(bytes / TEXT_UNIT)
+    }
+
+    /// The units charged so far.
+    pub fn charged(&self) -> usize {
+        self.units.borrow().0
+    }
+
     /// `resolve(elem)`: the element's resolved CSS, or None where kfxgen's `resolve` catches an
     /// exception (the fill behind it, `_box_background` on a colour Python's `float()` or
-    /// `int()` refuses).
-    pub fn resolve(&self, n: NodeId) -> Option<Resolved> {
+    /// `int()` refuses). A new value on every call, as kfxgen's; a caller that needs it again
+    /// keeps it. [`css::Error::Cascade`] once the text copied and read passes the budget
+    /// ([`Self::charge`]).
+    pub fn resolve(&self, n: NodeId) -> Result<Option<Resolved>, css::Error> {
         // The only part of `resolve`'s body that can raise; every value is worked out without
         // side effects, so the order does not matter.
-        let behind = self.behind(n).ok()?;
+        let Ok(behind) = self.behind(n)? else {
+            return Ok(None);
+        };
         let tag = self.dom.tag(n);
-        let own = |prop: &str| str_or_none(self.styles.get(n, prop));
-        let inherited = |i: usize| str_or_none(self.specified_inherited(n, i));
+        let own = |prop: &str| self.text(self.styles.get(n, prop));
+        let inherited = |i: usize| self.text(self.specified_inherited(n, i)?);
         let computed = |prop: &str| self.computed(n, prop);
         let mut css = Resolved(Vec::with_capacity(48));
         let mut put = |k: &'static str, v: PyValue| css.0.push((k, v));
         put(
             "font-size",
-            PyValue::Float(py::round(self.font_size_px(n), 3)),
+            PyValue::Float(py::round(self.font_size_px(n)?, 3)),
         );
         put(
             "line-height",
-            self.line_height_factor(n)
+            self.line_height_factor(n)?
                 .map_or(PyValue::None, PyValue::Float),
         );
-        put("line-height-declared", inherited(0));
+        put("line-height-declared", inherited(0)?);
         put(
             "first-letter",
             if tag == "p" {
-                self.first_letter_css(n)
+                self.first_letter_css(n)?
             } else {
                 PyValue::None
             },
@@ -231,106 +255,127 @@ impl<'a> Resolver<'a> {
         put(
             "q-css",
             if tag == "q" {
-                self.q_css(n)
+                self.q_css(n)?
             } else {
                 PyValue::None
             },
         );
-        put("float", own("float"));
-        put("clear", own("clear"));
-        put("text-align", computed("text-align"));
-        put("own-text-align", own("text-align"));
-        put("text-indent", own("text-indent"));
-        put("margin-left", own("margin-left"));
-        put("margin-right", own("margin-right"));
-        put("margin-top", own("margin-top"));
-        put("margin-bottom", own("margin-bottom"));
-        put("font-family", computed("font-family"));
-        put("font-weight", inherited(1));
-        put("text-decoration", self.decoration_lines(n));
-        put("letter-spacing", inherited(2));
-        put("font-variant", inherited(3));
-        put("text-transform", inherited(4));
-        put("text-orientation", inherited(5));
-        put("text-emphasis-style", inherited(6));
-        put("text-combine-upright", own("text-combine-upright"));
+        put("float", own("float")?);
+        put("clear", own("clear")?);
+        put("text-align", computed("text-align")?);
+        put("own-text-align", own("text-align")?);
+        put("text-indent", own("text-indent")?);
+        put("margin-left", own("margin-left")?);
+        put("margin-right", own("margin-right")?);
+        put("margin-top", own("margin-top")?);
+        put("margin-bottom", own("margin-bottom")?);
+        put("font-family", computed("font-family")?);
+        put("font-weight", inherited(1)?);
+        put("text-decoration", self.decoration_lines(n)?);
+        put("letter-spacing", inherited(2)?);
+        put("font-variant", inherited(3)?);
+        put("text-transform", inherited(4)?);
+        put("text-orientation", inherited(5)?);
+        put("text-emphasis-style", inherited(6)?);
+        put("text-combine-upright", own("text-combine-upright")?);
         put(
             "writing-mode",
             if matches!(tag, "html" | "body") {
-                inherited(7)
+                inherited(7)?
             } else {
                 PyValue::None
             },
         );
-        put("color", str_or_none(self.specified_colour(n)));
-        put("font-style", computed("font-style"));
-        put("vertical-align", own("vertical-align"));
-        put("own-direction", own("direction"));
-        put("own-unicode-bidi", own("unicode-bidi"));
-        put("width", own("width"));
+        put("color", self.text(self.specified_colour(n)?)?);
+        put("font-style", computed("font-style")?);
+        put("vertical-align", own("vertical-align")?);
+        put("own-direction", own("direction")?);
+        put("own-unicode-bidi", own("unicode-bidi")?);
+        put("width", own("width")?);
         put(
             "height",
             if tag == "hr" {
                 // `_book_height`: calibre's own `height: 2px` for every <hr> is not the book's.
                 match self.styles.get(n, "height") {
-                    Some(v) if py::strip(v) == "2px" => PyValue::None,
-                    v => str_or_none(v),
+                    Some(v) => {
+                        self.charge(v.len())?;
+                        if py::strip(v) == "2px" {
+                            PyValue::None
+                        } else {
+                            self.text(Some(v))?
+                        }
+                    }
+                    None => PyValue::None,
                 }
             } else {
-                own("height")
+                own("height")?
             },
         );
-        put("background-image", own("background-image"));
-        put("background-color", own("background-color"));
-        put("background", own("background"));
+        put("background-image", own("background-image")?);
+        put("background-color", own("background-color")?);
+        put("background", own("background")?);
         put(
             "background-behind",
             behind.map_or(PyValue::None, PyValue::Int),
         );
-        put("background-repeat", own("background-repeat"));
-        put("page-break-before", own("page-break-before"));
-        put("page-break-after", own("page-break-after"));
-        put("break-before", own("break-before"));
-        put("break-after", own("break-after"));
-        put("white-space", computed("white-space"));
-        put("list-style-type", computed("list-style-type"));
-        put("list-style-position", computed("list-style-position"));
-        put("display", own("display"));
-        put(
-            "padding-sides",
-            PyValue::Tuple(SIDES.map(|s| own(&format!("padding-{s}"))).to_vec()),
-        );
-        put("border-collapse", computed("border-collapse"));
-        put(
-            "border-widths",
-            PyValue::Tuple(SIDES.map(|s| own(&format!("border-{s}-width"))).to_vec()),
-        );
-        put(
-            "border-sides",
-            PyValue::Tuple(
-                SIDES
-                    .map(|s| {
-                        PyValue::Tuple(
-                            ["style", "width", "color"]
-                                .map(|p| computed(&format!("border-{s}-{p}")))
-                                .to_vec(),
-                        )
-                    })
-                    .to_vec(),
-            ),
-        );
-        self.vertical_box(&mut css, n);
-        Some(css)
+        put("background-repeat", own("background-repeat")?);
+        put("page-break-before", own("page-break-before")?);
+        put("page-break-after", own("page-break-after")?);
+        put("break-before", own("break-before")?);
+        put("break-after", own("break-after")?);
+        put("white-space", computed("white-space")?);
+        put("list-style-type", computed("list-style-type")?);
+        put("list-style-position", computed("list-style-position")?);
+        put("display", own("display")?);
+        let mut padding = Vec::with_capacity(4);
+        let mut widths = Vec::with_capacity(4);
+        let mut borders = Vec::with_capacity(4);
+        for side in SIDES {
+            padding.push(own(&format!("padding-{side}"))?);
+            widths.push(own(&format!("border-{side}-width"))?);
+            let mut border = Vec::with_capacity(3);
+            for part in ["style", "width", "color"] {
+                border.push(computed(&format!("border-{side}-{part}"))?);
+            }
+            borders.push(PyValue::Tuple(border));
+        }
+        put("padding-sides", PyValue::Tuple(padding));
+        put("border-collapse", computed("border-collapse")?);
+        put("border-widths", PyValue::Tuple(widths));
+        put("border-sides", PyValue::Tuple(borders));
+        self.vertical_box(&mut css, n)?;
+        Ok(Some(css))
     }
 
-    /// `_computed_value(st, prop)`: `st[prop]`, or `st.get(prop)` where that raises.
-    fn computed(&self, n: NodeId, prop: &str) -> PyValue {
-        match self.styles.computed(n, prop) {
+    /// A copy of `v`, charged.
+    fn text(&self, v: Option<&str>) -> Result<PyValue, css::Error> {
+        Ok(match v {
+            Some(s) => {
+                self.charge(s.len())?;
+                PyValue::Str(s.to_owned())
+            }
+            None => PyValue::None,
+        })
+    }
+
+    /// `str(v).strip().lower()`, charged.
+    fn folded(&self, v: &str) -> Result<String, css::Error> {
+        self.charge(v.len())?;
+        Ok(py::strip(v).to_lowercase())
+    }
+
+    /// `_computed_value(st, prop)`: `st[prop]`, or `st.get(prop)` where that raises. The
+    /// value it reads and copies is charged first.
+    fn computed(&self, n: NodeId, prop: &str) -> Result<PyValue, css::Error> {
+        if let Ok(v) = self.styles.inherited(n, prop) {
+            self.charge(v.len())?;
+        }
+        Ok(match self.styles.computed(n, prop) {
             Ok(Value::Pt(v)) => PyValue::Float(v),
             Ok(Value::Text(s)) => PyValue::Str(s),
             Ok(Value::Absent) => PyValue::None,
-            Err(_) => str_or_none(self.styles.get(n, prop)),
-        }
+            Err(_) => self.text(self.styles.get(n, prop))?,
+        })
     }
 
     /// A walk up from `n` (`n` itself first) to where `step` ends it, kept in `memo` for every
@@ -339,8 +384,8 @@ impl<'a> Resolver<'a> {
         &self,
         memo: &[Cell<Memo>],
         n: NodeId,
-        step: impl Fn(NodeId) -> Step,
-    ) -> Option<NodeId> {
+        step: impl Fn(NodeId) -> Result<Step, css::Error>,
+    ) -> Result<Option<NodeId>, css::Error> {
         let mut chain = Vec::new();
         let mut cur = n;
         let found = loop {
@@ -349,7 +394,7 @@ impl<'a> Resolver<'a> {
                 break known;
             }
             chain.push(cur);
-            match step(cur) {
+            match step(cur)? {
                 Step::Here => break Memo::At(cur),
                 Step::Stop => break Memo::Nowhere,
                 Step::Up => match self.dom.parent(cur) {
@@ -361,59 +406,66 @@ impl<'a> Resolver<'a> {
         for c in chain {
             memo[c.index()].set(found);
         }
-        match found {
+        Ok(match found {
             Memo::At(at) => Some(at),
             _ => None,
-        }
+        })
+    }
+
+    /// Whether `v` is truthy and not `inherit` once stripped and lowered, charged.
+    fn declares(&self, v: Option<&str>) -> Result<bool, css::Error> {
+        Ok(match v {
+            Some(v) if !v.is_empty() => self.folded(v)? != "inherit",
+            _ => false,
+        })
     }
 
     /// `_specified_inherited(stylizer, elem, INHERITED[i])`: the value on `n` or its nearest
     /// ancestor that sets it, as written; `inherit` skipped.
-    fn specified_inherited(&self, n: NodeId, i: usize) -> Option<&'a str> {
+    fn specified_inherited(&self, n: NodeId, i: usize) -> Result<Option<&'a str>, css::Error> {
         let prop = INHERITED[i];
-        let decides = |a: NodeId| {
-            self.styles
-                .get(a, prop)
-                .is_some_and(|v| !v.is_empty() && !is_inherit(v))
-        };
         let at = self.nearest(&self.inherited[i], n, |a| {
-            if decides(a) { Step::Here } else { Step::Up }
+            Ok(if self.declares(self.styles.get(a, prop))? {
+                Step::Here
+            } else {
+                Step::Up
+            })
         })?;
-        self.styles.get(at, prop)
+        Ok(at.and_then(|at| self.styles.get(at, prop)))
     }
 
     /// `_specified_colour`: `_specified_inherited`'s colour, a link's `data-kfxgen-link-colour`
     /// mark in place of an element's colour; `inherit` and `currentColor` there take the colour
     /// around the link.
-    fn specified_colour(&self, n: NodeId) -> Option<&'a str> {
+    fn specified_colour(&self, n: NodeId) -> Result<Option<&'a str>, css::Error> {
         let at = self.nearest(&self.colour, n, |a| {
             let decides = match self.dom.attr(a, SOURCE_LINK_COLOUR) {
-                None => self
-                    .styles
-                    .get(a, "color")
-                    .is_some_and(|v| !v.is_empty() && !is_inherit(v)),
+                None => self.declares(self.styles.get(a, "color"))?,
                 Some(mark) => {
-                    let mark = py::strip(mark).to_lowercase();
+                    let mark = self.folded(mark)?;
                     mark != "inherit" && mark != "currentcolor"
                 }
             };
-            if decides { Step::Here } else { Step::Up }
+            Ok(if decides { Step::Here } else { Step::Up })
         })?;
-        match self.dom.attr(at, SOURCE_LINK_COLOUR) {
-            Some(mark) => Some(mark),
-            None => self.styles.get(at, "color"),
-        }
+        Ok(
+            at.and_then(|at| match self.dom.attr(at, SOURCE_LINK_COLOUR) {
+                Some(mark) => Some(mark),
+                None => self.styles.get(at, "color"),
+            }),
+        )
     }
 
     /// `_decoration_lines`: the decoration lines drawn through `n`'s text, from it and every
     /// ancestor, as one sorted string, or None.
-    fn decoration_lines(&self, n: NodeId) -> PyValue {
+    fn decoration_lines(&self, n: NodeId) -> Result<PyValue, css::Error> {
         const KNOWN: u8 = 0x80;
-        let own = |a: NodeId| {
+        let own = |a: NodeId| -> Result<u8, css::Error> {
             let mut bits = 0;
             for prop in ["text-decoration", "text-decoration-line"] {
-                let v = self.styles.get(a, prop).unwrap_or_default().to_lowercase();
-                for word in v.split(py::is_space) {
+                let v = self.styles.get(a, prop).unwrap_or_default();
+                self.charge(v.len())?;
+                for word in v.to_lowercase().split(py::is_space) {
                     bits |= match word {
                         "underline" => 1,
                         "line-through" => 2,
@@ -421,7 +473,7 @@ impl<'a> Resolver<'a> {
                     };
                 }
             }
-            bits
+            Ok(bits)
         };
         // The uncached ancestors, nearest first, then each from the topmost down.
         if self.decoration[n.index()].get() & KNOWN == 0 {
@@ -438,23 +490,23 @@ impl<'a> Resolver<'a> {
                 cur = p;
             }
             for &m in chain.iter().rev() {
-                above = KNOWN | above | own(m);
+                above = KNOWN | above | own(m)?;
                 self.decoration[m.index()].set(above);
             }
         }
-        match self.decoration[n.index()].get() & 3 {
+        Ok(match self.decoration[n.index()].get() & 3 {
             1 => PyValue::Str("underline".into()),
             2 => PyValue::Str("line-through".into()),
             3 => PyValue::Str("line-through underline".into()),
             _ => PyValue::None,
-        }
+        })
     }
 
     /// `_font_size_px`: `n`'s font size in CSS px, from each specified value up its ancestors,
     /// 16px above the root.
-    fn font_size_px(&self, n: NodeId) -> f64 {
+    fn font_size_px(&self, n: NodeId) -> Result<f64, css::Error> {
         if let Some(v) = self.sizes[n.index()].get() {
-            return v;
+            return Ok(v);
         }
         let mut chain = vec![n];
         let mut inherited = FONT_PX;
@@ -468,22 +520,29 @@ impl<'a> Resolver<'a> {
             cur = p;
         }
         for &m in chain.iter().rev() {
-            let value = self.styles.get(m, "font-size");
-            let root = || self.root_size_px(m);
-            let size = self
-                .calibre_keyword_px(value, root)
-                .unwrap_or_else(|| css_size_px(value, inherited, root));
+            let size = self.size_px(m, self.styles.get(m, "font-size"), inherited)?;
             self.sizes[m.index()].set(Some(size));
             inherited = size;
         }
-        inherited
+        Ok(inherited)
+    }
+
+    /// A font-size `value` on `n` in CSS px: `_calibre_keyword_px`, else `_css_size_px`
+    /// against `inherited`. The root's size is asked first, where Python asks it only when the
+    /// value needs it: it is memoized and changes nothing.
+    fn size_px(&self, n: NodeId, value: Option<&str>, inherited: f64) -> Result<f64, css::Error> {
+        self.charge(value.map_or(0, str::len))?;
+        let root = self.root_size_px(n)?;
+        Ok(self
+            .calibre_keyword_px(value, root)
+            .unwrap_or_else(|| css_size_px(value, inherited, root)))
     }
 
     /// `_root_size_px`: the root's font size, which `rem` is measured by; 16px for the root.
-    fn root_size_px(&self, n: NodeId) -> f64 {
+    fn root_size_px(&self, n: NodeId) -> Result<f64, css::Error> {
         let root = self.dom.root();
         if n == root {
-            FONT_PX
+            Ok(FONT_PX)
         } else {
             self.font_size_px(root)
         }
@@ -491,15 +550,11 @@ impl<'a> Resolver<'a> {
 
     /// `_calibre_keyword_px`: the px of the font-size keyword Calibre turned into `value`, as
     /// Kindle Previewer sizes it; only under a root of 16px.
-    fn calibre_keyword_px(
-        &self,
-        value: Option<&str>,
-        root_px: impl FnOnce() -> f64,
-    ) -> Option<f64> {
+    fn calibre_keyword_px(&self, value: Option<&str>, root_px: f64) -> Option<f64> {
         let text = py::strip(value.unwrap_or_default()).to_lowercase();
         let &(_, px) = self.keyword_px.iter().find(|(k, _)| *k == text)?;
         // Python's `abs(root_px() - 16) > 0.01`, false for a NaN.
-        if (root_px() - FONT_PX).abs() > 0.01 {
+        if (root_px - FONT_PX).abs() > 0.01 {
             return None;
         }
         Some(px)
@@ -508,121 +563,134 @@ impl<'a> Resolver<'a> {
     /// `_line_height_factor`: `n`'s line height as a factor of its own font size, from the
     /// nearest element declaring one; 1.2 for `normal` or none, None for a length kfxgen can't
     /// read or a font size of 0.
-    fn line_height_factor(&self, n: NodeId) -> Option<f64> {
-        let declared = |a: NodeId| {
-            py::strip(self.styles.get(a, "line-height").unwrap_or_default()).to_lowercase()
-        };
-        let own = self.font_size_px(n);
+    fn line_height_factor(&self, n: NodeId) -> Result<Option<f64>, css::Error> {
+        let declared =
+            |a: NodeId| self.folded(self.styles.get(a, "line-height").unwrap_or_default());
+        let own = self.font_size_px(n)?;
         let Some(a) = self.nearest(&self.line_height, n, |a| {
-            let v = declared(a);
-            if v.is_empty() || v == "inherit" {
+            let v = declared(a)?;
+            Ok(if v.is_empty() || v == "inherit" {
                 Step::Up
             } else {
                 Step::Here
-            }
-        }) else {
-            return Some(1.2);
+            })
+        })?
+        else {
+            return Ok(Some(1.2));
         };
-        let value = declared(a);
+        let value = declared(a)?;
         if value == "normal" {
-            return Some(1.2);
+            return Ok(Some(1.2));
         }
         if let Some(v) = py::py_float(&value) {
-            return Some(py::round(v, 4));
+            return Ok(Some(py::round(v, 4)));
         }
         if !FONT_SIZE_RE.is_match(&value.replace(' ', "")) || own == 0.0 {
-            return None;
+            return Ok(None);
         }
-        let px = css_size_px(Some(&value), self.font_size_px(a), || self.root_size_px(a));
-        Some(py::round(px / own, 4))
+        let px = self.size_length_px(a, &value)?;
+        Ok(Some(py::round(px / own, 4)))
+    }
+
+    /// `_css_size_px(value, _font_size_px(a), root)`: a length declared on `a` in CSS px.
+    fn size_length_px(&self, a: NodeId, value: &str) -> Result<f64, css::Error> {
+        let inherited = self.font_size_px(a)?;
+        let root = self.root_size_px(a)?;
+        Ok(css_size_px(Some(value), inherited, root))
     }
 
     /// `_first_letter_css`: a <p>'s `::first-letter` declarations, the font size in CSS px, or
     /// None.
-    fn first_letter_css(&self, n: NodeId) -> PyValue {
+    fn first_letter_css(&self, n: NodeId) -> Result<PyValue, css::Error> {
         let Some(rule) = self
             .styles
             .pseudo(n, "first-letter")
             .filter(|r| !r.is_empty())
         else {
-            return PyValue::None;
+            return Ok(PyValue::None);
         };
-        let pairs = rule
-            .iter()
-            .map(|(k, d)| {
-                let v = if k == "font-size" && !d.value.is_empty() {
-                    let value = Some(d.value.as_str());
-                    let root = || self.root_size_px(n);
-                    let size = self
-                        .calibre_keyword_px(value, root)
-                        .unwrap_or_else(|| css_size_px(value, self.font_size_px(n), root));
-                    PyValue::Float(py::round(size, 3))
-                } else {
-                    PyValue::Str(d.value.clone())
-                };
-                (PyValue::Str(k.clone()), v)
-            })
-            .collect();
-        PyValue::Dict(pairs)
+        let mut pairs = Vec::with_capacity(rule.len());
+        for (k, d) in rule {
+            self.charge(k.len())?;
+            let v = if k == "font-size" && !d.value.is_empty() {
+                let value = Some(d.value.as_str());
+                let size = self.size_px(n, value, self.font_size_px(n)?)?;
+                PyValue::Float(py::round(size, 3))
+            } else {
+                self.text(Some(&d.value))?
+            };
+            pairs.push((PyValue::Str(k.clone()), v));
+        }
+        Ok(PyValue::Dict(pairs))
     }
 
     /// `_lang_of`: the nearest `lang` at or above `n`.
-    fn lang_of(&self, n: NodeId) -> Option<&'a str> {
+    fn lang_of(&self, n: NodeId) -> Result<Option<&'a str>, css::Error> {
         let at = self.nearest(&self.lang, n, |a| {
-            if self.dom.attr(a, "lang").is_some() {
+            Ok(if self.dom.attr(a, "lang").is_some() {
                 Step::Here
             } else {
                 Step::Up
-            }
+            })
         })?;
-        self.dom.attr(at, "lang")
+        Ok(at.and_then(|at| self.dom.attr(at, "lang")))
     }
 
     /// `_starts_a_language`: whether `n` sets a `lang` its parent doesn't have.
-    fn starts_a_language(&self, n: NodeId) -> bool {
+    fn starts_a_language(&self, n: NodeId) -> Result<bool, css::Error> {
         let Some(own) = self.dom.attr(n, "lang") else {
-            return false;
+            return Ok(false);
         };
-        Some(own) != self.dom.parent(n).and_then(|p| self.lang_of(p))
+        let around = match self.dom.parent(n) {
+            Some(p) => self.lang_of(p)?,
+            None => None,
+        };
+        // The comparison reads `own`.
+        self.charge(own.len())?;
+        Ok(Some(own) != around)
     }
 
     /// `_q_css`: a <q>'s `quotes`, from the nearest element declaring it up to one starting a
     /// language, and its `::before` and `::after` `content`.
-    fn q_css(&self, n: NodeId) -> PyValue {
-        let declared = |a: NodeId| py::strip(self.styles.get(a, "quotes").unwrap_or_default());
-        let quotes = self
-            .nearest(&self.quotes, n, |a| {
-                let v = declared(a);
-                if !v.is_empty() && !is_inherit(v) {
-                    Step::Here
-                } else if self.starts_a_language(a) {
-                    Step::Stop
-                } else {
-                    Step::Up
-                }
+    fn q_css(&self, n: NodeId) -> Result<PyValue, css::Error> {
+        let declared = |a: NodeId| self.styles.get(a, "quotes").unwrap_or_default();
+        let at = self.nearest(&self.quotes, n, |a| {
+            let raw = declared(a);
+            self.charge(raw.len())?;
+            let v = py::strip(raw);
+            Ok(if !v.is_empty() && v.to_lowercase() != "inherit" {
+                Step::Here
+            } else if self.starts_a_language(a)? {
+                Step::Stop
+            } else {
+                Step::Up
             })
-            .map(declared);
+        })?;
+        if let Some(a) = at {
+            self.charge(declared(a).len())?;
+        }
+        let quotes = self.text(at.map(|a| py::strip(declared(a))))?;
         let content = |name: &str| {
             let decls = self.styles.pseudo(n, name);
-            str_or_none(decls.and_then(|d| {
+            self.text(decls.and_then(|d| {
                 d.iter()
                     .find(|(k, _)| k == "content")
                     .map(|(_, d)| d.value.as_str())
             }))
         };
         let s = |k: &str| PyValue::Str(k.to_owned());
-        PyValue::Dict(vec![
-            (s("quotes"), str_or_none(quotes)),
-            (s("before"), content("before")),
-            (s("after"), content("after")),
-        ])
+        Ok(PyValue::Dict(vec![
+            (s("quotes"), quotes),
+            (s("before"), content("before")?),
+            (s("after"), content("after")?),
+        ]))
     }
 
     /// `behind(elem)`: the fill of the nearest box kfxgen draws around `n`, or its own, as
     /// 0xRRGGBB, or None for the page; what `_box_background` raised for that box.
-    fn behind(&self, n: NodeId) -> Fill {
+    fn behind(&self, n: NodeId) -> Result<Fill, css::Error> {
         if let Some(known) = &self.fills.borrow()[n.index()] {
-            return known.clone();
+            return Ok(known.clone());
         }
         // The elements up to the nearest one already answered or with a fill of its own.
         let mut chain = Vec::new();
@@ -633,7 +701,7 @@ impl<'a> Resolver<'a> {
             }
             chain.push(cur);
             if FILL_TAGS.contains(&self.dom.tag(cur)) {
-                match self.box_background(cur) {
+                match self.box_background(cur)? {
                     Ok(None) => {}
                     Ok(Some(fill)) => break Ok(Some(fill & 0xFF_FFFF)),
                     Err(e) => break Err(e),
@@ -648,98 +716,93 @@ impl<'a> Resolver<'a> {
         for c in chain {
             fills[c.index()] = Some(found.clone());
         }
-        found
+        Ok(found)
     }
 
     /// `_box_background(stylizer.style(elem))`: the element's own fill as the ARGB integer
-    /// Previewer writes, or None for none, transparent, white or unreadable.
-    fn box_background(&self, n: NodeId) -> Result<Option<i64>, Raised> {
-        let mut value = self
-            .styles
-            .get(n, "background-color")
-            .filter(|v| !v.is_empty());
-        let shorthand = match value {
-            None => true,
-            Some(v) => is_transparent(v)?,
-        };
-        if shorthand {
-            // calibre leaves the shorthand unexpanded: its colour is the part that reads as
-            // one (`next(...)` stops at the first).
-            value = None;
-            for part in background_parts(self.styles.get(n, "background").unwrap_or_default()) {
-                if css_rgb(part)?.is_some() {
-                    value = Some(part);
-                    break;
+    /// Previewer writes, or None for none, transparent, white or unreadable. Both values it
+    /// may read are charged first.
+    fn box_background(&self, n: NodeId) -> Result<Fill, css::Error> {
+        let colour = self.styles.get(n, "background-color");
+        let shorthand = self.styles.get(n, "background").unwrap_or_default();
+        self.charge(colour.map_or(0, str::len))?;
+        self.charge(shorthand.len())?;
+        Ok((|| {
+            let mut value = colour.filter(|v| !v.is_empty());
+            let use_shorthand = match value {
+                None => true,
+                Some(v) => is_transparent(v)?,
+            };
+            if use_shorthand {
+                // calibre leaves the shorthand unexpanded: its colour is the part that reads
+                // as one (`next(...)` stops at the first).
+                value = None;
+                for part in background_parts(shorthand) {
+                    if css_rgb(part)?.is_some() {
+                        value = Some(part);
+                        break;
+                    }
                 }
             }
-        }
-        let Some(value) = value else {
-            return Ok(None);
-        };
-        if is_transparent(value)? {
-            return Ok(None);
-        }
-        Ok(match css_rgb(value)? {
-            None | Some(0xFF_FFFF) => None,
-            Some(rgb) => Some(0xFF00_0000 | rgb),
-        })
+            let Some(value) = value else {
+                return Ok(None);
+            };
+            if is_transparent(value)? {
+                return Ok(None);
+            }
+            Ok(match css_rgb(value)? {
+                None | Some(0xFF_FFFF) => None,
+                Some(rgb) => Some(0xFF00_0000 | rgb),
+            })
+        })())
     }
 
     /// `_vertical_box`: in a vertical-rl file, the margins and paddings put in kfxgen's slots,
     /// each from the book's value of the physical side it stands for, else the user agent's
     /// own for that slot (`data-kfxgen-v-author`, `-v-ua`).
-    fn vertical_box(&self, css: &mut Resolved, n: NodeId) {
+    fn vertical_box(&self, css: &mut Resolved, n: NodeId) -> Result<(), css::Error> {
         let Some(authored) = self.dom.attr(n, V_AUTHOR) else {
-            return;
+            return Ok(());
         };
         if self.dom.attr(n, VERTICAL).is_some() {
-            return;
+            return Ok(());
         }
+        let ua = self.dom.attr(n, V_UA).unwrap_or_default();
+        self.charge(authored.len())?;
+        self.charge(ua.len())?;
         let authored: Vec<&str> = authored
             .split(py::is_space)
             .filter(|w| !w.is_empty())
             .collect();
         // `dict(item.split(":", 1) for item in ... if ":" in item)`: the last of a name wins.
-        let ua: Vec<(&str, &str)> = self
-            .dom
-            .attr(n, V_UA)
-            .unwrap_or_default()
+        let ua: Vec<(&str, &str)> = ua
             .split(';')
             .filter_map(|item| item.split_once(':'))
             .collect();
         let value = |kind: &str, slot: &str| {
             let side = format!("{kind}-{}", vertical_side(slot));
             if authored.contains(&side.as_str()) {
-                return str_or_none(self.styles.get(n, &side));
+                return self.text(self.styles.get(n, &side));
             }
             let own = format!("{kind}-{slot}");
-            str_or_none(ua.iter().rev().find(|(k, _)| *k == own).map(|(_, v)| *v))
+            self.text(ua.iter().rev().find(|(k, _)| *k == own).map(|(_, v)| *v))
         };
         for slot in SIDES {
-            css.set(
-                match slot {
-                    "top" => "margin-top",
-                    "right" => "margin-right",
-                    "bottom" => "margin-bottom",
-                    _ => "margin-left",
-                },
-                value("margin", slot),
-            );
+            let key = match slot {
+                "top" => "margin-top",
+                "right" => "margin-right",
+                "bottom" => "margin-bottom",
+                _ => "margin-left",
+            };
+            css.set(key, value("margin", slot)?);
         }
-        css.set(
-            "padding-sides",
-            PyValue::Tuple(SIDES.map(|s| value("padding", s)).to_vec()),
-        );
+        let mut padding = Vec::with_capacity(4);
+        for slot in SIDES {
+            padding.push(value("padding", slot)?);
+        }
+        css.set("padding-sides", PyValue::Tuple(padding));
+        Ok(())
     }
-}
-
-fn str_or_none(v: Option<&str>) -> PyValue {
-    v.map_or(PyValue::None, |s| PyValue::Str(s.to_owned()))
-}
-
-/// `str(value).strip().lower() == "inherit"`.
-fn is_inherit(v: &str) -> bool {
-    py::strip(v).to_lowercase() == "inherit"
 }
 
 /// `_calibre_keyword_table`: {the rem value Calibre writes for a keyword: Previewer's px}, for
@@ -769,8 +832,8 @@ fn keyword_table(profile: &Profile) -> Vec<(String, f64)> {
 }
 
 /// `_css_size_px`: a font-size value in CSS px against the `inherited` size, or the inherited
-/// size when there is none or kfxgen can't read it; `root_px()` gives the root's, for rem.
-fn css_size_px(value: Option<&str>, inherited: f64, root_px: impl FnOnce() -> f64) -> f64 {
+/// size when there is none or kfxgen can't read it; `root_px` is the root's, for rem.
+fn css_size_px(value: Option<&str>, inherited: f64, root_px: f64) -> f64 {
     let value = py::strip(value.unwrap_or_default()).to_lowercase();
     if let Some(&(_, px)) = FONT_KEYWORD_PX.iter().find(|(k, _)| *k == value) {
         return px;
@@ -794,7 +857,7 @@ fn css_size_px(value: Option<&str>, inherited: f64, root_px: impl FnOnce() -> f6
         "em" => n * inherited,
         "ex" | "ch" => n * inherited / 2.0,
         "%" => n * inherited / 100.0,
-        "rem" => n * root_px(),
+        "rem" => n * root_px,
         unit => match FONT_UNIT_PX.iter().find(|(u, _)| *u == unit) {
             Some(&(_, per)) => n * per,
             None => inherited,
@@ -864,7 +927,7 @@ mod tests {
 
     #[test]
     fn font_sizes_as_kfxgen_reads_them() {
-        let root = || 20.0;
+        let root = 20.0;
         assert_eq!(css_size_px(Some("1.5em"), 10.0, root), 15.0);
         assert_eq!(css_size_px(Some(" 1.5 EM "), 10.0, root), 15.0);
         assert_eq!(css_size_px(Some("2rem"), 10.0, root), 40.0);

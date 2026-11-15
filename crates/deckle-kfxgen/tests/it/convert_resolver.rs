@@ -8,12 +8,13 @@ use std::time::Instant;
 
 use deckle_kfx::fixtures;
 use deckle_kfxgen::book::{File, read_book};
-use deckle_kfxgen::convert::{Resolver, compute_block_style};
+use deckle_kfxgen::convert::{Resolver, StyleError, compute_block_style};
 use deckle_kfxgen::css::{
-    ClassNamer, DEFAULT_PROFILE, Origin, cascade, flatten, parse_sheet, prepare_body,
+    self, ClassNamer, DEFAULT_PROFILE, Origin, cascade, flatten, parse_sheet, prepare_body,
 };
 use deckle_kfxgen::dom::{self, NodeId};
 use deckle_kfxgen::pyvalue::PyValue;
+use deckle_limits::MAX_CASCADE_DECLS;
 
 use crate::convert_support::{dump, model_diff};
 use crate::support::{COST_LIMIT, find};
@@ -40,6 +41,8 @@ fn resolver_matches_the_dump_for_every_element() {
     assert_eq!(names.len(), 55, "the source fixtures");
     let mut failures = Vec::new();
     let (mut files_compared, mut elements, mut link_rows) = (0, 0, 0);
+    // The most units any file's resolver charged, and where.
+    let mut most = (0, String::new());
     for name in &names {
         let book = read_book(&fixtures::kfxgen(&format!("sources/{name}.epub")))
             .unwrap_or_else(|e| panic!("{name}: {e}"));
@@ -99,14 +102,14 @@ fn resolver_matches_the_dump_for_every_element() {
                         continue;
                     }
                 };
-                let got = resolver.resolve(n);
+                let got = resolver.resolve(n).unwrap();
                 let ours = got.as_ref().map_or(PyValue::None, |r| r.to_py());
                 for line in model_diff(&ours, css) {
                     failures.push(format!("{name} {nnn} {path:?} resolve{line}"));
                 }
                 let ours = match &got {
                     None => Ok(PyValue::None),
-                    Some(r) => compute_block_style(r),
+                    Some(r) => compute_block_style(&resolver, r),
                 };
                 match ours {
                     Ok(ours) => {
@@ -123,6 +126,9 @@ fn resolver_matches_the_dump_for_every_element() {
                 "{name} {nnn}: a row per element"
             );
             assert_eq!(links, 2, "{name} {nnn}: the flattener's two links");
+            if resolver.charged() > most.0 {
+                most = (resolver.charged(), format!("{name} {nnn}"));
+            }
             files_compared += 1;
             elements += seen;
             link_rows += links;
@@ -135,8 +141,12 @@ fn resolver_matches_the_dump_for_every_element() {
         failures.len()
     );
     eprintln!(
-        "{files_compared} files, {elements} elements and {link_rows} stylesheet links compared"
+        "{files_compared} files, {elements} elements and {link_rows} stylesheet links compared; \
+         most units charged: {} ({})",
+        most.0, most.1
     );
+    // Far below the budget: an ordinary book reads no value of TEXT_UNIT bytes many times.
+    assert!(most.0 < MAX_CASCADE_DECLS / 1000, "{most:?}");
     assert_eq!(files_compared, 184 - SKIP.len());
     assert_eq!(elements + link_rows, 3941);
 }
@@ -179,8 +189,8 @@ fn resolve_all<'a>(what: &str, file: &'a File) -> Resolver<'a> {
     let start = Instant::now();
     let resolver = Resolver::new(file, &DEFAULT_PROFILE);
     for &n in &all {
-        let r = resolver.resolve(n).unwrap();
-        assert!(compute_block_style(&r).is_ok());
+        let r = resolver.resolve(n).unwrap().unwrap();
+        assert!(compute_block_style(&resolver, &r).is_ok());
     }
     let took = start.elapsed();
     eprintln!("{what}: {} elements, {took:?}", all.len());
@@ -189,7 +199,7 @@ fn resolve_all<'a>(what: &str, file: &'a File) -> Resolver<'a> {
 }
 
 fn get(r: &Resolver, n: NodeId, key: &str) -> PyValue {
-    r.resolve(n).unwrap().get(key).unwrap().clone()
+    r.resolve(n).unwrap().unwrap().get(key).unwrap().clone()
 }
 
 #[test]
@@ -316,8 +326,8 @@ fn values_no_dump_row_reaches_are_kfxgens() {
         ),
     );
     let r = Resolver::new(&f, &DEFAULT_PROFILE);
-    assert!(r.resolve(nth(&f, "div", 0)).is_none());
-    assert!(r.resolve(nth(&f, "span", 0)).is_none());
+    assert!(r.resolve(nth(&f, "div", 0)).unwrap().is_none());
+    assert!(r.resolve(nth(&f, "span", 0)).unwrap().is_none());
     assert_eq!(
         get(&r, nth(&f, "span", 1), "background-behind"),
         PyValue::Int(0x333333)
@@ -435,4 +445,61 @@ fn values_no_dump_row_reaches_are_kfxgens() {
         get(&r, h, "padding-sides"),
         PyValue::Tuple(vec![s("6px"), PyValue::None, PyValue::None, PyValue::None])
     );
+}
+
+/// A long value read for many elements ends in `TooLarge` once its copies and reads pass the
+/// budget, after work bounded by the budget, not by its length times the elements (kfxgen
+/// copies or parses it for every element).
+#[test]
+fn a_long_value_read_for_every_element_is_too_large() {
+    const SPANS: usize = 2_000;
+    let long = "a".repeat(1 << 20);
+    for (what, css) in [
+        // Inherited from <body>, copied into every element's `font-family`.
+        (
+            "font-family on body",
+            format!("body {{ font-family: {long} }}"),
+        ),
+        // Declared on every span, read by the decoration walk.
+        (
+            "text-decoration on spans",
+            format!("span {{ text-decoration: underline {long} }}"),
+        ),
+    ] {
+        let (mut dom, body) = empty_page();
+        for _ in 0..SPANS {
+            let s = dom.append_child(body, "span");
+            dom.set_text(s, "x");
+        }
+        let file = file_of(dom, &css);
+        let start = Instant::now();
+        let resolver = Resolver::new(&file, &DEFAULT_PROFILE);
+        let mut resolved = 0;
+        let stopped = file
+            .dom
+            .descendants()
+            .find_map(|n| match resolver.resolve(n) {
+                Ok(Some(r)) => match compute_block_style(&resolver, &r) {
+                    Ok(_) => {
+                        resolved += 1;
+                        None
+                    }
+                    Err(StyleError::TooLarge(e)) => Some(e),
+                    Err(e) => panic!("{what}: {e:?}"),
+                },
+                Ok(None) => panic!("{what}: resolved to None"),
+                Err(e) => Some(e),
+            });
+        let took = start.elapsed();
+        eprintln!("{what}: TooLarge after {resolved} elements, {took:?}");
+        assert!(
+            matches!(stopped, Some(css::Error::Cascade(MAX_CASCADE_DECLS))),
+            "{what}: {stopped:?}"
+        );
+        // 1 MiB is 16,384 units: the budget lasts about 30 reads of it.
+        assert!(resolved < 40, "{what}: {resolved}");
+        // Past the limit by at most one value's charge.
+        assert!(resolver.charged() <= MAX_CASCADE_DECLS + (1 << 20) / 64 * 2);
+        assert!(took < COST_LIMIT, "{what} took {took:?}");
+    }
 }

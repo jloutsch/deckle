@@ -18,7 +18,7 @@ mod package;
 mod resolver;
 
 pub use args::book_args;
-pub use block_style::compute_block_style;
+pub use block_style::{StyleError, compute_block_style};
 pub use font_table::{parse_style, parse_weight};
 pub use href::{
     external_target, is_unsafe, key_doc, normalize, resolve_doc_path, resolve_link_target, unquote,

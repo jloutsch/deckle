@@ -8,7 +8,8 @@ use super::inline_style::{
     BLACK, Raised, TYPOGRAPHY_KEYS, css_font_size, css_typography, parse_css_length,
     parse_font_family,
 };
-use super::resolver::Resolved;
+use super::resolver::{Resolved, Resolver};
+use crate::css;
 use crate::generate::page_scale::em_percent;
 use crate::generate::py;
 use crate::pyvalue::PyValue;
@@ -29,13 +30,57 @@ const MAGNITUDE: Raised = Raised {
     note: "_length_percent: a magnitude float() refuses",
 };
 
+/// The keys whose text `compute_block_style` reads, each a constant number of times.
+const READ: [&str; 13] = [
+    "text-align",
+    "text-indent",
+    "margin-left",
+    "margin-right",
+    "font-family",
+    "font-weight",
+    "font-style",
+    "font-variant",
+    "text-transform",
+    "letter-spacing",
+    "color",
+    "text-orientation",
+    "text-emphasis-style",
+];
+
+/// Why `compute_block_style` gives no block style.
+#[derive(Debug)]
+pub enum StyleError {
+    /// kfxgen raises here: it leaves the spine item out (`extract_chapters_from_oeb`).
+    Raised(Raised),
+    /// The text read passed the resolver's budget ([`Resolver::charge`]): the file is refused.
+    TooLarge(css::Error),
+}
+
+impl From<Raised> for StyleError {
+    fn from(e: Raised) -> Self {
+        StyleError::Raised(e)
+    }
+}
+
+impl From<css::Error> for StyleError {
+    fn from(e: css::Error) -> Self {
+        StyleError::TooLarge(e)
+    }
+}
+
 /// `compute_block_style(css)`: align, indent, margins, font family, line height, emphasis,
 /// font size, then each typography value that is set (black left out). Raises where kfxgen
-/// does: a length `parse_css_length` raises on, or a text-align that is a number.
-pub fn compute_block_style(css: &Resolved) -> Result<PyValue, Raised> {
+/// does: a length `parse_css_length` raises on, or a text-align that is a number. The text it
+/// parses is charged to `resolver`'s budget first.
+pub fn compute_block_style(resolver: &Resolver, css: &Resolved) -> Result<PyValue, StyleError> {
+    for key in READ {
+        if let Some(PyValue::Str(v)) = css.get(key) {
+            resolver.charge(v.len())?;
+        }
+    }
     let raw_align = match css.get("text-align") {
         Some(PyValue::Str(s)) => py::strip(s).to_lowercase(),
-        Some(v) if v.is_truthy() => return Err(ALIGN_NUMBER),
+        Some(v) if v.is_truthy() => return Err(ALIGN_NUMBER.into()),
         _ => String::new(),
     };
     let raw_align = match raw_align.as_str() {
@@ -164,7 +209,40 @@ fn line_height_factor(v: Option<&PyValue>) -> PyValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::book::File;
+    use crate::css::{ClassNamer, DEFAULT_PROFILE, cascade, flatten, prepare_body};
     use crate::generate::page_scale::{HORIZONTAL_PT, VERTICAL_PT, page_width};
+
+    /// A page with nothing in it, for a resolver's budget.
+    fn blank() -> File {
+        let mut dom = crate::dom::parse(
+            b"<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>T</title></head><body/></html>",
+        )
+        .unwrap();
+        prepare_body(&mut dom);
+        let first = cascade(&mut dom, "a.xhtml", Vec::new(), &DEFAULT_PROFILE).unwrap();
+        let flat = flatten(
+            &mut dom,
+            "a.xhtml",
+            first,
+            &mut ClassNamer::default(),
+            &DEFAULT_PROFILE,
+        )
+        .unwrap();
+        File {
+            href: "a.xhtml".into(),
+            dom,
+            flat,
+            first_pass_rules: Vec::new(),
+        }
+    }
+
+    /// `compute_block_style(css)`.
+    fn compute(css: Vec<(&'static str, PyValue)>) -> Result<PyValue, StyleError> {
+        let file = blank();
+        let resolver = Resolver::new(&file, &DEFAULT_PROFILE);
+        compute_block_style(&resolver, &Resolved::of(css))
+    }
 
     fn s(v: &str) -> PyValue {
         PyValue::Str(v.to_owned())
@@ -176,11 +254,7 @@ mod tests {
 
     /// `key` of `compute_block_style(css)`.
     fn block(css: Vec<(&'static str, PyValue)>, key: &str) -> PyValue {
-        compute_block_style(&Resolved::of(css))
-            .unwrap()
-            .get(key)
-            .unwrap()
-            .clone()
+        compute(css).unwrap().get(key).unwrap().clone()
     }
 
     /// Expected values from the pinned `inline_style.py`, run under `page_width(pt)`.
@@ -223,7 +297,7 @@ mod tests {
                 ("background-behind", PyValue::Int(0)),
             ]
         };
-        let got = compute_block_style(&Resolved::of(css())).unwrap();
+        let got = compute(css()).unwrap();
         let want = [
             ("align", s("right")),
             ("indent", PyValue::None),
@@ -250,8 +324,11 @@ mod tests {
         ];
         assert_eq!(block(zero.clone(), "align"), PyValue::None);
         assert_eq!(block(zero, "font_family"), PyValue::List(Vec::new()));
-        let raised = compute_block_style(&Resolved::of(vec![("text-align", PyValue::Float(3.75))]));
-        assert_eq!(raised.unwrap_err().exception, "AttributeError");
+        let raised = compute(vec![("text-align", PyValue::Float(3.75))]);
+        assert!(
+            matches!(&raised, Err(StyleError::Raised(r)) if r.exception == "AttributeError"),
+            "{raised:?}"
+        );
         // Grey on a dark box keeps its colour key.
         let grey = vec![
             ("color", s("#777")),
