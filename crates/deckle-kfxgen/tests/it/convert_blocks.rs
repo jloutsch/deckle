@@ -19,8 +19,7 @@ use crate::convert_support::{dump, model_diff};
 use crate::support::{COST_LIMIT, allocated_by};
 
 /// The sources whose every spine file's blocks match the dump, on every pass recorded. A source
-/// joins in the task that makes it pass and never leaves. (`notes` and `vertical_contents` hold
-/// lists: Task 13 adds them.)
+/// joins in the task that makes it pass and never leaves.
 const FIXTURES: &[&str] = &[
     "block_edges",
     "block_picture_769",
@@ -32,9 +31,13 @@ const FIXTURES: &[&str] = &[
     "link_colours",
     "link_greys",
     "listing_rerun",
+    "lists",
+    "lists_768",
+    "lists_771",
     "malformed",
     "navigation",
     "no_toc",
+    "notes",
     "package_more",
     "package_quirks",
     "page_list",
@@ -44,6 +47,7 @@ const FIXTURES: &[&str] = &[
     "ruby_tcy",
     "text_edges",
     "vertical",
+    "vertical_contents",
 ];
 
 /// The sources recorded on a second pass (with `keep_nav_listings`): both passes are compared.
@@ -659,4 +663,244 @@ fn what_kfxgen_raises_on_in_the_walk_is_raised() {
             other => panic!("{css}: {:?}", other.map(|b| b.blocks.len())),
         }
     }
+}
+
+/// `levels` lists nested in the body, `<list><li><list><li>…`, each item holding only the
+/// next list, the last a word; the list elements get `attrs`.
+fn nested_lists(
+    levels: usize,
+    list: &str,
+    attrs: &[(&str, &str)],
+    css: &str,
+) -> deckle_kfxgen::book::File {
+    let (mut dom, body) = empty_page();
+    let mut n = body;
+    for _ in 0..levels {
+        n = dom.append_child(n, list);
+        for (k, v) in attrs {
+            dom.set_attr(n, k, Some(v));
+        }
+        n = dom.append_child(n, "li");
+    }
+    dom.set_text(n, "x");
+    file_of(dom, css)
+}
+
+/// The text of the paragraph inside the innermost of nested boxes.
+fn innermost_text(blocks: &[Block]) -> String {
+    let mut b = blocks[0].to_py();
+    loop {
+        let PyValue::Dict(pairs) = &b else {
+            panic!("not a block: {b:?}")
+        };
+        let get = |key: &str| {
+            pairs
+                .iter()
+                .find(|(k, _)| k.as_str() == Some(key))
+                .map(|(_, v)| v)
+        };
+        match get("blocks") {
+            Some(PyValue::List(kids)) => b = kids[0].clone(),
+            _ => return get("text").and_then(PyValue::as_str).unwrap().to_owned(),
+        }
+    }
+}
+
+/// Native lists as deep as `read_book` lets a tree be: a box in a box at every level, spaced
+/// and keyed with no recursion, on a test thread's stack.
+#[test]
+fn native_lists_as_deep_as_a_book_may_nest_are_walked() {
+    let levels = (deckle_limits::MAX_DEPTH - 2) / 2;
+    let got = extract(&nested_lists(levels, "ul", &[], "")).unwrap();
+    assert_eq!(got.blocks.len(), 1);
+    assert_eq!(got.blocks[0].get("type"), Some(&PyValue::Str("box".into())));
+    assert_eq!(innermost_text(&got.blocks), "x");
+}
+
+/// Typed markers wait for the first text, however many items open before it: each item's
+/// marker goes in front of the innermost item's text, the outermost first.
+#[test]
+fn typed_markers_of_items_that_hold_no_text_wait_for_the_next() {
+    let levels = (deckle_limits::MAX_DEPTH - 2) / 2;
+    // A `reversed` list is never native: it keeps typed markers. One item, numbered 1.
+    let got = extract(&nested_lists(levels, "ol", &[("reversed", "")], "")).unwrap();
+    assert_eq!(got.blocks.len(), 1);
+    assert_eq!(
+        got.blocks[0].get("text"),
+        Some(&PyValue::Str(format!("{}x", "1. ".repeat(levels))))
+    );
+}
+
+/// kfxgen copies the waiting markers before each item (`pending_markers[:]`); the port cuts
+/// them back instead, so markers as long as a book's CSS makes them are not copied once per
+/// level of nesting.
+#[test]
+fn waiting_markers_are_not_copied_for_each_item() {
+    let marker = "m".repeat(10_000);
+    let css = format!("ol {{ list-style-type: \"{marker}\" }}");
+    let make = |levels: usize| nested_lists(levels, "ol", &[("reversed", "")], &css);
+    let got = extract(&make(2)).unwrap();
+    // `style[1:-1]` of the quoted string, twice, then the text.
+    assert_eq!(
+        got.blocks[0].get("text"),
+        Some(&PyValue::Str(format!("{marker}{marker}x")))
+    );
+    // Each level resolves the inherited marker a few times (linear); a copy of the waiting
+    // markers at each item adds the square of the depth: 2.7 times as much on twice the
+    // depth, against 2.0 (allocation counts do not depend on the machine).
+    let bytes = |levels: usize| {
+        let file = make(levels);
+        let (got, bytes) = allocated_by(|| extract(&file));
+        got.unwrap();
+        bytes
+    };
+    let (once, twice) = (bytes(63), bytes(126));
+    assert!(
+        twice * 10 < once * 24,
+        "{once} bytes at 63 levels, then {twice} at 126"
+    );
+}
+
+/// One list of many items: its ordinals, settings and box are worked out once each.
+#[test]
+fn a_long_list_takes_linear_time() {
+    let make = |n: usize| page(&format!("<ol>{}</ol>", "<li>item</li>".repeat(n)), "");
+    allocates_linearly("items of one list", 4_000, make);
+    let make = |n: usize| {
+        page(
+            &format!("<ol reversed=\"\">{}</ol>", "<li>item</li>".repeat(n)),
+            "",
+        )
+    };
+    allocates_linearly("items of one list with typed markers", 4_000, make);
+}
+
+/// Whether a list's items type their own markers is read from the start of each item's
+/// text, once for each list round the item: items that hold no text but many empty elements,
+/// in lists nested deep, are read to their end each time, as kfxgen reads them. Each node
+/// read is charged, so such a file is refused after bounded work.
+#[test]
+fn nested_lists_of_textless_items_are_refused_after_bounded_work() {
+    let (mut dom, body) = empty_page();
+    let mut n = body;
+    for _ in 0..120 {
+        n = dom.append_child(n, "ol");
+        n = dom.append_child(n, "li");
+        for _ in 0..2_000 {
+            dom.append_child(n, "span");
+        }
+    }
+    let file = file_of(dom, "");
+    let start = Instant::now();
+    let got = extract(&file);
+    let took = start.elapsed();
+    assert!(
+        matches!(got, Err(ItemError::Error(Error::Book(_)))),
+        "{:?}",
+        got.map(|b| b.blocks.len())
+    );
+    assert!(took < COST_LIMIT, "{took:?}");
+}
+
+/// A list number the model cannot hold stops the file by name; one only read (a typed
+/// marker its item spells out already) does not.
+#[test]
+fn list_numbers_past_what_the_port_holds() {
+    let refused = |body: &str| match extract(&page(body, "")) {
+        Err(ItemError::Error(Error::Unsupported { feature, .. })) => {
+            assert_eq!(feature, "list numbers past 64 bits", "{body}")
+        }
+        other => panic!("{body}: {:?}", other.map(|b| b.blocks.len())),
+    };
+    let big = "9".repeat(20);
+    let huge = "9".repeat(40);
+    // A native list writes its start and each item's value and number.
+    refused(&format!("<ol start=\"{big}\"><li>x</li></ol>"));
+    refused(&format!("<ul start=\"{big}\"><li>x</li></ul>"));
+    refused(&format!("<ol><li value=\"-{big}\">x</li></ol>"));
+    // A typed marker is written in full within an i128, and refused past one.
+    let got = extract(&page(
+        &format!("<ol reversed=\"\" start=\"{big}\"><li>x</li></ol>"),
+        "",
+    ))
+    .unwrap();
+    assert_eq!(
+        got.blocks[0].get("text"),
+        Some(&PyValue::Str(format!("{big}. x")))
+    );
+    refused(&format!(
+        "<ol reversed=\"\" start=\"{huge}\"><li>x</li></ol>"
+    ));
+    // Spelt out by hand already, past an i64, in letters: no marker, nothing to write.
+    let body = "<ol type=\"a\" reversed=\"\" start=\"1744349715977154962390\">\
+                <li>zzzzzzzzzzzzzzz. x</li></ol>";
+    let got = extract(&page(body, "")).unwrap();
+    assert_eq!(
+        got.blocks[0].get("text"),
+        Some(&PyValue::Str("zzzzzzzzzzzzzzz. x".into()))
+    );
+    // A marker no text takes (a picture alone) is never written.
+    let body = format!("<ol reversed=\"\" start=\"{huge}\"><li><img src=\"a.png\"/></li></ol>");
+    assert_eq!(extract(&page(&body, "")).unwrap().blocks.len(), 1);
+}
+
+/// Typed markers, on lists Previewer was not probed on: what the pinned `_list_marker`,
+/// `_take_marker` and `_list_settings` give, read from the Python (no dump has these).
+#[test]
+fn typed_markers_follow_kfxgen_s_rules() {
+    let css = ".b { display: block } .n { list-style-type: decimal } \
+               .q { list-style-type: \"\u{2192} \" } .none { list-style-type: none }";
+    let texts = |body: &str| -> Vec<String> {
+        let got = extract(&page(body, css)).unwrap();
+        got.blocks
+            .iter()
+            .map(|b| b.get("text").and_then(PyValue::as_str).unwrap().to_owned())
+            .collect()
+    };
+    let want = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+    // `reversed` counts down from the number of items.
+    assert_eq!(
+        texts("<ol reversed=\"\"><li>a</li><li>b</li></ol>"),
+        want(&["2. a", "1. b"])
+    );
+    // Roman and letters stop at 1: 0 and below are decimal.
+    assert_eq!(
+        texts("<ol reversed=\"\" start=\"1\" type=\"i\"><li>a</li><li>b</li><li>c</li></ol>"),
+        want(&["i. a", "0. b", "-1. c"])
+    );
+    assert_eq!(
+        texts("<ol reversed=\"\" type=\"A\"><li value=\"28\">a</li><li>b</li></ol>"),
+        want(&["AB. a", "AA. b"])
+    );
+    // An item set to display as a block shows no marker, and makes the list typed.
+    assert_eq!(
+        texts("<ul><li class=\"b\">a</li><li>b</li></ul>"),
+        want(&["a", "\u{2022} b"])
+    );
+    // An item that types its own number or bullet keeps it, and makes the list typed.
+    assert_eq!(
+        texts("<ol reversed=\"\"><li>1. a</li></ol>"),
+        want(&["1. a"])
+    );
+    assert_eq!(texts("<ul><li>\u{2022} a</li></ul>"), want(&["\u{2022} a"]));
+    // Mixed styles: typed, each item numbered among the list's items.
+    assert_eq!(
+        texts("<ul><li>a</li><li class=\"n\">b</li></ul>"),
+        want(&["\u{2022} a", "2. b"])
+    );
+    // A quoted string is the marker.
+    assert_eq!(
+        texts("<ul class=\"q\"><li>a</li></ul>"),
+        want(&["\u{2192} a"])
+    );
+    // No markers in right-to-left text: plain paragraphs, no box.
+    assert_eq!(
+        texts("<ul class=\"none\" dir=\"rtl\"><li>a</li></ul>"),
+        want(&["a"])
+    );
+    // A marker no text takes is dropped at the end of its item.
+    assert_eq!(
+        texts("<ol reversed=\"\"><li><img src=\"a.png\"/></li><li>b</li></ol>")[1],
+        "1. b"
+    );
 }
