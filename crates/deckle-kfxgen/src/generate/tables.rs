@@ -196,8 +196,7 @@ const CELL_KEYS: [&str; 16] = [
     "anchor_keys",
     "anchor_offsets",
 ];
-/// A cell paragraph's: those `read_paragraph` reads, and `heading_level` and `preformatted`,
-/// which kfxgen reads only on a paragraph holding a picture, which the port refuses.
+/// Every key of a cell paragraph that `read_paragraph` reads, and two it ignores.
 const PARAGRAPH_KEYS: [&str; 12] = [
     "type",
     "text",
@@ -209,6 +208,7 @@ const PARAGRAPH_KEYS: [&str; 12] = [
     "heading",
     "anchor_keys",
     "anchor_offsets",
+    // kfxgen's generator does not read these two on a text cell paragraph.
     "heading_level",
     "preformatted",
 ];
