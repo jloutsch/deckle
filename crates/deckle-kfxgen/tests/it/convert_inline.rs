@@ -8,7 +8,8 @@ use std::time::Instant;
 use deckle_kfx::fixtures;
 use deckle_kfxgen::book::read_book;
 use deckle_kfxgen::convert::{
-    Error, ItemError, Resolver, Segment, Serials, TextBudget, Walk, normalize_runs_with_anchors,
+    Error, ItemError, Resolver, Segment, Serials, TextBudget, Walk, css_background_image, initial,
+    normalize_runs_with_anchors,
 };
 use deckle_kfxgen::css::DEFAULT_PROFILE;
 use deckle_kfxgen::dom::NodeId;
@@ -20,41 +21,6 @@ use crate::support::{COST_LIMIT, allocated_by, find};
 
 /// Calls whose runs cannot match yet, with why: (source, NNN, why). Empty is the goal.
 const SKIP: &[(&str, &str, &str)] = &[];
-
-/// Task 10 writes a picture's token: until then the walk stops at a visible `<img>` or `<svg>`
-/// with this feature, and the call is skipped. The skipped calls are exactly these:
-/// (source, NNN of `inline/NNN.json.gz`, indexes of the records in that dump). Task 10 empties
-/// the list.
-const PICTURES: &str = "pictures in text (Task 10)";
-#[rustfmt::skip]
-const PICTURE_CALLS: &[(&str, &str, &[usize])] = &[
-    ("block_picture_769", "000", &[2, 4, 6, 8, 10, 12, 14, 16]),
-    ("block_picture_770", "000", &[2, 4, 6, 8, 10, 12, 14, 16, 18, 20]),
-    ("css_quirks", "005", &[2]),
-    ("figures", "001", &[2]),
-    ("figures", "005", &[2]),
-    ("floats", "000", &[2]),
-    ("floats", "001", &[2]),
-    ("floats", "002", &[2]),
-    ("floats", "003", &[2]),
-    ("floats", "004", &[2]),
-    ("floats", "005", &[2]),
-    ("floats", "006", &[2]),
-    ("floats_697", "000", &[1, 2]),
-    ("floats_697", "001", &[1]),
-    ("floats_697", "002", &[1, 2]),
-    ("floats_697", "003", &[1, 2, 3, 5]),
-    ("frames", "001", &[1, 3]),
-    ("frames", "003", &[1, 2, 3, 4]),
-    ("frames", "004", &[1, 2, 3]),
-    ("frames", "005", &[1]),
-    ("horizontal_blocks", "002", &[2, 3, 4, 5, 6, 8, 9, 10, 11]),
-    ("horizontal_blocks_ltr", "002", &[2, 3, 4, 5, 6, 8, 9, 10, 11]),
-    ("pictures_more", "000", &[1, 2, 3]),
-    ("pictures_more", "001", &[0]),
-    ("pictures_side_by_side_766", "000", &[2, 4, 6, 8, 10, 14, 16]),
-    ("vertical_pictures_761", "000", &[2, 4, 6, 8, 10, 12, 14, 16]),
-];
 
 fn segments_py(segs: &[Segment]) -> PyValue {
     PyValue::List(
@@ -130,9 +96,8 @@ fn runs_match_the_dump_for_every_paragraph() {
     let names = sources();
     assert_eq!(names.len(), 55, "the source fixtures");
     let mut failures = Vec::new();
-    let (mut files_compared, mut calls, mut skipped, mut pictures) = (0, 0, 0, 0);
+    let (mut files_compared, mut calls, mut skipped) = (0, 0, 0);
     let mut jumps = Vec::new();
-    let mut picture_calls: Vec<(String, String, usize)> = Vec::new();
     for name in &names {
         let book = read_book(&fixtures::kfxgen(&format!("sources/{name}.epub")))
             .unwrap_or_else(|e| panic!("{name}: {e}"));
@@ -155,7 +120,7 @@ fn runs_match_the_dump_for_every_paragraph() {
                 let budget = TextBudget::new();
                 let resolver = Resolver::new(file, &DEFAULT_PROFILE, &budget);
                 let mut walk = Walk::new(file, &resolver, &mut serials);
-                for (index, record) in records.iter().enumerate() {
+                for record in records {
                     let [path, segs, normalized] = record.as_list().unwrap() else {
                         panic!("{name} {nnn}: a record of other than three items");
                     };
@@ -186,14 +151,6 @@ fn runs_match_the_dump_for_every_paragraph() {
                     calls += 1;
                     let ours = match walk.inline(n) {
                         Ok(segs) => segs,
-                        Err(ItemError::Error(Error::Unsupported {
-                            feature: PICTURES, ..
-                        })) => {
-                            calls -= 1;
-                            pictures += 1;
-                            picture_calls.push((name.clone(), format!("{nnn}{pass}"), index));
-                            continue;
-                        }
                         Err(e) => {
                             failures.push(format!("{where_}: {e:?}"));
                             continue;
@@ -211,8 +168,7 @@ fn runs_match_the_dump_for_every_paragraph() {
         }
     }
     eprintln!(
-        "{files_compared} files, {calls} calls compared, {skipped} skipped, {pictures} reach a \
-         picture (Task 10); serial moves: {}",
+        "{files_compared} files, {calls} calls compared, {skipped} skipped; serial moves: {}",
         jumps.len()
     );
     for j in &jumps {
@@ -225,16 +181,7 @@ fn runs_match_the_dump_for_every_paragraph() {
         failures.len()
     );
     assert_eq!(files_compared, 188);
-    let expected: Vec<(String, String, usize)> = PICTURE_CALLS
-        .iter()
-        .flat_map(|(s, f, ix)| ix.iter().map(|&i| (s.to_string(), f.to_string(), i)))
-        .collect();
-    assert_eq!(
-        picture_calls, expected,
-        "the calls that reach a picture (Task 10)"
-    );
-    assert_eq!(pictures, 84);
-    assert_eq!(calls + skipped + pictures, 1862);
+    assert_eq!(calls + skipped, 1862);
 }
 
 /// The paragraph of a page, and the page.
@@ -631,4 +578,460 @@ fn a_long_lang_is_not_copied_for_each_quote() {
     assert_eq!(long_parts, short_parts);
     assert_eq!(long_parts.len(), 4_000);
     assert_eq!(long_parts[..2], ["\"|", "\"|"]);
+}
+
+/// [`walk_page`] with the token's control characters written `<` (delimiter), `^` (field)
+/// and `~` (a space in alt text).
+fn walk_page_readable(body: &str, css: &str) -> Vec<Result<Vec<String>, String>> {
+    let readable = |s: String| {
+        s.replace('\0', "<")
+            .replace('\u{1}', "^")
+            .replace('\u{2}', "~")
+    };
+    walk_page(body, css)
+        .into_iter()
+        .map(|r| r.map(|parts| parts.into_iter().map(readable).collect()))
+        .collect()
+}
+
+/// Pictures in text the dumps do not hold: a wrapper's float and width, centring, margins,
+/// vertical-align, links, attribute sizes, unsafe and `data:` sources, absurd sizes, an
+/// `<svg>`'s pictures and text. Expected values from the pinned `_walk_inline`, run under
+/// Python 3.14 with lxml 6.0.2 over these pages, each element given the style the port's
+/// resolver gives it. (In the wrapper with a comment, lxml's `len(parent)` counts the comment,
+/// so the picture is not alone and does not float: checked on lxml separately, as the harness
+/// wrote the page without comments.)
+#[test]
+fn pictures_in_text_are_kfxgens() {
+    let pages: &[(&str, &str, &[&[&str]])] = &[
+        (
+            "<p class=\"fl\"><img src=\"a.png\" alt=\"x y\"/></p>\
+             <p class=\"fl\"><img src=\"a.png\" width=\"100%\"/></p>\
+             <p class=\"fl\"><img src=\"a.png\" width=\"50%\"/></p>\
+             <p class=\"fl\">t<img src=\"a.png\"/></p>",
+            ".fl{float:left;width:30%}",
+            &[
+                &["<IMG^OEBPS/a.png^x~y^w=30%^left<|"],
+                &["<IMG^OEBPS/a.png^^w=30%^left<|"],
+                &["<IMG^OEBPS/a.png^^w=50%^left<|"],
+                &["t|", "<IMG^OEBPS/a.png^<|"],
+            ],
+        ),
+        (
+            "<p class=\"w\"><img src=\"a.png\"/></p>\
+             <p class=\"w\"><!--c--><img src=\"a.png\"/></p>\
+             <p class=\"w\"><img src=\"a.png\"/> </p>\
+             <p class=\"w2\"><img src=\"a.png\" style=\"width:100%\"/></p>\
+             <p class=\"w2\"><img src=\"a.png\" style=\"width:10px\"/></p>\
+             <p class=\"w3\"><img src=\"a.png\"/></p>",
+            ".w{float:right;width:auto} .w2{float:left;width:40%} .w3{float:left;width:12ex}",
+            &[
+                &["<IMG^OEBPS/a.png^^^right<|"],
+                &["<IMG^OEBPS/a.png^<|"],
+                &["<IMG^OEBPS/a.png^^^right<|", " |"],
+                &["<IMG^OEBPS/a.png^^w=40%^left<|"],
+                &["<IMG^OEBPS/a.png^^w=10px^left<|"],
+                &["<IMG^OEBPS/a.png^^^left<|"],
+            ],
+        ),
+        (
+            "<p><img src=\"../a.png\" style=\"display:block;margin-left:auto;margin-right:auto\"/></p>\
+             <p><img src=\"a.png\" style=\"display:block;margin-left:auto\"/></p>\
+             <p><img src=\"a.png\" style=\"margin-left:auto;margin-right:auto\"/></p>\
+             <p>x<img src=\"a.png\" style=\"margin-left:-1em;margin-right:2px;vertical-align:-0.2em;\
+             height:1em;width:2em\"/>y<img src=\"b.png\" style=\"vertical-align:Middle;float:right\"/></p>\
+             <p><a href=\"#x\">t<img src=\"a.png\" alt=\"\" id=\"i1\"/></a><span id=\"x\">s</span></p>",
+            "",
+            &[
+                &["<IMG^a.png^^^^c=1<|"],
+                &["<IMG^OEBPS/a.png^^^^c=r<|"],
+                &["<IMG^OEBPS/a.png^<|"],
+                &[
+                    "x|",
+                    "<IMG^OEBPS/a.png^^w=2em^^h=1em;va=-0.2em;ml=-1em;mr=2px<|",
+                    "y|",
+                    "<IMG^OEBPS/b.png^^^right^va=middle<|",
+                ],
+                &[
+                    "t|link=OEBPS/a.xhtml#x",
+                    "|anchor-mark=i1",
+                    "<IMG^OEBPS/a.png^<|link=OEBPS/a.xhtml#x",
+                    "|anchor-mark=x",
+                    "s|",
+                ],
+            ],
+        ),
+        (
+            "<p><img src=\"a.png\" width=\"120\" height=\"80\"/><img src=\"a.png\" height=\" 3em \"/>\
+             <img src=\"a.png\" width=\"auto\" height=\"7pt\"/><img src=\"a.png\" width=\"1e3\"/>\
+             <img src=\"/etc/passwd\" alt=\"a\u{1}b\"/><img src=\"data:image/png;base64,AAAA\"/><img/></p>\
+             <p><img src=\"a.png\" width=\"99999999999999999999999999\"/>\
+             <img src=\"a.png\" width=\"-5\" height=\"1e309\"/>\
+             <img src=\"a.png\" width=\"NaN\" height=\"\u{661}\u{660}\"/>\
+             <img src=\"a.png\" style=\"width:1e3px;height:50%\"/>\
+             <img src=\"a.png\" style=\"vertical-align:-99999999999999999999em;\
+             margin-left:99999999999999999999999999999em;margin-right:-0\"/>\
+             <img src=\"a.png\" style=\"vertical-align:+.5%;margin-left:1in\"/>\
+             <img src=\"a.png\" style=\"vertical-align:0.000;margin-left:1.5Q\"/>\
+             <img src=\"a.png\" style=\"width:\u{661}\u{660}px\"/></p>",
+            "",
+            &[
+                &[
+                    "<IMG^OEBPS/a.png^^w=120px^^h=80px<|",
+                    "<IMG^OEBPS/a.png^^h=3em^^h=3em<|",
+                    "<IMG^OEBPS/a.png^^h=7pt^^h=7pt<|",
+                    "<IMG^OEBPS/a.png^<|",
+                    "<IMG^/etc/passwd^ab<|",
+                    "<IMG^data:image/png;base64,AAAA^<|",
+                    "<IMG^^<|",
+                ],
+                &[
+                    "<IMG^OEBPS/a.png^^w=99999999999999999999999999px<|",
+                    "<IMG^OEBPS/a.png^<|",
+                    "<IMG^OEBPS/a.png^^h=\u{661}\u{660}^^h=\u{661}\u{660}<|",
+                    "<IMG^OEBPS/a.png^^h=50%^^h=50%<|",
+                    "<IMG^OEBPS/a.png^^^^va=-99999999999999999999em;\
+                     ml=99999999999999999999999999999em<|",
+                    "<IMG^OEBPS/a.png^^^^va=+0.5%;ml=1in<|",
+                    "<IMG^OEBPS/a.png^^^^va=0<|",
+                    "<IMG^OEBPS/a.png^^w=\u{661}\u{660}px<|",
+                ],
+            ],
+        ),
+        (
+            "<p>a<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" \
+             id=\"s1\"><defs><image xlink:href=\"no.png\"/></defs><clipPath><image href=\"no2.png\"/>\
+             </clipPath><image xlink:href=\"../i.png\"/><image href=\"j.png\"/><g><svg>\
+             <image xlink:href=\"\" href=\"k.png\"/></svg></g></svg>b</p>\
+             <p><svg xmlns=\"http://www.w3.org/2000/svg\"><text>Hello <tspan x=\"1\">world</tspan>\
+             <tspan>!</tspan>tail</text><text id=\"t2\"><a>link<tspan y=\"2\">y</tspan></a><b>no</b>after\
+             </text><switch><text systemLanguage=\"fr\">fr</text><text>en</text></switch><switch>\
+             <text requiredFeatures=\"x\">only</text></switch><title>no</title><foreignObject><p>no</p>\
+             </foreignObject><text>  </text></svg>z</p>\
+             <p>a<svg xmlns=\"http://www.w3.org/2000/svg\" visibility=\" Hidden \"><circle/></svg>\
+             <svg xmlns=\"http://www.w3.org/2000/svg\"><defs><path/></defs></svg>\
+             <svg xmlns=\"http://www.w3.org/2000/svg\"><svg><rect/></svg></svg>\
+             <svg xmlns=\"http://www.w3.org/2000/svg\"><rect/><text>t</text></svg>b</p>",
+            "",
+            &[
+                &[
+                    "a|",
+                    "|anchor-mark=s1",
+                    "<IMG^../i.png^^h=100%<|",
+                    "<IMG^j.png^^h=100%<|",
+                    "<IMG^k.png^^h=100%<|",
+                    "b|",
+                ],
+                &[
+                    " |",
+                    "Hello world!tail |",
+                    " |",
+                    "|anchor-mark=t2",
+                    "link yafter |",
+                    " |",
+                    "en |",
+                    " |",
+                    "only |",
+                    "z|",
+                ],
+                &["no|"],
+                &["a|", " |", "t |", "b|"],
+            ],
+        ),
+    ];
+    for (body, css, want) in pages {
+        let got = walk_page_readable(body, css);
+        let want: Vec<Result<Vec<String>, String>> = want
+            .iter()
+            .map(|w| Ok(w.iter().map(|s| s.to_string()).collect()))
+            .collect();
+        assert_eq!(got, want, "{body}");
+    }
+}
+
+/// An `<svg>` that draws shapes and nothing kfxgen takes from it: kfxgen draws it as a picture
+/// of its own (#709); the converter refuses it by name (plan decision 2).
+#[test]
+fn an_svg_of_shapes_only_is_refused_by_name() {
+    let file = page(
+        "<p>a<svg xmlns=\"http://www.w3.org/2000/svg\" id=\"s\"><g><rect width=\"1\"/></g></svg></p>",
+        "",
+    );
+    let budget = TextBudget::new();
+    let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+    let mut serials = Serials::default();
+    let got = Walk::new(&file, &resolver, &mut serials).inline(first(&file, "p"));
+    match got {
+        Err(ItemError::Error(Error::Unsupported { feature, file })) => {
+            assert_eq!(feature, "SVG pictures");
+            assert_eq!(file, "OEBPS/a.xhtml");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A paragraph's initial. Expected values from the pinned `_initial` (after `_walk_inline` and
+/// `normalize_runs_with_anchors`), run as in [`pictures_in_text_are_kfxgens`].
+#[test]
+fn drop_caps_are_kfxgens() {
+    let file = page(
+        "<p class=\"dc\">\u{201c}Once upon</p><p class=\"r\">Raised</p>\
+         <p><span class=\"drop\">O</span>nce</p><p><b><span class=\"drop\">W</span></b>hen</p>\
+         <p> <img src=\"a.png\"/><span class=\"drop\">X</span>x</p><p>text<span class=\"drop\">X</span></p>\
+         <p class=\"dc\"><span style=\"font-size:2em\">B</span>ig <i>x</i></p><p class=\"dc\">\u{2014} 1</p>\
+         <p class=\"dc\">$x</p><p><span><span class=\"drop\">T w</span></span>o</p>\
+         <p><span></span> <span class=\"drop\">Q</span>q</p><p class=\"k\">K</p>",
+        ".dc::first-letter{float:left;font-size:3em;color:red;font-weight:bold} \
+         .r::first-letter{font-size:2em;font-style:italic;color:black} .drop{float:left;font-size:3em} \
+         .k::first-letter{color:#000;float:Left}",
+    );
+    let budget = TextBudget::new();
+    let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+    let mut serials = Serials::default();
+    let mut walk = Walk::new(&file, &resolver, &mut serials);
+    let paragraphs: Vec<NodeId> = file
+        .dom
+        .descendants()
+        .filter(|&n| file.dom.tag(n) == "p")
+        .collect();
+    let mut got = Vec::new();
+    for p in paragraphs {
+        let segs = walk.inline(p).unwrap();
+        let (text, spans, _) = normalize_runs_with_anchors(&segs);
+        let css = resolver.resolve(p).unwrap();
+        let (spans, drop) = initial(&file.dom, &resolver, p, css.as_ref(), &text, spans).unwrap();
+        let spans: Vec<String> = spans
+            .iter()
+            .map(|s| {
+                let PyValue::Set(flags) = s.flags.to_py() else {
+                    unreachable!()
+                };
+                let mut flags: Vec<String> = flags.iter().map(show_flag).collect();
+                flags.sort();
+                format!("{}+{}|{}", s.start, s.len, flags.join(" "))
+            })
+            .collect();
+        got.push((spans, drop));
+    }
+    let red = "colour=4293787648";
+    let want: Vec<(Vec<String>, Option<usize>)> = vec![
+        (vec![format!("0+2|bold {red} size=Float(48.0)")], Some(2)),
+        (vec!["0+1|italic size=Float(32.0)".into()], None),
+        (vec!["0+1|size=Float(48.0)".into()], Some(1)),
+        (vec!["0+1|bold size=Float(48.0)".into()], Some(1)),
+        (vec!["18+1|size=Float(48.0)".into()], None),
+        (vec!["4+1|size=Float(48.0)".into()], None),
+        (
+            vec![
+                format!("0+1|bold {red} size=Float(48.0)"),
+                "4+1|italic".into(),
+            ],
+            Some(1),
+        ),
+        (vec![format!("0+3|bold {red} size=Float(48.0)")], Some(3)),
+        (vec![], None),
+        (vec!["0+3|size=Float(48.0)".into()], Some(3)),
+        (vec!["0+1|size=Float(48.0)".into()], Some(1)),
+        (vec![], Some(1)),
+    ];
+    assert_eq!(got, want);
+}
+
+/// What `_css_background_image` gives for these, from the pinned Python as above. (calibre's
+/// CSS reads `url(   )` and `url('')` as the file itself, so the pattern's own backtracking is
+/// tested in `pictures.rs`.)
+#[test]
+fn background_pictures_are_kfxgens() {
+    let file = page(
+        "<div class=\"bg\"></div><div class=\"bg2\"></div><div class=\"bg3\"></div>\
+         <div class=\"bg4\"></div><div class=\"bg\">t</div><div class=\"bg5\"></div>",
+        ".bg{background-image:url( \"scan.jpg\" );background-repeat:no-repeat} \
+         .bg2{background-image:url(   );background-repeat:no-repeat} \
+         .bg3{background-image:url('') url(x.png);background-repeat:No-Repeat} \
+         .bg4{background-image:url(x.png)} .bg5{background:url(y.png) no-repeat}",
+    );
+    let budget = TextBudget::new();
+    let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+    let got: Vec<Option<String>> = file
+        .dom
+        .descendants()
+        .filter(|&n| file.dom.tag(n) == "div")
+        .map(|n| {
+            let css = resolver.resolve(n).unwrap();
+            css_background_image(&file.dom, n, css.as_ref()).unwrap()
+        })
+        .collect();
+    let some = |s: &str| Some(s.to_owned());
+    assert_eq!(
+        got,
+        [
+            some("OEBPS/scan.jpg"),
+            some("OEBPS/a.xhtml"),
+            some("OEBPS/a.xhtml"),
+            None,
+            None,
+            None
+        ]
+    );
+}
+
+/// A `data:` source is written into its token as it is, with no decoding beyond
+/// `_is_unsafe_href`'s (it has no `%`), and the copy is charged to the file's budget.
+#[test]
+fn a_data_uri_of_several_mb_is_written_as_it_is_and_charged() {
+    let uri = format!("data:image/png;base64,{}", "QUJD".repeat(1 << 20));
+    let file = page(&format!("<p>x<img src=\"{uri}\" alt=\"a\"/></p>"), "");
+    let budget = TextBudget::new();
+    let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+    let mut serials = Serials::default();
+    let before = budget.charged();
+    let start = Instant::now();
+    let (segs, bytes) = allocated_by(|| {
+        Walk::new(&file, &resolver, &mut serials)
+            .inline(first(&file, "p"))
+            .unwrap()
+    });
+    assert!(start.elapsed() < COST_LIMIT);
+    assert_eq!(segs.len(), 2);
+    assert_eq!(segs[1].text, format!("\0IMG\u{1}{uri}\u{1}a\0"));
+    assert!(budget.charged() - before >= uri.len() / 64);
+    // `_is_unsafe_href` lowers it twice and decodes it once; the token is one more copy.
+    assert!(bytes < 8 * uri.len() as u64, "{bytes}");
+}
+
+/// The copies a file's pictures make share the file's budget: 36 MiB of `data:` sources in
+/// one file pass it, and the file is refused after bounded work.
+#[test]
+fn data_uris_past_the_files_budget_are_refused() {
+    let uri = format!("data:image/png;base64,{}", "QUJD".repeat(1 << 20));
+    let mut body = String::from("<p>");
+    for _ in 0..9 {
+        body.push_str(&format!("<img src=\"{uri}\"/>"));
+    }
+    body.push_str("</p>");
+    let file = page(&body, "");
+    let budget = TextBudget::new();
+    let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+    let mut serials = Serials::default();
+    let start = Instant::now();
+    let got = Walk::new(&file, &resolver, &mut serials).inline(first(&file, "p"));
+    assert!(start.elapsed() < COST_LIMIT);
+    assert!(
+        matches!(got, Err(ItemError::Error(Error::Book(_)))),
+        "{:?}",
+        got.map(|s| s.len())
+    );
+}
+
+/// `read_book` refuses a tree deeper than `MAX_DEPTH`; built by hand, an `<svg>` whose
+/// picture, text and shapes sit 20,000 levels down is read with loops, not recursion (kfxgen's
+/// Python would hit its recursion limit), on a test thread's stack.
+#[test]
+fn an_svg_nested_20000_deep_is_read_without_recursion() {
+    const DEEP: usize = 20_000;
+    let deep_svg = |shapes: bool| {
+        let (mut dom, body) = empty_page();
+        let p = dom.append_child(body, "p");
+        let svg = dom.append_child(p, "svg");
+        let mut g = svg;
+        for _ in 0..DEEP {
+            g = dom.append_child(g, "g");
+        }
+        if shapes {
+            dom.append_child(g, "rect");
+        } else {
+            let image = dom.append_child(g, "image");
+            dom.set_attr(image, "href", Some("deep.png"));
+            let mut t = dom.append_child(g, "text");
+            dom.set_text(t, "a");
+            for _ in 0..DEEP {
+                t = dom.append_child(t, "tspan");
+            }
+            dom.set_text(t, "b");
+        }
+        file_of(dom, "")
+    };
+    let file = deep_svg(false);
+    let budget = TextBudget::new();
+    let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+    let mut serials = Serials::default();
+    let start = Instant::now();
+    let segs = Walk::new(&file, &resolver, &mut serials)
+        .inline(first(&file, "p"))
+        .unwrap();
+    assert!(start.elapsed() < COST_LIMIT);
+    assert_eq!(
+        show(&segs),
+        ["\0IMG\u{1}deep.png\u{1}\u{1}h=100%\0|", " |", "ab |"]
+    );
+
+    let file = deep_svg(true);
+    let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+    let got = Walk::new(&file, &resolver, &mut serials).inline(first(&file, "p"));
+    assert!(
+        matches!(
+            got,
+            Err(ItemError::Error(Error::Unsupported {
+                feature: "SVG pictures",
+                ..
+            }))
+        ),
+        "{got:?}"
+    );
+}
+
+/// A drop cap 20,000 elements down the start of a paragraph built by hand is found with a
+/// loop.
+#[test]
+fn a_drop_cap_20000_deep_is_found_without_recursion() {
+    let (mut dom, body) = empty_page();
+    let p = dom.append_child(body, "p");
+    let mut n = p;
+    for _ in 0..20_000 {
+        n = dom.append_child(n, "span");
+    }
+    let drop = dom.append_child(n, "span");
+    dom.set_attr(drop, "class", Some("drop"));
+    dom.set_text(drop, "W");
+    dom.set_tail(drop, "hen");
+    let file = file_of(dom, ".drop { float: left }");
+    let budget = TextBudget::new();
+    let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+    let p = first(&file, "p");
+    let css = resolver.resolve(p).unwrap();
+    let start = Instant::now();
+    let got = initial(&file.dom, &resolver, p, css.as_ref(), "When", Vec::new()).unwrap();
+    assert!(start.elapsed() < COST_LIMIT);
+    assert_eq!(got, (Vec::new(), Some(1)));
+}
+
+/// 50,000 pictures in one floated paragraph, and an `<svg>` of 50,000 `<text>`s and a
+/// `<switch>` of 50,000 children with conditions: each element is looked at a bounded number
+/// of times.
+#[test]
+fn many_pictures_and_svg_parts_take_linear_time() {
+    const MANY: usize = 50_000;
+    let mut body = String::from("<p class=\"fl\">");
+    for _ in 0..MANY {
+        body.push_str("<img src=\"a.png\"/>");
+    }
+    body.push_str("</p><p><svg xmlns=\"http://www.w3.org/2000/svg\">");
+    for _ in 0..MANY {
+        body.push_str("<text>w</text>");
+    }
+    body.push_str("<switch>");
+    for _ in 0..MANY {
+        body.push_str("<text systemLanguage=\"x\">c</text>");
+    }
+    body.push_str("</switch></svg></p>");
+    let start = Instant::now();
+    let got = walk_page(&body, ".fl { float: left; width: 10% }");
+    assert!(start.elapsed() < COST_LIMIT, "{:?}", start.elapsed());
+    let [Ok(pictures), Ok(svg)] = &got[..] else {
+        panic!("{got:?}");
+    };
+    assert_eq!(pictures.len(), MANY);
+    assert_eq!(pictures[0], "\0IMG\u{1}OEBPS/a.png\u{1}\0|");
+    assert_eq!(svg.len(), 2 * MANY + 2);
+    assert_eq!(svg[2 * MANY + 1], "c |");
 }

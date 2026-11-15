@@ -10,13 +10,15 @@ mod bidi;
 mod block_style;
 mod font_table;
 mod href;
+mod initial;
 mod inline;
-// Tasks 10 to 17 call what the tests do not.
+// Tasks 11 to 17 call what the tests do not.
 #[allow(dead_code)]
 mod inline_style;
 pub(crate) mod marks;
 mod options;
 mod package;
+mod pictures;
 mod quotes;
 mod resolver;
 
@@ -26,6 +28,7 @@ pub use font_table::{parse_style, parse_weight};
 pub use href::{
     external_target, is_unsafe, key_doc, normalize, resolve_doc_path, resolve_link_target, unquote,
 };
+pub use initial::initial;
 pub use inline::{Serials, Walk};
 pub use inline_style::{
     Flag, Flags, Raised, Segment, Span, css_letter_spacing, css_link_colour, css_rgb,
@@ -34,6 +37,7 @@ pub use inline_style::{
 pub use options::ConvertOptions;
 pub use package::{CalibreOpf, Nav, NavLink, Ncx};
 pub(crate) use package::{item_path, kfxgen_paths};
+pub use pictures::css_background_image;
 pub use resolver::{Resolved, Resolver, TextBudget};
 
 use crate::{book, css};

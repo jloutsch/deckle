@@ -32,14 +32,20 @@ use super::inline_style::{
     FLAG_PRE, FLAG_PRE_LINE, FLAG_STRIKE, FLAG_SUB, FLAG_SUPER, FLAG_TEXT_BOTTOM, FLAG_TEXT_TOP,
     FLAG_UNDERLINE, Flag, Flags, HARD_BREAK, LANG_FLAG, LINE_START, LINK_COLOUR_FLAG, LINK_FLAG,
     MONO_FLAG, NOTEREF_FLAG, Raised, SHIFT_FLAGS, SIZE_FLAG, SPACING_NORMAL, Segment,
-    TYPOGRAPHY_FLAGS, css_link_colour, is_monospace, make_anchor_mark, make_bidi_flag,
-    make_link_flag, make_mono_flag, make_ruby_flag, make_size_flag, make_tcy_flag, make_turn_flag,
-    nested_shift, normalize_runs_with_anchors, parse_vertical_align,
+    TYPOGRAPHY_FLAGS, css_font_size, css_link_colour, css_typography, is_monospace,
+    make_anchor_mark, make_bidi_flag, make_link_flag, make_mono_flag, make_ruby_flag,
+    make_size_flag, make_tcy_flag, make_turn_flag, nested_shift, normalize_runs_with_anchors,
+    parse_vertical_align,
+};
+use super::pictures::{
+    SVG_IMAGE_SIZE, img_float, img_inline_extras, img_size_hint, img_token, resolve_img_src,
+    svg_draws_shapes_only, svg_image_refs, svg_text_paragraphs,
 };
 use super::quotes::{QCss, QMarks, document_q_marks, plain_attr};
 use super::resolver::{Resolved, Resolver};
 use super::{Error, ItemError};
 use crate::book::File;
+use crate::css;
 use crate::dom::{Dom, NodeId};
 use crate::generate::py;
 use crate::pyvalue::PyValue;
@@ -180,12 +186,12 @@ fn next(counter: &mut i64) -> i64 {
 /// `_css_emphasis(css)`: (bold, italic, monospace families, font size, typography, colour as
 /// given). The typography is `css_typography`'s, each value as its run flag carries it.
 #[derive(Clone, Debug, PartialEq)]
-struct Emphasis {
-    bold: bool,
-    italic: bool,
+pub(super) struct Emphasis {
+    pub(super) bold: bool,
+    pub(super) italic: bool,
     mono: Option<Vec<String>>,
-    size: Option<PyValue>,
-    typography: [Option<PyValue>; 6],
+    pub(super) size: Option<PyValue>,
+    pub(super) typography: [Option<PyValue>; 6],
     link_colour: Option<i64>,
 }
 
@@ -215,7 +221,7 @@ enum Last {
 }
 
 /// `str(value or "")` of a resolved value.
-fn text_of(v: Option<&PyValue>) -> Cow<'_, str> {
+pub(super) fn text_of(v: Option<&PyValue>) -> Cow<'_, str> {
     match v {
         Some(PyValue::Str(s)) => Cow::Borrowed(s),
         Some(PyValue::Float(f)) if *f != 0.0 => Cow::Owned(py::repr_float(*f)),
@@ -226,7 +232,7 @@ fn text_of(v: Option<&PyValue>) -> Cow<'_, str> {
 }
 
 /// `str(css.get(key) or "").strip().lower()`, "" without a resolved style.
-fn keyword(css: Option<&Resolved>, key: &str) -> Result<String, ItemError> {
+pub(super) fn keyword(css: Option<&Resolved>, key: &str) -> Result<String, ItemError> {
     let Some(css) = css else {
         return Ok(String::new());
     };
@@ -234,7 +240,7 @@ fn keyword(css: Option<&Resolved>, key: &str) -> Result<String, ItemError> {
 }
 
 /// `" ".join(s.split())`.
-fn words(s: &str) -> String {
+pub(super) fn words(s: &str) -> String {
     s.split(py::is_space)
         .filter(|w| !w.is_empty())
         .collect::<Vec<_>>()
@@ -448,16 +454,37 @@ fn whole_baseline_dropped(parts: &mut [Segment], depth: usize) {
 /// `_css_emphasis(css)`, None without a resolved style. kfxgen raises where
 /// `css_typography` or `css_link_colour` does.
 fn css_emphasis(css: Option<&Resolved>) -> Result<Option<Emphasis>, ItemError> {
-    let Some(css) = css else {
-        return Ok(None);
-    };
-    let weight = py::strip(&text_of(css.get("font-weight")?)).to_lowercase();
+    css.map(|css| emphasis_of(|k| css.get(k))).transpose()
+}
+
+/// What `css_typography` reads.
+const TYPOGRAPHY_READS: [&str; 7] = [
+    "font-variant",
+    "text-transform",
+    "letter-spacing",
+    "color",
+    "text-orientation",
+    "text-emphasis-style",
+    "background-behind",
+];
+
+/// `_css_emphasis(css)` of a dict, `get(key)` giving `css.get(key)` charged: an element's
+/// resolved style, or a `::first-letter` dict (`_initial`).
+pub(super) fn emphasis_of<'v>(
+    get: impl Fn(&str) -> Result<Option<&'v PyValue>, css::Error>,
+) -> Result<Emphasis, ItemError> {
+    let weight = py::strip(&text_of(get("font-weight")?)).to_lowercase();
     let bold = weight == "bolder" || parse_weight(Some(&PyValue::Str(weight))) >= BOLD_WEIGHT;
-    let families = font_families(css.get("font-family")?);
+    let families = font_families(get("font-family")?);
     let mono = is_monospace(&families).then_some(families);
-    let italic = parse_style(css.get("font-style")?);
-    let size = css.font_size().cloned();
-    let t = css.typography()?;
+    let italic = parse_style(get("font-style")?);
+    let font_size = get("font-size")?;
+    let size = css_font_size(|_| font_size).cloned();
+    let mut read = Vec::with_capacity(TYPOGRAPHY_READS.len());
+    for key in TYPOGRAPHY_READS {
+        read.push((key, get(key)?));
+    }
+    let t = css_typography(|k| read.iter().find(|(r, _)| *r == k).and_then(|(_, v)| *v))?;
     let s = |v: &str| PyValue::Str(v.to_owned());
     let typography = [
         t.small_caps.map(s),
@@ -468,16 +495,16 @@ fn css_emphasis(css: Option<&Resolved>) -> Result<Option<Emphasis>, ItemError> {
         t.orientation.map(s),
         t.emphasis.map(PyValue::Str),
     ];
-    let colour = text_of(css.get("color")?);
+    let colour = text_of(get("color")?);
     let link_colour = css_link_colour(if colour.is_empty() { "black" } else { &colour })?;
-    Ok(Some(Emphasis {
+    Ok(Emphasis {
         bold,
         italic,
         mono,
         size,
         typography,
         link_colour,
-    }))
+    })
 }
 
 /// What an element's [`Job`] is doing.
@@ -1264,12 +1291,25 @@ impl<'a, 's> Walk<'a, 's> {
                         for id in subtree_anchor_ids(dom, child) {
                             bufs[job.buf].push(Self::mark(&id));
                         }
-                    } else if matches!(clocal, "img" | "svg") {
+                    } else if clocal == "img" {
                         for id in own_anchor_ids(dom, child) {
                             bufs[job.buf].push(Self::mark(id));
                         }
-                        // Task 10 writes the picture's token.
-                        return Err(self.unsupported("pictures in text (Task 10)"));
+                        let token = self.picture_token(child, job.n)?;
+                        // Only a link carries over: tapping the picture follows it (#355).
+                        let link: Flags = job
+                            .cur
+                            .iter()
+                            .filter(|f| is_link_flag(f))
+                            .cloned()
+                            .collect();
+                        let part = self.run(token, &link)?;
+                        bufs[job.buf].push(part);
+                    } else if clocal == "svg" {
+                        for id in own_anchor_ids(dom, child) {
+                            bufs[job.buf].push(Self::mark(id));
+                        }
+                        self.svg_parts(child, &mut bufs[job.buf])?;
                     } else if is_cell_block(clocal) || clocal == "option" {
                         // A block walked inline: its edges are a word boundary (#279, #477).
                         bufs[job.buf].push(Self::space());
@@ -1283,6 +1323,56 @@ impl<'a, 's> Walk<'a, 's> {
                 }
             }
         }
+    }
+
+    /// The token of a visible `<img>` inside `parent`: its `src` resolved against the file, its
+    /// alt, and the size, float and extras its markup and CSS give. The text it copies is
+    /// charged.
+    fn picture_token(&self, img: NodeId, parent: NodeId) -> Result<String, ItemError> {
+        let dom = self.dom;
+        let src = dom.attr(img, "src").unwrap_or("");
+        let alt = dom.attr(img, "alt").unwrap_or("");
+        self.resolver.charge(src.len().saturating_add(alt.len()))?;
+        let href = resolve_img_src(&self.file.href, src);
+        let css = self.resolver.resolve(img)?;
+        let size = img_size_hint(dom, img, css.as_ref())?;
+        let (side, size) = img_float(self.resolver, dom, img, css.as_ref(), Some(parent), size)?;
+        let extra = img_inline_extras(dom, img, css.as_ref())?;
+        Ok(img_token(
+            &href,
+            alt,
+            size.as_deref(),
+            side,
+            extra.as_deref(),
+        ))
+    }
+
+    /// What a visible `<svg>` writes after its ids: a picture for each `<image>` it draws (the
+    /// href as written), then each of its `<text>`s' words, with that text's ids, between
+    /// spaces. One that draws shapes only is refused (kfxgen draws it as a picture, #709).
+    fn svg_parts(&self, svg: NodeId, buf: &mut Vec<Segment>) -> Result<(), ItemError> {
+        let dom = self.dom;
+        if svg_draws_shapes_only(dom, svg) {
+            return Err(self.unsupported("SVG pictures"));
+        }
+        for href in svg_image_refs(dom, svg) {
+            self.resolver.charge(href.len())?;
+            buf.push(Segment {
+                text: img_token(href, "", Some(SVG_IMAGE_SIZE), None, None),
+                flags: Flags::default(),
+            });
+        }
+        for (text, node) in svg_text_paragraphs(dom, svg) {
+            buf.push(Self::space());
+            for id in subtree_anchor_ids(dom, node) {
+                buf.push(Self::mark(&id));
+            }
+            buf.push(Segment {
+                text: format!("{text} "),
+                flags: Flags::default(),
+            });
+        }
+        Ok(())
     }
 
     /// `if child.tail: parts.append((child.tail, cur))`: the tail sits inside `job`'s element,
