@@ -685,7 +685,9 @@ failed"), and the book is still made.
   (`Walk`), so the walk's output is the same. kfxgen's style resolver reads one of the marks
   (`_vertical_box`, a vertical element's margins and paddings) and a second pass walks the same
   tree: the port's resolver and a second pass's new `Walk` still see the marks. The inline walk
-  reads no margins or paddings; which later step would see the difference is not checked.
+  reads no margins or paddings. The spacing steps of the block walk read the styles of block
+  elements, their ancestors and those ancestors' children only, never an element inside a
+  turned one, so they see no difference either; later steps are not checked.
 
 ## Pictures in text and initials
 
