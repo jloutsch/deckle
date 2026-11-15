@@ -1035,3 +1035,30 @@ fn many_pictures_and_svg_parts_take_linear_time() {
     assert_eq!(svg.len(), 2 * MANY + 2);
     assert_eq!(svg[2 * MANY + 1], "c |");
 }
+
+/// Where kfxgen raises in these helpers, the port gives the same exception as a
+/// [`ItemError::Raised`] (the spine item is left out): a picture's side margin in `in` spelt
+/// with a dotless or dotted i, and a `::first-letter` letter-spacing spelt so
+/// (`parse_css_length`, through `_css_emphasis` for the initial). Checked against the pinned
+/// helpers under Python 3.14.
+#[test]
+fn what_kfxgen_raises_on_in_pictures_and_initials_is_raised() {
+    let got = walk_page(
+        "<p>x<img src=\"a.png\" class=\"m\"/></p>",
+        "img.m { margin-left: 1\u{131}n }",
+    );
+    assert_eq!(got, [Err("KeyError".to_owned())]);
+
+    let file = page(
+        "<p class=\"dc\">Once</p>",
+        ".dc::first-letter { letter-spacing: 2\u{131}n }",
+    );
+    let budget = TextBudget::new();
+    let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+    let p = first(&file, "p");
+    let css = resolver.resolve(p).unwrap();
+    match initial(&file.dom, &resolver, p, css.as_ref(), "Once", Vec::new()) {
+        Err(ItemError::Raised(r)) => assert_eq!(r.exception, "KeyError"),
+        other => panic!("{other:?}"),
+    }
+}
