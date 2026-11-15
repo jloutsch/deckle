@@ -7,6 +7,10 @@
   {
    "href": "OEBPS/half.xhtml",
    "linear": true
+  },
+  {
+   "href": "OEBPS/carry.xhtml",
+   "linear": true
   }
  ],
  "page_progression_direction": null,
@@ -14,6 +18,11 @@
   {
    "id": "all",
    "href": "OEBPS/all.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "carry",
+   "href": "OEBPS/carry.xhtml",
    "media_type": "application/xhtml+xml"
   },
   {
@@ -42,6 +51,11 @@
    "title": "half",
    "href": "OEBPS/half.xhtml",
    "children": []
+  },
+  {
+   "title": "carry",
+   "href": "OEBPS/carry.xhtml",
+   "children": []
   }
  ],
  "auto_generated_toc": false,
@@ -63,6 +77,6 @@
  },
  "raw": {
   "opfname": "OEBPS/content.opf",
-  "sha256": "a0bfda82d39fceed25f363f72c0457418d01310309c12f2c8520e85bc7cb6101"
+  "sha256": "3ecac0872fb163048eddc7dd62686b709fbf39d00f15199237d6d2583342be86"
  }
 }

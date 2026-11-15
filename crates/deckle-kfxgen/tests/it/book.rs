@@ -28,7 +28,7 @@ fn read_book_matches_every_dump() {
     assert_eq!(tally.books.len(), 20);
     assert_eq!(
         (tally.files, tally.rules, tally.font_faces),
-        (65, 403, 3),
+        (66, 427, 3),
         "files, book rules, @font-face rules"
     );
     assert!(tally.marks >= 3, "{} marks", tally.marks);

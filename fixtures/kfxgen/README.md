@@ -38,7 +38,9 @@ handling shapes a Calibre-path fixture's `model.json`, so another version can ch
 possibly their `expected.kfx`. Rebuild all of them with `tools/ref/kfxgen_models.sh`, or one
 committed source with `KFXGEN_ONLY=<name>` (also with `--cascade` and `--convert`: only that
 source's folder is made and replaced, and only when the run's kfxgen commit and tools are the
-folder's); two runs
+folder's). A changed synthetic source needs all three runs (`KFXGEN_ONLY=<name>` alone, then with
+`--cascade`, then with `--convert`), and from a git worktree `KFXGEN` must name the kfxgen
+checkout, since the default is next to the worktree, not next to the main checkout. Two runs
 give the same `expected.kfx`, and the same `model.json` but for the order of the `images`
 argument of a book with several pictures, which calibre lists in another order from run to run
 (`block_picture_769`, `block_picture_770`, `pictures_side_by_side_766` and
@@ -156,7 +158,7 @@ the macOS app's).
 | `css_quirks` | synthetic (`tools/ref/make_css_quirks_epub.py`) | Calibre's CSS quirks, one file per group (see `cascade/`) |
 | `package_quirks` | synthetic (`tools/ref/make_cascade_epubs.py`) | a package Calibre changes: cover by `<meta>`, a spine item twice and one `linear="no"`, a year-only date, `en-US`, an empty NCX label |
 | `no_toc` | synthetic, the same script | neither NCX nor nav: Calibre makes the contents |
-| `fake_margins` | synthetic, the same script | margins Calibre's RemoveFakeMargins removes and keeps |
+| `fake_margins` | synthetic, the same script | margins Calibre's RemoveFakeMargins removes and keeps; a last file of side margins carried from containers (em, pt, px, %, one side, past half the page, a `<caption>`), % margins inside a sized, padded or bordered container, and spacers of three line heights after a padded block and an em margin |
 | `malformed` | synthetic, the same script | files Calibre reads with its HTML parser, entities, HTML 4, windows-1252 |
 | `comments_in_tree` | synthetic, the same script | comments where Calibre's steps count lxml's children: an empty `<b>` and a `<br>` holding one, one between the head's children, a rule inside one in `<style>`, a drop cap holding one, one before the children `:first-child` and `:nth-child(2)` pick, one beside an only element child (`:only-child`) and one before a `:first-of-type`, comments whose tails hold text |
 | `refused_selector` | synthetic, the same script | two vertical-rl files with the same margin rules, one also holding `::marker` rules Calibre refuses (no `data-kfxgen-v-*` marks there); an `align=" Center "` paragraph of class `TOC Dedication` |

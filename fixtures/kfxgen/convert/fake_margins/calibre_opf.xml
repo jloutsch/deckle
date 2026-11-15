@@ -10,7 +10,9 @@
 <item id="css" href="OEBPS/style.css" media-type="text/css"/>
 <item id="all" href="OEBPS/all.xhtml" media-type="application/xhtml+xml"/>
 <item id="half" href="OEBPS/half.xhtml" media-type="application/xhtml+xml"/>
+<item id="carry" href="OEBPS/carry.xhtml" media-type="application/xhtml+xml"/>
+<item id="carry-css" href="OEBPS/carry.css" media-type="text/css"/>
 </manifest>
-<spine toc="ncx"><itemref idref="all"/><itemref idref="half"/></spine>
+<spine toc="ncx"><itemref idref="all"/><itemref idref="half"/><itemref idref="carry"/></spine>
 
 </package>

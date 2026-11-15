@@ -1,0 +1,30 @@
+{
+ "font_face": [],
+ "rules": [
+  [1, ".lr", {"margin-left": "2em", "margin-right": "5%"}, [], [1, 0, 0, 1, 0, 83]],
+  [1, ".own", {"margin-left": "1em"}, [], [1, 0, 0, 1, 0, 84]],
+  [1, ".ind", {"text-indent": "2em"}, [], [1, 0, 0, 1, 0, 85]],
+  [1, ".lem", {"margin-left": "1.5em"}, [], [1, 0, 0, 1, 0, 86]],
+  [1, ".rem", {"margin-right": "2em"}, [], [1, 0, 0, 1, 0, 87]],
+  [1, ".lpt", {"margin-left": "12pt"}, [], [1, 0, 0, 1, 0, 88]],
+  [1, ".rpt", {"margin-right": "18pt"}, [], [1, 0, 0, 1, 0, 89]],
+  [1, ".lpx", {"margin-left": "20px"}, [], [1, 0, 0, 1, 0, 90]],
+  [1, ".wide", {"margin-left": "30%"}, [], [1, 0, 0, 1, 0, 91]],
+  [1, ".wider", {"margin-left": "25%"}, [], [1, 0, 0, 1, 0, 92]],
+  [1, ".capped", {"margin-left": "2.5em"}, [], [1, 0, 0, 1, 0, 93]],
+  [1, ".cap", {"margin-left": "1em", "margin-right": "1em"}, [], [1, 0, 0, 1, 0, 94]],
+  [1, ".w60", {"width": "60%"}, [], [1, 0, 0, 1, 0, 95]],
+  [1, ".w300", {"width": "300px"}, [], [1, 0, 0, 1, 0, 96]],
+  [1, ".sides", {"padding-top": "0", "padding-right": "5%", "padding-bottom": "0", "padding-left": "2em"}, [], [1, 0, 0, 1, 0, 97]],
+  [1, ".bd", {"border-top-color": "black", "border-top-style": "solid", "border-top-width": "1px", "border-left-color": "black", "border-left-style": "solid", "border-left-width": "2px", "padding-left": "1em"}, [], [1, 0, 0, 1, 0, 98]],
+  [1, ".pct", {"margin-top": "5%", "margin-right": "0", "margin-bottom": "5%", "margin-left": "0"}, [], [1, 0, 0, 1, 0, 99]],
+  [1, ".padb", {"padding-bottom": "1em", "margin-bottom": "2em", "font-size": "1.25em"}, [], [1, 0, 0, 1, 0, 100]],
+  [1, ".big", {"font-size": "1.5em", "margin-bottom": "1.5em"}, [], [1, 0, 0, 1, 0, 101]],
+  [1, ".lhn", {"line-height": "normal"}, [], [1, 0, 0, 1, 0, 102]],
+  [1, ".lh2", {"line-height": "2"}, [], [1, 0, 0, 1, 0, 103]],
+  [1, ".neg", {"margin-top": "-0.5em"}, [], [1, 0, 0, 1, 0, 104]],
+  [1, ".padt", {"padding-top": "1em"}, [], [1, 0, 0, 1, 0, 105]],
+  [1, ".pxb", {"margin-bottom": "30px"}, [], [1, 0, 0, 1, 0, 106]]
+ ],
+ "ua_rules": 180
+}

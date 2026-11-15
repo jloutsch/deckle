@@ -180,8 +180,8 @@ fn runs_match_the_dump_for_every_paragraph() {
         failures[..failures.len().min(80)].join("\n"),
         failures.len()
     );
-    assert_eq!(files_compared, 188);
-    assert_eq!(calls + skipped, 1862);
+    assert_eq!(files_compared, 189);
+    assert_eq!(calls + skipped, 1897);
 }
 
 /// The paragraph of a page, and the page.

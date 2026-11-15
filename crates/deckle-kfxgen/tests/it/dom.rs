@@ -394,8 +394,8 @@ fn parse_cleanups_match_calibre() {
     }
     assert_eq!(
         matched + failed.len(),
-        50,
-        "the 14 books have 50 spine files"
+        51,
+        "the 14 books have 51 spine files"
     );
 }
 
@@ -925,7 +925,7 @@ fn itertext_matches_the_dump() {
             files += 1;
         }
     }
-    assert_eq!(files, 50, "the 14 books have 50 spine files");
+    assert_eq!(files, 51, "the 14 books have 51 spine files");
 }
 
 #[test]

@@ -148,8 +148,8 @@ fn resolver_matches_the_dump_for_every_element() {
     );
     // Far below the budget: an ordinary book reads no value of TEXT_UNIT bytes many times.
     assert!(most.0 < MAX_CASCADE_DECLS / 1000, "{most:?}");
-    assert_eq!(files_compared, 184 - SKIP.len());
-    assert_eq!(elements + link_rows, 3941);
+    assert_eq!(files_compared, 185 - SKIP.len());
+    assert_eq!(elements + link_rows, 4004);
 }
 
 /// A spine file of `dom` styled with `css`, flattened as `read_book` would.
