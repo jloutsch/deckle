@@ -299,10 +299,14 @@ impl Walker<'_, '_, '_, '_> {
         if border.is_none() && fill.is_none() && width.is_none() && !turned {
             return Ok(false);
         }
-        self.step(end - start)?;
-        if !(start..end)
-            .any(|i| matches!(self.blocks[i].kind(), Some("table" | "box")) || self.seen(i).words)
-        {
+        // `any(...)` stops at the first kid with content: charge the kids it visits.
+        let visited = (start..end)
+            .position(|i| {
+                matches!(self.blocks[i].kind(), Some("table" | "box")) || self.seen(i).words
+            })
+            .map(|at| at + 1);
+        self.step(visited.unwrap_or(end - start))?;
+        if visited.is_none() {
             return Ok(false);
         }
         if leaf {
@@ -329,17 +333,21 @@ impl Walker<'_, '_, '_, '_> {
             }
         }
         // A contents entry naming a block past the first keeps the blocks flat. A leaf's box
-        // holds one block, so this never refuses it. Each id looked up is charged.
+        // holds one block, so this never refuses it. Kids left flat are looked at again by
+        // each container round them, so each kid this loop visits costs a unit, and the ids
+        // it reads cost their bytes, charged once after the loop.
         let toc = self.opts.toc_targets;
         if !toc.is_empty() {
-            let mut named = false;
+            let (mut looked, mut bytes, mut named) = (0usize, 0usize, false);
             for b in self.blocks[start..].iter().skip(1) {
+                looked += 1;
                 let ids = b
                     .get("anchor_ids")
                     .and_then(PyValue::as_list)
                     .unwrap_or(&[]);
-                let bytes = ids.iter().filter_map(PyValue::as_str).map(str::len).sum();
-                self.resolver.charge(bytes)?;
+                for a in ids.iter().filter_map(PyValue::as_str) {
+                    bytes = bytes.saturating_add(a.len());
+                }
                 if ids
                     .iter()
                     .filter_map(PyValue::as_str)
@@ -349,6 +357,8 @@ impl Walker<'_, '_, '_, '_> {
                     break;
                 }
             }
+            self.resolver
+                .charge(TEXT_UNIT.saturating_mul(looked).saturating_add(bytes))?;
             if named {
                 return Ok(false);
             }

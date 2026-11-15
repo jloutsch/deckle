@@ -698,7 +698,6 @@ impl Walker<'_, '_, '_, '_> {
             Ok(parse_css_length(&raw, false)?)
         };
         let (left, right) = (side("margin-left")?, side("margin-right")?);
-        drop(css);
         if left.is_none() && right.is_none() {
             return Ok(());
         }
@@ -719,7 +718,6 @@ impl Walker<'_, '_, '_, '_> {
                     let ems = match over_under {
                         Some(ems) => ems,
                         None => {
-                            let css = self.resolve(elem)?;
                             let ems = [
                                 margin_em(css.as_ref(), "left", 1.0)?,
                                 margin_em(css.as_ref(), "right", 1.0)?,

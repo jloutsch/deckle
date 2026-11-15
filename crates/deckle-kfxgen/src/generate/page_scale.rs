@@ -34,6 +34,7 @@ pub fn page_width(pt: f64) -> PageWidth {
 }
 
 /// Puts back the width it replaced, as `page_width`'s `_PAGE_PT.reset(token)`.
+#[must_use = "the width is put back when the guard is dropped"]
 pub struct PageWidth(f64);
 
 impl Drop for PageWidth {
