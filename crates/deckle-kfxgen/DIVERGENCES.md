@@ -735,3 +735,20 @@ The picture tokens and the initial (`src/convert/pictures.rs`, `initial.rs`, at 
 - Each anchor key a block gets is a copy of the file's href and an id. The copies are charged to
   the file's style text budget, so a file with a very long href and very many ids is refused
   where kfxgen makes the book.
+
+## Lists
+
+kfxgen's list code (`src/convert/blocks/lists.rs`, at ad38ec8):
+
+- Python's int has no bound, so an `<ol start>` or `<li value>` of any length up to 4,300 digits
+  is a number to kfxgen. The port reads it exactly within an i128. A typed marker past that, or
+  a native list's `start`, an item's `value` or its number past an i64 (the model's integers),
+  stops the file (`Error::Unsupported`, "list numbers past 64 bits"), where kfxgen writes the
+  number. A number that is only read, never written (an item that spells out its own marker, a
+  marker no text takes), changes nothing.
+- To tell whether a list's items type their own markers, kfxgen joins each item's whole text,
+  once for each list round the item. The port reads only the first characters it needs, and
+  charges each node it reads to the file's style text budget, so lists nested deep whose items
+  hold many elements and no text are refused where kfxgen makes the book.
+- A nested list's box copies its items' texts and ids once more at each level (`_list_box`); the
+  copies are charged to the same budget.
