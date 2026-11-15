@@ -18,11 +18,11 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use super::ItemError;
 use super::href::{is_unsafe, resolve_doc_path};
 use super::inline::{keyword, text_of, words};
 use super::inline_style::parse_css_length;
 use super::resolver::{Resolved, Resolver};
+use super::{Error, ItemError};
 use crate::css;
 use crate::dom::{Dom, NodeId};
 use crate::generate::py;
@@ -32,6 +32,23 @@ use crate::pyvalue::PyValue;
 const DELIM: char = '\0';
 const FIELD: char = '\u{1}';
 const SPACE: char = '\u{2}';
+
+/// The feature a picture embedded as a `data:` URI is refused as. calibre's conversion turns
+/// an `<img src="data:image/…">` into a file of the manifest before kfxgen runs (`DataURL`,
+/// `ebooks/oeb/transforms/data_url.py`, from `plumber.py`); `read_book` has no such step yet,
+/// so every `data:` picture source is refused until it does (Task 18).
+pub(crate) const DATA_URI: &str = "pictures embedded as data: URIs";
+
+/// Whether a picture source is a `data:` URI: it starts with `data:` in any case, with
+/// nothing before it. That is `_is_unsafe_href`'s test on the value as written
+/// (`lower().startswith("data:")`; no character outside ASCII lowers to one of those letters),
+/// and calibre's `DataURL` test (`raw.startswith('data:')`, case kept) is the lower-case part
+/// of it. Neither strips white space first, and lxml keeps an attribute's spaces, so ` data:`
+/// is a relative path to both. Reads at most five bytes and copies nothing.
+pub(crate) fn is_data_uri(src: &str) -> bool {
+    src.get(..5)
+        .is_some_and(|p| p.eq_ignore_ascii_case("data:"))
+}
 
 /// `SVG_IMAGE_SIZE`: the size hint of a picture an `<svg>` wraps.
 pub(crate) const SVG_IMAGE_SIZE: &str = "h=100%";
@@ -293,12 +310,14 @@ static CSS_URL: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// `_css_background_image(elem, css)`: the href of a picture an element with nothing else in
-/// it draws as a `no-repeat` background (#168), or None.
+/// it draws as a `no-repeat` background (#168), or None. A `data:` href is refused
+/// ([`DATA_URI`]) before it is copied; `file` names the book file for the refusal.
 pub fn css_background_image(
     dom: &Dom,
     elem: NodeId,
     css: Option<&Resolved>,
-) -> Result<Option<String>, css::Error> {
+    file: &str,
+) -> Result<Option<String>, ItemError> {
     // `if not css`: a resolved style always has keys.
     let Some(css) = css else {
         return Ok(None);
@@ -310,7 +329,14 @@ pub fn css_background_image(
         return Ok(None);
     }
     let image = text_of(css.get("background-image")?);
-    Ok(css_url(&image).map(str::to_owned))
+    match css_url(&image) {
+        Some(href) if is_data_uri(href) => Err(Error::Unsupported {
+            feature: DATA_URI,
+            file: file.to_owned(),
+        }
+        .into()),
+        href => Ok(href.map(str::to_owned)),
+    }
 }
 
 /// The first `url(…)` `_CSS_URL_RE` finds in a CSS value, stripped; None for none or an empty
@@ -612,6 +638,28 @@ mod tests {
         for (markup, want) in cases {
             let (dom, root) = svg(markup);
             assert_eq!(svg_draws_shapes_only(&dom, root), want, "{markup}");
+        }
+    }
+
+    #[test]
+    fn data_uris_are_told_as_kfxgen_and_calibre_tell_them() {
+        for src in [
+            "data:image/png;base64,AAAA",
+            "DATA:image/png,x",
+            "Data:",
+            "data:",
+        ] {
+            assert!(is_data_uri(src), "{src:?}");
+        }
+        for src in [
+            " data:image/png,x",
+            "\u{a0}data:x",
+            "%64ata:x",
+            "data",
+            "dat\u{e9}:x",
+            "",
+        ] {
+            assert!(!is_data_uri(src), "{src:?}");
         }
     }
 

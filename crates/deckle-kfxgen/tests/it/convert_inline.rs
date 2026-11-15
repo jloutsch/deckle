@@ -595,7 +595,8 @@ fn walk_page_readable(body: &str, css: &str) -> Vec<Result<Vec<String>, String>>
 }
 
 /// Pictures in text the dumps do not hold: a wrapper's float and width, centring, margins,
-/// vertical-align, links, attribute sizes, unsafe and `data:` sources, absurd sizes, an
+/// vertical-align, links, attribute sizes, unsafe sources and two that are not `data:` URIs to
+/// kfxgen or calibre (a space before the scheme, the scheme percent-encoded), absurd sizes, an
 /// `<svg>`'s pictures and text. Expected values from the pinned `_walk_inline`, run under
 /// Python 3.14 with lxml 6.0.2 over these pages, each element given the style the port's
 /// resolver gives it. (In the wrapper with a comment, lxml's `len(parent)` counts the comment,
@@ -664,7 +665,7 @@ fn pictures_in_text_are_kfxgens() {
         (
             "<p><img src=\"a.png\" width=\"120\" height=\"80\"/><img src=\"a.png\" height=\" 3em \"/>\
              <img src=\"a.png\" width=\"auto\" height=\"7pt\"/><img src=\"a.png\" width=\"1e3\"/>\
-             <img src=\"/etc/passwd\" alt=\"a\u{1}b\"/><img src=\"data:image/png;base64,AAAA\"/><img/></p>\
+             <img src=\"/etc/passwd\" alt=\"a\u{1}b\"/><img src=\" data:x\"/><img src=\"%64ata:x\"/><img/></p>\
              <p><img src=\"a.png\" width=\"99999999999999999999999999\"/>\
              <img src=\"a.png\" width=\"-5\" height=\"1e309\"/>\
              <img src=\"a.png\" width=\"NaN\" height=\"\u{661}\u{660}\"/>\
@@ -682,7 +683,8 @@ fn pictures_in_text_are_kfxgens() {
                     "<IMG^OEBPS/a.png^^h=7pt^^h=7pt<|",
                     "<IMG^OEBPS/a.png^<|",
                     "<IMG^/etc/passwd^ab<|",
-                    "<IMG^data:image/png;base64,AAAA^<|",
+                    "<IMG^OEBPS/ data:x^<|",
+                    "<IMG^%64ata:x^<|",
                     "<IMG^^<|",
                 ],
                 &[
@@ -858,7 +860,7 @@ fn background_pictures_are_kfxgens() {
         .filter(|&n| file.dom.tag(n) == "div")
         .map(|n| {
             let css = resolver.resolve(n).unwrap();
-            css_background_image(&file.dom, n, css.as_ref()).unwrap()
+            css_background_image(&file.dom, n, css.as_ref(), &file.href).unwrap()
         })
         .collect();
     let some = |s: &str| Some(s.to_owned());
@@ -875,10 +877,11 @@ fn background_pictures_are_kfxgens() {
     );
 }
 
-/// A `data:` source is written into its token as it is, with no decoding beyond
-/// `_is_unsafe_href`'s (it has no `%`), and the copy is charged to the file's budget.
+/// A `data:` picture source of several MB is refused by name before it is copied: calibre
+/// turns such a source into a file of the manifest before kfxgen runs, a step the port does
+/// not have yet.
 #[test]
-fn a_data_uri_of_several_mb_is_written_as_it_is_and_charged() {
+fn a_data_uri_of_several_mb_is_refused_before_it_is_copied() {
     let uri = format!("data:image/png;base64,{}", "QUJD".repeat(1 << 20));
     let file = page(&format!("<p>x<img src=\"{uri}\" alt=\"a\"/></p>"), "");
     let budget = TextBudget::new();
@@ -886,27 +889,65 @@ fn a_data_uri_of_several_mb_is_written_as_it_is_and_charged() {
     let mut serials = Serials::default();
     let before = budget.charged();
     let start = Instant::now();
-    let (segs, bytes) = allocated_by(|| {
-        Walk::new(&file, &resolver, &mut serials)
-            .inline(first(&file, "p"))
-            .unwrap()
-    });
+    let (got, bytes) =
+        allocated_by(|| Walk::new(&file, &resolver, &mut serials).inline(first(&file, "p")));
     assert!(start.elapsed() < COST_LIMIT);
-    assert_eq!(segs.len(), 2);
-    assert_eq!(segs[1].text, format!("\0IMG\u{1}{uri}\u{1}a\0"));
-    assert!(budget.charged() - before >= uri.len() / 64);
-    // `_is_unsafe_href` lowers it twice and decodes it once; the token is one more copy.
-    assert!(bytes < 8 * uri.len() as u64, "{bytes}");
+    match got {
+        Err(ItemError::Error(Error::Unsupported { feature, file })) => {
+            assert_eq!(feature, "pictures embedded as data: URIs");
+            assert_eq!(file, "OEBPS/a.xhtml");
+        }
+        other => panic!("{:?}", other.map(|s| s.len())),
+    }
+    // Not one copy of it: the walk allocates for the paragraph's other parts only.
+    assert!(bytes < uri.len() as u64 / 4, "{bytes}");
+    assert_eq!(budget.charged(), before);
 }
 
-/// The copies a file's pictures make share the file's budget: 36 MiB of `data:` sources in
+/// Every place a picture source becomes a token or a reference refuses a `data:` one, in any
+/// case: an `<img>`, an SVG `<image>` (by `href` or `xlink:href`), a background picture.
+#[test]
+fn data_uri_pictures_are_refused_by_name() {
+    let data = "pictures embedded as data: URIs";
+    let got = walk_page(
+        "<p><img src=\"DATA:image/png,x\"/></p>\
+         <p>a<svg xmlns=\"http://www.w3.org/2000/svg\"><image href=\"j.png\"/>\
+         <image href=\"data:image/png;base64,AAAA\"/></svg></p>\
+         <p><svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\">\
+         <g><image xlink:href=\"Data:image/gif,x\"/></g></svg></p>",
+        "",
+    );
+    let refused = format!("Error(Unsupported {{ feature: {data:?}, file: \"OEBPS/a.xhtml\" }})");
+    assert_eq!(
+        got,
+        vec![Err(refused.clone()), Err(refused.clone()), Err(refused)]
+    );
+
+    let file = page(
+        "<div class=\"bg\"></div>",
+        ".bg{background-image:url(data:image/png;base64,AAAA);background-repeat:no-repeat}",
+    );
+    let budget = TextBudget::new();
+    let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+    let div = first(&file, "div");
+    let css = resolver.resolve(div).unwrap();
+    match css_background_image(&file.dom, div, css.as_ref(), &file.href) {
+        Err(ItemError::Error(Error::Unsupported { feature, file })) => {
+            assert_eq!(feature, data);
+            assert_eq!(file, "OEBPS/a.xhtml");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The copies a file's pictures make share the file's budget: 36 MiB of picture sources in
 /// one file pass it, and the file is refused after bounded work.
 #[test]
-fn data_uris_past_the_files_budget_are_refused() {
-    let uri = format!("data:image/png;base64,{}", "QUJD".repeat(1 << 20));
+fn picture_sources_past_the_files_budget_are_refused() {
+    let src = format!("{}.png", "p".repeat(4 << 20));
     let mut body = String::from("<p>");
     for _ in 0..9 {
-        body.push_str(&format!("<img src=\"{uri}\"/>"));
+        body.push_str(&format!("<img src=\"{src}\"/>"));
     }
     body.push_str("</p>");
     let file = page(&body, "");

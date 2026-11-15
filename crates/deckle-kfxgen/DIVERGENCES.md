@@ -696,9 +696,18 @@ The picture tokens and the initial (`src/convert/pictures.rs`, `initial.rs`, at 
   pictures"). kfxgen draws it with Qt as a picture of its own and names it by a hash of lxml's
   text of it (plan decision 2). An `<svg>` kfxgen leaves out (hidden, or its shapes only inside
   definitions or a nested `<svg>`) is left out here too.
+- A picture source that is a `data:` URI (an `<img>`'s `src`, an SVG `<image>`'s href, a
+  background picture's `url()`; `data:` in any case, nothing before it) is refused
+  (`Error::Unsupported`, "pictures embedded as data: URIs") before it is copied, until
+  calibre's `DataURL` step is ported. calibre's conversion runs that step before kfxgen
+  (`ebooks/oeb/transforms/data_url.py`, from `plumber.py`): an `<img src="data:image/…">` it can
+  decode becomes a file of the manifest, so kfxgen writes a token naming that file.
+  `read_book` has no such step. An SVG `<image>` or CSS background `data:` source, and an
+  `<img>` one calibre cannot decode, reach kfxgen as they are, and kfxgen writes the URI into
+  the token (the generator then finds no picture by that name); the port refuses those too.
 - The text a token copies out of the book (an `<img>`'s `src` and `alt`, an SVG `<image>`'s
   href) is charged to the file's style text budget. A file whose pictures' sources pass it
-  (about 32 MB of `data:` sources) is refused where kfxgen makes the book.
+  (about 32 MB) is refused where kfxgen makes the book.
 - kfxgen's SVG helpers and `_leading_float` recurse once per level, and past Python's
   recursion limit raise `RecursionError`, which leaves the spine item out. The port uses loops.
   `read_book` refuses a file nested deep enough for either, so only a tree built by hand gets

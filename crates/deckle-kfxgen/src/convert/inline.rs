@@ -38,8 +38,8 @@ use super::inline_style::{
     parse_vertical_align,
 };
 use super::pictures::{
-    SVG_IMAGE_SIZE, img_float, img_inline_extras, img_size_hint, img_token, resolve_img_src,
-    svg_draws_shapes_only, svg_image_refs, svg_text_paragraphs,
+    DATA_URI, SVG_IMAGE_SIZE, img_float, img_inline_extras, img_size_hint, img_token, is_data_uri,
+    resolve_img_src, svg_draws_shapes_only, svg_image_refs, svg_text_paragraphs,
 };
 use super::quotes::{QCss, QMarks, document_q_marks, plain_attr};
 use super::resolver::{Resolved, Resolver};
@@ -1327,10 +1327,13 @@ impl<'a, 's> Walk<'a, 's> {
 
     /// The token of a visible `<img>` inside `parent`: its `src` resolved against the file, its
     /// alt, and the size, float and extras its markup and CSS give. The text it copies is
-    /// charged.
+    /// charged. A `data:` source is refused before anything is copied.
     fn picture_token(&self, img: NodeId, parent: NodeId) -> Result<String, ItemError> {
         let dom = self.dom;
         let src = dom.attr(img, "src").unwrap_or("");
+        if is_data_uri(src) {
+            return Err(self.unsupported(DATA_URI));
+        }
         let alt = dom.attr(img, "alt").unwrap_or("");
         self.resolver.charge(src.len().saturating_add(alt.len()))?;
         let href = resolve_img_src(&self.file.href, src);
@@ -1349,13 +1352,18 @@ impl<'a, 's> Walk<'a, 's> {
 
     /// What a visible `<svg>` writes after its ids: a picture for each `<image>` it draws (the
     /// href as written), then each of its `<text>`s' words, with that text's ids, between
-    /// spaces. One that draws shapes only is refused (kfxgen draws it as a picture, #709).
+    /// spaces. One that draws shapes only is refused (kfxgen draws it as a picture, #709), and
+    /// one with a `data:` picture, before anything is copied.
     fn svg_parts(&self, svg: NodeId, buf: &mut Vec<Segment>) -> Result<(), ItemError> {
         let dom = self.dom;
         if svg_draws_shapes_only(dom, svg) {
             return Err(self.unsupported("SVG pictures"));
         }
-        for href in svg_image_refs(dom, svg) {
+        let refs = svg_image_refs(dom, svg);
+        if refs.iter().any(|href| is_data_uri(href)) {
+            return Err(self.unsupported(DATA_URI));
+        }
+        for href in refs {
             self.resolver.charge(href.len())?;
             buf.push(Segment {
                 text: img_token(href, "", Some(SVG_IMAGE_SIZE), None, None),
