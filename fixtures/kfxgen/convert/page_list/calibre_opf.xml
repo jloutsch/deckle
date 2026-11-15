@@ -1,0 +1,26 @@
+<?xml version="1.0"  encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>L579 kfxgen - landmarks and pages</dc:title>
+    <dc:identifier id="id">urn:kfxgen:dev579-main</dc:identifier>
+    <dc:language>en</dc:language>
+    <dc:creator>kfxgen tests</dc:creator>
+    <meta name="cover" content="cover-image"/>
+    <meta property="dcterms:modified">2026-10-28T00:00:00Z</meta>
+  </metadata>
+  <manifest><item id="i0" href="cover.xhtml" media-type="application/xhtml+xml"/><item id="i1" href="front.xhtml" media-type="application/xhtml+xml"/><item id="i2" href="contents.xhtml" media-type="application/xhtml+xml"/><item id="i3" href="c1.xhtml" media-type="application/xhtml+xml"/><item id="i4" href="c2.xhtml" media-type="application/xhtml+xml"/><item id="i5" href="c3.xhtml" media-type="application/xhtml+xml"/><item id="i6" href="c4.xhtml" media-type="application/xhtml+xml"/><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="cover-image" href="cover.jpg" media-type="image/jpeg" properties="cover-image"/><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/><item id="id1" href="tmpXXXXXXXX.ncx" media-type="application/x-dtbncx+xml"/>
+		</manifest>
+  <spine toc="id1">
+    <itemref idref="i1"/>
+    <itemref idref="i2"/>
+    <itemref idref="i3"/>
+    <itemref idref="i4"/>
+    <itemref idref="i5"/>
+    <itemref idref="i6"/>
+  </spine>
+  <guide><reference type="toc" title="Contents" href="contents.xhtml"/>
+<reference type="text" title="Start" href="c1.xhtml"/>
+<reference type="cover" title="Cover image" href="cover.jpg"/>
+<reference type="titlepage" title="Cover page" href="cover.xhtml"/>
+</guide>
+</package>

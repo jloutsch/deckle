@@ -1,0 +1,21 @@
+<?xml version="1.0"  encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+<dc:identifier id="id">urn:uuid:00000000-0000-4000-8000-309475355032</dc:identifier>
+<dc:title>縦書き</dc:title><dc:creator>Fixture Author</dc:creator><dc:language>ja</dc:language>
+<meta property="dcterms:modified">2026-11-11T00:00:00Z</meta>
+</metadata>
+<manifest>
+<item id="nav" href="OEBPS/nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+<item id="ncx" href="OEBPS/toc.ncx" media-type="application/x-dtbncx+xml"/>
+<item id="css" href="OEBPS/style.css" media-type="text/css"/>
+<item id="c1" href="OEBPS/c1.xhtml" media-type="application/xhtml+xml"/>
+<item id="c2" href="OEBPS/c2.xhtml" media-type="application/xhtml+xml"/>
+<item id="c3" href="OEBPS/c3.xhtml" media-type="application/xhtml+xml"/>
+<item id="c4" href="OEBPS/c4.xhtml" media-type="application/xhtml+xml"/>
+<item id="x4" href="OEBPS/w.png" media-type="image/png"/>
+<item id="x5" href="OEBPS/v.png" media-type="image/png"/>
+<item id="id1" href="OEBPS/tmpXXXXXXXX.ncx" media-type="application/x-dtbncx+xml"/>
+		</manifest>
+<spine toc="id1" page-progression-direction="rtl"><itemref idref="c1"/><itemref idref="c2"/><itemref idref="c3"/><itemref idref="c4"/></spine>
+</package>

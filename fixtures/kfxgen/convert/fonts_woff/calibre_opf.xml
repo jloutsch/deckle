@@ -1,0 +1,16 @@
+<?xml version="1.0"  encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+<dc:identifier id="id">urn:uuid:00000000-0000-4000-8000-000000000860</dc:identifier>
+<dc:title>Fonts WOFF</dc:title><dc:creator opf:role="aut">Fixture Author</dc:creator>
+<dc:language>en</dc:language>
+</metadata>
+<manifest>
+<item id="ncx" href="OEBPS/toc.ncx" media-type="application/x-dtbncx+xml"/>
+<item id="i0" href="OEBPS/style.css" media-type="text/css"/>
+<item id="i1" href="OEBPS/c1.xhtml" media-type="application/xhtml+xml"/>
+<item id="i2" href="OEBPS/serif.woff" media-type="application/font-woff"/>
+</manifest>
+<spine toc="ncx"><itemref idref="i1"/></spine>
+
+</package>

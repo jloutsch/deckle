@@ -1,0 +1,19 @@
+<?xml version="1.0"  encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="u">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="u">n445b-kfxgen</dc:identifier>
+    <dc:title>N445b kfxgen - pop-up notes</dc:title>
+    <dc:language>en</dc:language>
+    <meta property="dcterms:modified">2026-10-25T00:00:00Z</meta>
+  </metadata>
+  <manifest><item id="i0" href="a.xhtml" media-type="application/xhtml+xml"/><item id="i1" href="b.xhtml" media-type="application/xhtml+xml"/><item id="i2" href="c.xhtml" media-type="application/xhtml+xml"/><item id="i3" href="d.xhtml" media-type="application/xhtml+xml"/><item id="i4" href="e.xhtml" media-type="application/xhtml+xml"/><item id="i5" href="notes.xhtml" media-type="application/xhtml+xml"/><item id="nav" href="nav.xhtml" properties="nav" media-type="application/xhtml+xml"/><item id="css" href="s.css" media-type="text/css"/><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/><item id="id1" href="tmpXXXXXXXX.ncx" media-type="application/x-dtbncx+xml"/>
+		</manifest>
+  <spine toc="id1">
+    <itemref idref="i0"/>
+    <itemref idref="i1"/>
+    <itemref idref="i2"/>
+    <itemref idref="i3"/>
+    <itemref idref="i4"/>
+    <itemref idref="i5"/>
+  </spine>
+</package>

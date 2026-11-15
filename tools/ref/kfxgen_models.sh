@@ -4,10 +4,14 @@
 # kfxgen makes from it (expected.kfx), the reference for crates/deckle-kfxgen (native KFX
 # design, Oracles). With --cascade, rebuild fixtures/kfxgen/cascade instead: what Calibre
 # hands kfxgen (book view, trees, styles, first-pass rules; tools/ref/kfxgen_hook/book_dump.py).
+# With --convert, rebuild fixtures/kfxgen/convert: what kfxgen's converter makes on its way to
+# the chapters, per source (tools/ref/kfxgen_hook/convert_dump.py), from runs that must give
+# the committed models byte for byte; run it after the models.
 #
 #   tools/ref/kfxgen_models.sh                                   # the committed fixtures
 #   tools/ref/kfxgen_models.sh --refresh-sources                 # ... from kfxgen's test_books
 #   tools/ref/kfxgen_models.sh --cascade                         # the committed cascade dumps
+#   tools/ref/kfxgen_models.sh --convert                         # the committed converter dumps
 #   DECKLE_KFXGEN_CORPUS_OUT=gutenberg/models \
 #     tools/ref/kfxgen_models.sh --corpus gutenberg/*.epub       # a corpus, outside git;
 #                                                                # each book's cascade dump too
@@ -31,6 +35,7 @@ EBOOK_CONVERT="${EBOOK_CONVERT:-ebook-convert}"
 CALIBRE_CUSTOMIZE="${CALIBRE_CUSTOMIZE:-calibre-customize}"
 OUT="$ROOT/fixtures/kfxgen/models"
 CASCADE="$ROOT/fixtures/kfxgen/cascade"
+CONVERT="$ROOT/fixtures/kfxgen/convert"
 SOURCES="$ROOT/fixtures/kfxgen/sources"
 HOOK="$ROOT/tools/ref/kfxgen_hook"
 
@@ -47,7 +52,8 @@ WORK="$(mktemp -d -t deckle-kfxgen-XXXXXX)"
 # that fails leaves the committed fixtures as they were.
 BUILD="$OUT.new"
 CASCADE_BUILD="$CASCADE.new"
-trap 'rm -rf "$WORK" "$BUILD" "$CASCADE_BUILD"' EXIT
+CONVERT_BUILD="$CONVERT.new"
+trap 'rm -rf "$WORK" "$BUILD" "$CASCADE_BUILD" "$CONVERT_BUILD"' EXIT
 
 # The export, with the hook.
 TREE="$WORK/kfxgen"
@@ -188,6 +194,65 @@ if [ "${1:-}" = "--cascade" ]; then
   exit 0
 fi
 
+# The converter dumps (fixtures/kfxgen/README.md, convert/): every source, dumped in a run
+# whose model.json and KFX must be the committed model's and expected.kfx, so the dumps
+# change nothing; and the unit table of inline_style.py and font_table.py.
+if [ "${1:-}" = "--convert" ]; then
+  rm -rf "$CONVERT_BUILD"
+  mkdir -p "$CONVERT_BUILD/units"
+  "$PY" -I "$HOOK/convert_dump.py" units "$TREE" "$CONVERT_BUILD/units/inline_style.json"
+  for epub in "$SOURCES"/*.epub; do
+    name="$(basename "$epub" .epub)"
+    model="$OUT/$name"
+    [ -f "$model/model.json.gz" ] || {
+      echo "$name: no models/$name: run tools/ref/kfxgen_models.sh first" >&2
+      exit 1
+    }
+    if ! KFXGEN_DUMP_MODEL="$WORK/$name.model" KFXGEN_DUMP_CONVERT="$CONVERT_BUILD/$name" \
+      "$EBOOK_CONVERT" "$epub" "$WORK/$name.kfx" >"$WORK/$name.log" 2>&1; then
+      tail -20 "$WORK/$name.log" >&2
+      echo "$name: ebook-convert failed" >&2
+      exit 1
+    fi
+    [ -f "$CONVERT_BUILD/$name/assembly.json.gz" ] || {
+      echo "$name: no assembly.json.gz, so the dump did not finish" >&2
+      exit 1
+    }
+    # Byte for byte, but for the order of the images argument: calibre lists the manifest's
+    # pictures in another order from run to run, with or without the dumps.
+    "$PY" -I -c '
+import gzip, json, sys
+ours = gzip.decompress(open(sys.argv[1], "rb").read())
+dumped = open(sys.argv[2], "rb").read()
+if ours == dumped:
+    sys.exit(0)
+def images_sorted(text):
+    doc = json.loads(text, parse_int=lambda s: ("int", s), parse_float=lambda s: ("float", s))
+    for pair in doc["args"]["$dict"]:
+        if pair[0] == "images":
+            pair[1]["$dict"].sort(key=lambda p: p[0])
+    return doc
+same = images_sorted(ours) == images_sorted(dumped)
+if same:
+    print(f"{sys.argv[3]}: the same model.json but for the order of its images")
+sys.exit(not same)
+' "$model/model.json.gz" "$WORK/$name.model/model.json" "$name" || {
+      echo "$name: the run with the dumps made another model.json than models/$name" >&2
+      exit 1
+    }
+    cmp -s "$model/expected.kfx" "$WORK/$name.kfx" || {
+      echo "$name: the run with the dumps made another KFX than models/$name" >&2
+      exit 1
+    }
+    echo "convert $name: $(du -sk "$CONVERT_BUILD/$name" | cut -f1) KB"
+  done
+  record_tools "$CONVERT_BUILD"
+  rm -rf "$CONVERT"
+  mv "$CONVERT_BUILD" "$CONVERT"
+  du -sh "$CONVERT" "$ROOT/fixtures/kfxgen"
+  exit 0
+fi
+
 REFRESH=
 case "${1:-}" in
   "") ;;
@@ -204,6 +269,7 @@ mkdir -p "$BUILD" "$SOURCES"
 # committed sources/*.epub. kfxgen's test_books/ is untracked in places, so no commit pins
 # it: --refresh-sources copies from the kfxgen working tree, and says which sources changed.
 "$PY" "$ROOT/tools/ref/kfxgen_models.py" synth "$SOURCES" >/dev/null
+"$PY" -I "$ROOT/tools/ref/make_convert_epubs.py" "$SOURCES"
 while IFS='|' read -r name src; do
   if [ -n "$REFRESH" ] && [ -f "$KFXGEN/test_books/$src" ]; then
     cmp -s "$KFXGEN/test_books/$src" "$SOURCES/$name.epub" || {
@@ -246,8 +312,6 @@ chapter_starts_773|chapter_starts_773/t773k.epub
 chapter_starts_777|chapter_starts_777/t777k.epub
 LIST
 for epub in "$SOURCES"/*.epub; do
-  # The sources --cascade builds are cascade sources only; models/ has no fixture of them.
-  case " $CASCADE_BUILT " in *" $(basename "$epub" .epub) "*) continue ;; esac
   calibre_model "$(basename "$epub" .epub)" "$epub" "$BUILD"
 done
 record_tools "$BUILD"

@@ -1,0 +1,20 @@
+<?xml version="1.0"  encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="u">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="u">urn:kfxgen:s746k</dc:identifier>
+    <dc:title>S746 kfxgen - Vertical</dc:title>
+    <dc:creator>kfxgen tests</dc:creator>
+    <dc:language>ja</dc:language>
+  </metadata>
+  <manifest>
+    <item id="x0" href="c1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="x1" href="c2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="x2" href="c3.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+  </manifest>
+  <spine toc="ncx" page-progression-direction="rtl">
+    <itemref idref="x0"/>
+    <itemref idref="x1"/>
+    <itemref idref="x2"/>
+  </spine>
+</package>

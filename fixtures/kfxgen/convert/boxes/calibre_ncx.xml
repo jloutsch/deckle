@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head><meta name="dtb:uid" content="test-Boxes"/></head>
+  <docTitle><text>Boxes</text></docTitle>
+  <navMap>
+    <navPoint id="np1" playOrder="1">
+      <navLabel><text>1. A sidebar</text></navLabel>
+      <content src="chapter_1.xhtml"/>
+    </navPoint>
+    <navPoint id="np2" playOrder="2">
+      <navLabel><text>2. A bordered note</text></navLabel>
+      <content src="chapter_2.xhtml"/>
+    </navPoint>
+    <navPoint id="np3" playOrder="3">
+      <navLabel><text>3. A shaded box</text></navLabel>
+      <content src="chapter_3.xhtml"/>
+    </navPoint>
+    <navPoint id="np4" playOrder="4">
+      <navLabel><text>4. A ruled quotation</text></navLabel>
+      <content src="chapter_4.xhtml"/>
+    </navPoint>
+    <navPoint id="np5" playOrder="5">
+      <navLabel><text>5. A long box</text></navLabel>
+      <content src="chapter_5.xhtml"/>
+    </navPoint>
+    <navPoint id="np6" playOrder="6">
+      <navLabel><text>6. A box opens the chapter</text></navLabel>
+      <content src="chapter_6.xhtml"/>
+    </navPoint>
+    <navPoint id="np7" playOrder="7">
+      <navLabel><text>7. A link into a box</text></navLabel>
+      <content src="chapter_7.xhtml"/>
+    </navPoint>
+    <navPoint id="np8" playOrder="8">
+      <navLabel><text>8. An indented book</text></navLabel>
+      <content src="chapter_8.xhtml"/>
+    </navPoint>
+  </navMap>
+</ncx>

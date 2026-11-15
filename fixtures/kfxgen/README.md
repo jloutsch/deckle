@@ -36,7 +36,10 @@ stay plain `model.json`. `KFXGEN_COMMIT` names the kfxgen commit they came from,
 them (calibre 9.18.0, Python 3.13.18, lxml 6.0.2). Regenerating expects the same Calibre: its CSS
 handling shapes a Calibre-path fixture's `model.json`, so another version can change those, and
 possibly their `expected.kfx`. Rebuild all of them with `tools/ref/kfxgen_models.sh`; two runs
-give the same bytes. The script
+give the same `expected.kfx`, and the same `model.json` but for the order of the `images`
+argument of a book with several pictures, which calibre lists in another order from run to run
+(`block_picture_770`, `pictures_side_by_side_766` and `vertical_pictures_761` on 2026-11-14;
+the committed models were kept). The script
 needs kfxgen `ad38ec8` or later (the commit the port follows), and stops on a
 `KFXGEN_REF` that doesn't contain it. It exports commit
 `KFXGEN_REF` (default `ad38ec8`) of the kfxgen repo `KFXGEN` (default `../kfxgen-public`, only
@@ -98,8 +101,7 @@ hrefs, unreadable JPEGs). The books are `ARG_BOOKS` in that script, their other 
 | `split_title` | a title spelled over two paragraphs, and over two with a rule between (#64): kfxgen's heading takes the first block's style (#490) but not its small caps, transform, spacing and colour (#239); a title in one block, which gives them |
 
 **Calibre path** (`ebook-convert` with kfxgen, CSS applied): the source is
-`sources/<name>.epub`, every one but `css_quirks`, `package_quirks`, `no_toc`, `fake_margins` and `malformed`,
-which are `cascade/` sources only. For each, the script also checks that replaying the model gives exactly
+`sources/<name>.epub`, each one. For each, the script also checks that replaying the model gives exactly
 the KFX `ebook-convert` wrote. The script builds from the committed sources. kfxgen's
 `test_books` is untracked in places, so no commit pins it: `kfxgen_models.sh --refresh-sources`
 copies the sources again from the kfxgen working tree and names each one that changed. The
@@ -148,6 +150,23 @@ the macOS app's).
 | `lists_771` | kfxgen `test_books/lists_771/s771k.epub` | more lists: unmarked indents, empty items, start 0, armenian, items of several blocks (#768) |
 | `chapter_starts_773` | kfxgen `test_books/chapter_starts_773/t773k.epub` | contents entries naming an id at a file's very end (#772) |
 | `chapter_starts_777` | kfxgen `test_books/chapter_starts_777/t777k.epub` | a closing rule's id and the heading above a contents target as chapter starts (#774, #776) |
+| `css_quirks` | synthetic (`tools/ref/make_css_quirks_epub.py`) | Calibre's CSS quirks, one file per group (see `cascade/`) |
+| `package_quirks` | synthetic (`tools/ref/make_cascade_epubs.py`) | a package Calibre changes: cover by `<meta>`, a spine item twice and one `linear="no"`, a year-only date, `en-US`, an empty NCX label |
+| `no_toc` | synthetic, the same script | neither NCX nor nav: Calibre makes the contents |
+| `fake_margins` | synthetic, the same script | margins Calibre's RemoveFakeMargins removes and keeps |
+| `malformed` | synthetic, the same script | files Calibre reads with its HTML parser, entities, HTML 4, windows-1252 |
+| `text_edges` | synthetic (`tools/ref/make_convert_epubs.py`) | paragraphs of only no-break spaces, U+001C in text (Calibre drops it), a tab in `<pre>`, a literal U+2028, astral characters before a link; shifts in shifts, a not-bold span in bold and in a heading, `<sub>`, line-through by `<s>`, `<del>` and CSS |
+| `block_edges` | synthetic, the same script | `<pre>` with spaces, tabs and blank lines; hidden elements; an `<epub:switch>`; page breaks before and after; `clear` after a float; comments in and between paragraphs |
+| `tables_more` | synthetic, the same script | a rows-path table (a hidden row, loose text), a notes table, a row holding a table, a caption, colspan and rowspan, cells of paragraphs |
+| `pictures_more` | synthetic, the same script | a GIF, a CMYK JPEG, a 2,400 px PNG, an `<svg>` around an `<image>`, a page drawn by a CSS background picture |
+| `fonts_woff` | synthetic, the same script | one WOFF 1 face (Liberation Serif cut to the book's glyphs) |
+| `package_more` | synthetic, the same script | landmarks from the OPF guide only, an NCX `pageList`, a year-only date, a publisher, a `class="toc"` listing, a dedication |
+| `marks` | synthetic, the same script | link colours by `a:link`, a class's `a:visited`, a bare `a:visited` and a link's own style, in a vertical Japanese book; a horizontal block in a vertical-rl file, vertical text inside it |
+
+The generator refuses four of these models, as it refuses any book needing a feature not ported
+yet (phase 3 plan, Decision 6): `block_edges`, `css_quirks` and `text_edges` (preformatted text)
+and `tables_more` (block styles in table cells). `tests/it/whole_book.rs` checks that each is
+refused naming that feature.
 
 The sources from kfxgen's `test_books` were written by kfxgen's author for its tests: made-up
 text and test pictures, no other book's content. kfxgen does not publish all of them; the copies
@@ -156,8 +175,9 @@ here are offered under the GNU General Public License, version 3, as kfxgen is.
 The `fonts` fixture embeds Liberation Serif 2.1.5 (SIL Open Font License 1.1), taken from
 calibre's bundled fonts, in `sources/fonts.epub` and `models/fonts/resources/`. Its licence is
 `sources/LiberationSerif-OFL.txt`. The faces of `font_faces` are TrueType fonts of one empty glyph that
-`kfxgen_models.py` makes with fontTools (`_tiny_font`), holding no other font's data. No fixture
-contains MathML.
+`kfxgen_models.py` makes with fontTools (`_tiny_font`), holding no other font's data. The WOFF
+face of `fonts_woff` is the same Liberation Serif, cut to the glyphs that book uses, under the same
+licence file. No fixture contains MathML.
 
 The 9-book Gutenberg corpus is dumped the same way, outside git (`gutenberg/` is in
 `.gitignore`). Its books are Project Gutenberg's EPUB 2 with images ("EPUB (older E-readers)"),
@@ -256,6 +276,35 @@ The manifest is Calibre's after its transforms: the book's stylesheets are gone,
 | `navigation` | 4 | 37 KB | an NCX naming places inside chapters |
 
 747 KB in all, with `ua_rules.json` (19 KB).
+
+## convert/
+
+What kfxgen's converter makes on its way to the chapters, dumped inside a real conversion of each
+source by `tools/ref/kfxgen_hook/convert_dump.py` (`KFXGEN_DUMP_CONVERT`), the reference for phase
+3's `convert` module, layer by layer. Rebuild with `tools/ref/kfxgen_models.sh --convert`, after
+the models (under 30 s on an M-series Mac); two runs give the same bytes. Each run also dumps its
+model, which must be the committed `models/<name>/model.json.gz` byte for byte (but for the order
+of the `images` argument, which calibre changes from run to run anyway) and make its
+`expected.kfx`: the dumps change nothing. `KFXGEN_COMMIT` and `TOOLS` are as in `models/`.
+
+Per source, `convert/<name>/` holds gzip JSON in `model_dump.py`'s encoding (`convert_dump.py`'s
+docstring has every key):
+
+| File | What |
+|---|---|
+| `files.json` | spine href to `NNN`, its place in calibre's spine |
+| `resolver/NNN.json.gz` | kfxgen's style resolver on every element of the file, and `compute_block_style` of it |
+| `inline/NNN.json.gz` | each paragraph's runs (`_walk_inline` from a block) and `normalize_runs_with_anchors` of them |
+| `blocks/NNN.json.gz` | `extract_blocks_from_html`'s blocks and out-lists, and the input of each `_space_between` call with its margins |
+| `toc.json.gz` | contents entries, spine order, note ids, link targets |
+| `assembly.json.gz` | per pass, the files before chapter assembly and the chapters after it |
+| `calibre_opf.xml`, `calibre_ncx.xml` | the OPF calibre wrote and the NCX it names, verbatim but for the random name of an NCX calibre makes from a nav (`tmpXXXXXXXX.ncx`) |
+
+`convert/units/inline_style.json` is a table of inputs and outputs of the pure functions of
+kfxgen's `inline_style.py` and `font_table.py`, made by importing them, without Calibre.
+`crates/deckle-kfxgen/tests/it/convert_support.rs` reads the dumps (`dump`) and compares a value
+with one (`model_diff`). No source makes a second pass (`keep_nav_listings`), so `assembly.json.gz`
+holds one pass each.
 
 ## Phase 1 timings
 

@@ -1,0 +1,32 @@
+<?xml version="1.0"  encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Figures (new 2)</dc:title>
+    <dc:creator>kfxgen #382</dc:creator>
+    <dc:identifier id="uid">figure-382-new 2</dc:identifier>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="css" href="s.css" media-type="text/css"/>
+    <item id="p" href="p.png" media-type="image/png"/>
+    <item id="f0" href="c0.xhtml" media-type="application/xhtml+xml"/>
+    <item id="f1" href="c1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="f2" href="c2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="f3" href="c3.xhtml" media-type="application/xhtml+xml"/>
+    <item id="f4" href="c4.xhtml" media-type="application/xhtml+xml"/>
+    <item id="f5" href="c5.xhtml" media-type="application/xhtml+xml"/>
+    <item id="f6" href="c6.xhtml" media-type="application/xhtml+xml"/>
+    <item id="f7" href="c7.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="f0"/>
+    <itemref idref="f1"/>
+    <itemref idref="f2"/>
+    <itemref idref="f3"/>
+    <itemref idref="f4"/>
+    <itemref idref="f5"/>
+    <itemref idref="f6"/>
+    <itemref idref="f7"/>
+  </spine>
+</package>

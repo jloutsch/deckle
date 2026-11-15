@@ -1,0 +1,36 @@
+<?xml version="1.0"  encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+<dc:identifier id="id">urn:uuid:00000000-0000-4000-8000-000000000c55</dc:identifier>
+<dc:title>CSS Quirks</dc:title><dc:creator>Fixture Author</dc:creator>
+<dc:language>en</dc:language><dc:publisher>Deckle fixtures</dc:publisher>
+<dc:date>2026-03</dc:date><dc:description>Calibre CSS quirks, one file each.</dc:description>
+<meta property="dcterms:modified">2026-11-13T00:00:00Z</meta>
+</metadata>
+<manifest>
+<item id="nav" href="OEBPS/nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+<item id="ncx" href="OEBPS/toc.ncx" media-type="application/x-dtbncx+xml"/>
+<item id="pic" href="OEBPS/pic.png" media-type="image/png"/>
+<item id="css-sheet" href="OEBPS/sheet.css" media-type="text/css"/>
+<item id="css-imported" href="OEBPS/imported.css" media-type="text/css"/>
+<item id="css-deep" href="OEBPS/deep.css" media-type="text/css"/>
+<item id="css-cycle_a" href="OEBPS/cycle_a.css" media-type="text/css"/>
+<item id="css-cycle_b" href="OEBPS/cycle_b.css" media-type="text/css"/>
+<item id="css-shorthand" href="OEBPS/shorthand.css" media-type="text/css"/>
+<item id="css-selectors" href="OEBPS/selectors.css" media-type="text/css"/>
+<item id="css-cascade" href="OEBPS/cascade.css" media-type="text/css"/>
+<item id="css-cascade2" href="OEBPS/cascade2.css" media-type="text/css"/>
+<item id="css-flatten" href="OEBPS/flatten.css" media-type="text/css"/>
+<item id="css-values" href="OEBPS/values.css" media-type="text/css"/>
+<item id="cleanups" href="OEBPS/cleanups.xhtml" media-type="application/xhtml+xml"/>
+<item id="sheet" href="OEBPS/sheet.xhtml" media-type="application/xhtml+xml"/>
+<item id="shorthand" href="OEBPS/shorthand.xhtml" media-type="application/xhtml+xml"/>
+<item id="selectors" href="OEBPS/selectors.xhtml" media-type="application/xhtml+xml"/>
+<item id="cascade" href="OEBPS/cascade.xhtml" media-type="application/xhtml+xml"/>
+<item id="flatten" href="OEBPS/flatten.xhtml" media-type="application/xhtml+xml"/>
+<item id="values" href="OEBPS/values.xhtml" media-type="application/xhtml+xml"/>
+<item id="id1" href="OEBPS/tmpXXXXXXXX.ncx" media-type="application/x-dtbncx+xml"/>
+		</manifest>
+<spine toc="id1"><itemref idref="cleanups"/><itemref idref="sheet"/><itemref idref="shorthand"/><itemref idref="selectors"/><itemref idref="cascade"/><itemref idref="flatten"/><itemref idref="values"/></spine>
+<guide><reference type="text" title="Start" href="OEBPS/cleanups.xhtml"/></guide>
+</package>
