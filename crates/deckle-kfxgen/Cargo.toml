@@ -20,6 +20,8 @@ regex.workspace = true
 # float_roundtrip: without it serde_json reads some floats one ULP off kfxgen's.
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 sha2.workspace = true
+# Fixture models are stored as model.json.gz (src/load.rs).
+flate2 = "1"
 # Dates as Calibre reads them (src/epub/package.rs).
 chrono = { version = "0.4", default-features = false }
 thiserror.workspace = true

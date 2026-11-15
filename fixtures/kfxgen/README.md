@@ -27,9 +27,11 @@ native generator can write through `deckle_kfx::container::write_kfx` with no ch
 
 ## models/
 
-One folder per fixture: `model.json` and `resources/` (the arguments of kfxgen's
-`generate_full_book`, written by Deckle's `KFXGEN_DUMP_MODEL` hook) and `expected.kfx` (what
-kfxgen's generator makes from them). `KFXGEN_COMMIT` names the kfxgen commit they came from, and
+One folder per fixture: `model.json.gz` and `resources/` (the arguments of kfxgen's
+`generate_full_book`, written by Deckle's `KFXGEN_DUMP_MODEL` hook as `model.json`, which the
+script stores gzip-compressed with no name or time in the header) and `expected.kfx` (what
+kfxgen's generator makes from them). `deckle_kfxgen::load` reads either form; corpus models
+stay plain `model.json`. `KFXGEN_COMMIT` names the kfxgen commit they came from, and
 `TOOLS` the Calibre (`ebook-convert --version`) and the kfxgen venv's Python and lxml that made
 them (calibre 9.18.0, Python 3.13.18, lxml 6.0.2). Regenerating expects the same Calibre: its CSS
 handling shapes a Calibre-path fixture's `model.json`, so another version can change those, and

@@ -1572,6 +1572,7 @@ dependencies = [
  "deckle-limits",
  "deunicode",
  "encoding_rs",
+ "flate2",
  "html5ever",
  "regex",
  "roxmltree",

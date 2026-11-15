@@ -2,7 +2,7 @@
 //! Loading kfxgen's generator input (`model.json`, phase 1 plan Task 4).
 use std::path::PathBuf;
 
-use deckle_kfxgen::load::{LoadError, load_model};
+use deckle_kfxgen::load::{LoadError, load_model, read_model_json};
 use deckle_kfxgen::pyvalue::PyValue;
 
 pub fn model_dirs() -> Vec<PathBuf> {
@@ -16,7 +16,7 @@ pub fn model_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// A copy of fixture `name` in a temp dir, with `edit` applied to its model.json.
+/// A copy of fixture `name` in a temp dir, with `edit` applied to its model (written plain).
 fn edited(name: &str, edit: impl FnOnce(&mut serde_json::Value)) -> tempfile::TempDir {
     let src = deckle_kfx::fixtures::kfxgen("models").join(name);
     let dir = tempfile::tempdir().unwrap();
@@ -32,7 +32,7 @@ fn edited(name: &str, edit: impl FnOnce(&mut serde_json::Value)) -> tempfile::Te
         std::fs::copy(f.path(), res.join(f.file_name())).unwrap();
     }
     let mut doc: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(src.join("model.json")).unwrap()).unwrap();
+        serde_json::from_slice(&read_model_json(&src).unwrap()).unwrap();
     edit(&mut doc);
     std::fs::write(dir.path().join("model.json"), doc.to_string()).unwrap();
     dir

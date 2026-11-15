@@ -251,6 +251,15 @@ for epub in "$SOURCES"/*.epub; do
   calibre_model "$(basename "$epub" .epub)" "$epub" "$BUILD"
 done
 record_tools "$BUILD"
+# Stored compressed, with no name or time in the header, so two runs give the same bytes;
+# deckle_kfxgen::load reads either form. Corpus models (--corpus) stay plain.
+"$PY" -I -c '
+import gzip, sys
+from pathlib import Path
+for p in sorted(Path(sys.argv[1]).glob("*/model.json")):
+    p.with_name("model.json.gz").write_bytes(gzip.compress(p.read_bytes(), 9, mtime=0))
+    p.unlink()
+' "$BUILD"
 rm -rf "$OUT"
 mv "$BUILD" "$OUT"
 du -sh "$ROOT/fixtures/kfxgen"
