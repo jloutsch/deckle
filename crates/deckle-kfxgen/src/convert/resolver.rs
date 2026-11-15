@@ -125,6 +125,11 @@ impl<'b> Resolved<'b> {
         Ok(Some(v))
     }
 
+    /// `key in css`: whether the dict has the key, None or not. Reads no value.
+    pub(crate) fn has(&self, key: &str) -> bool {
+        self.raw(key).is_some()
+    }
+
     /// The dict as Python had it, every value charged.
     pub fn to_py(&self) -> Result<PyValue, css::Error> {
         let mut pairs = Vec::with_capacity(self.values.len());
@@ -312,7 +317,7 @@ impl<'a> Resolver<'a> {
     }
 
     /// [`TextBudget::charge`]: called before every copy, parse or case-fold of a value.
-    fn charge(&self, bytes: usize) -> Result<(), css::Error> {
+    pub(crate) fn charge(&self, bytes: usize) -> Result<(), css::Error> {
         self.budget.charge(bytes)
     }
 
@@ -726,7 +731,7 @@ impl<'a> Resolver<'a> {
     }
 
     /// `_lang_of`: the nearest `lang` at or above `n`.
-    fn lang_of(&self, n: NodeId) -> Result<Option<&'a str>, css::Error> {
+    pub(crate) fn lang_of(&self, n: NodeId) -> Result<Option<&'a str>, css::Error> {
         let at = self.nearest(&self.lang, n, |a| {
             Ok(if self.dom.attr(a, "lang").is_some() {
                 Step::Here

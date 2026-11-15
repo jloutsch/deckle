@@ -90,7 +90,6 @@ const DECIMAL_ZEROS: [u32; 76] = [
 
 /// `unicodedata.bidirectional(c)` where it is L, R or AL: (first, last, class).
 #[rustfmt::skip]
-#[allow(dead_code)] // Task 9's `_first_strong` reads it.
 const BIDI_STRONG: [(u32, u32, Strong); 912] = [
     (0x41, 0x5A, L), (0x61, 0x7A, L), (0xAA, 0xAA, L), (0xB5, 0xB5, L), (0xBA, 0xBA, L),
     (0xC0, 0xD6, L), (0xD8, 0xF6, L), (0xF8, 0x2B8, L), (0x2BB, 0x2C1, L), (0x2D0, 0x2D1, L),
@@ -357,7 +356,6 @@ pub(crate) fn digit_value(c: char) -> Option<u32> {
 }
 
 /// The strong classes of `unicodedata.bidirectional`.
-#[allow(dead_code)] // Task 9's `_first_strong` reads it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Strong {
     L,
@@ -367,7 +365,6 @@ pub(crate) enum Strong {
 use Strong::{Al, L, R};
 
 /// `unicodedata.bidirectional(c)` when it is L, R or AL, else None.
-#[allow(dead_code)] // Task 9's `_first_strong` calls it.
 pub(crate) fn bidi_strong(c: char) -> Option<Strong> {
     let c = u32::from(c);
     let i = BIDI_STRONG.partition_point(|&(first, _, _)| first <= c);

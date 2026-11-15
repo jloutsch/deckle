@@ -101,7 +101,15 @@ pub fn compute_block_style(css: &Resolved) -> Result<PyValue, StyleError> {
         (s("indent"), length(indent)),
         (s("margin_left"), length(margin_left)),
         (s("margin_right"), length(margin_right)),
-        (s("font_family"), font_family(css.get("font-family")?)),
+        (
+            s("font_family"),
+            PyValue::List(
+                font_families(css.get("font-family")?)
+                    .into_iter()
+                    .map(PyValue::Str)
+                    .collect(),
+            ),
+        ),
         (
             s("line_height"),
             line_height_factor(css.get("line-height")?),
@@ -159,15 +167,14 @@ fn length_percent(length: &Option<(String, &'static str)>) -> Result<Option<f64>
     Ok(Some(py::py_float(mag).ok_or(MAGNITUDE)? * per))
 }
 
-/// `_parse_font_family(css.get("font-family")?)`: the names, lower case; none for no value.
-fn font_family(v: Option<&PyValue>) -> PyValue {
-    let names = match v {
+/// `_parse_font_family(css.get("font-family"))`: the names, lower case; none for no value.
+pub(super) fn font_families(v: Option<&PyValue>) -> Vec<String> {
+    match v {
         Some(PyValue::Str(s)) => parse_font_family(s),
         // Calibre's `Style[prop]` reads `font-family: 12px` as points; Python takes its str().
         Some(PyValue::Float(f)) if *f != 0.0 => parse_font_family(&py::repr_float(*f)),
         _ => Vec::new(),
-    };
-    PyValue::List(names.into_iter().map(PyValue::Str).collect())
+    }
 }
 
 /// `_line_height_factor(value)` (`inline_style.py`): a resolved factor above 0, or None.

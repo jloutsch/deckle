@@ -23,7 +23,7 @@ use crate::support::{COST_LIMIT, find};
 const SKIP: &[(&str, &str)] = &[];
 
 /// Every source fixture with convert dumps.
-fn sources() -> Vec<String> {
+pub fn sources() -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(fixtures::kfxgen("sources"))
         .unwrap()
         .filter_map(|e| {
@@ -153,7 +153,7 @@ fn resolver_matches_the_dump_for_every_element() {
 }
 
 /// A spine file of `dom` styled with `css`, flattened as `read_book` would.
-fn file_of(mut dom: dom::Dom, css: &str) -> File {
+pub fn file_of(mut dom: dom::Dom, css: &str) -> File {
     prepare_body(&mut dom);
     let sheet = parse_sheet(css, Origin::Book, "OEBPS/a.xhtml", 0, &mut |_| None).unwrap();
     let first = cascade(&mut dom, "OEBPS/a.xhtml", vec![sheet], &DEFAULT_PROFILE).unwrap();
@@ -174,7 +174,7 @@ fn file_of(mut dom: dom::Dom, css: &str) -> File {
     }
 }
 
-fn empty_page() -> (dom::Dom, NodeId) {
+pub fn empty_page() -> (dom::Dom, NodeId) {
     let dom = dom::parse(
         b"<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>T</title></head><body/></html>",
     )
@@ -293,7 +293,7 @@ fn siblings_do_not_rewalk_their_ancestors() {
 }
 
 /// A page of `body` styled with `css`.
-fn page(body: &str, css: &str) -> File {
+pub fn page(body: &str, css: &str) -> File {
     let html = format!(
         "<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>T</title></head>\
          <body>{body}</body></html>"

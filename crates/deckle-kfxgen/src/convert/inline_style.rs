@@ -260,6 +260,16 @@ impl Flags {
         self.0.iter()
     }
 
+    /// `flag in flags`.
+    pub fn contains(&self, flag: &Flag) -> bool {
+        self.0.binary_search(flag).is_ok()
+    }
+
+    /// `{f for f in flags if keep(f)}`.
+    pub fn retain(&mut self, keep: impl FnMut(&Flag) -> bool) {
+        self.0.retain(keep);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
