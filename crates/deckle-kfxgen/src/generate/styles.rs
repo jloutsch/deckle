@@ -8,6 +8,7 @@ use deckle_kfx::ion::Value;
 
 use super::block_styles::Length;
 use super::boxes::{BoxStyle, RuleStyle, build_box_style_157, build_rule_style_157};
+use super::chunks::{Mode, innermost_mode};
 use super::table_styles::{
     CellStyle, PartStyle, TableStyle, align_symbol, build_cell_style_157, build_part_style_157,
     build_table_style_157,
@@ -124,13 +125,14 @@ pub(crate) enum Rotation {
 }
 
 impl Rotation {
-    /// `_rotation_for` (0bc705d :983), `horizontal` whether each open container is a
-    /// horizontal block.
-    pub(crate) fn of(vertical: bool, horizontal: &[bool]) -> Self {
-        match (vertical, horizontal.iter().any(|&h| h)) {
+    /// `_rotation_for` (a8b9683), `modes` the mode each open container opens: in a
+    /// horizontal block, where the book puts them; in a vertical block in that, moved again
+    /// (PSB R01-R07).
+    pub(crate) fn of(vertical: bool, modes: &[Option<Mode>]) -> Self {
+        match (vertical, innermost_mode(modes)) {
             (false, _) => Rotation::None,
-            (true, false) => Rotation::Vertical,
-            (true, true) => Rotation::Horizontal,
+            (true, Some(Mode::Horizontal)) => Rotation::Horizontal,
+            (true, _) => Rotation::Vertical,
         }
     }
 }

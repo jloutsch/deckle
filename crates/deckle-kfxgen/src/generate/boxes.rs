@@ -14,10 +14,11 @@ use super::chunks::{ChapterNow, Chunk, Marker, Node, emit_paragraph};
 use super::frames;
 use super::images::{IMG_TOKEN, Images};
 use super::inline;
+use super::page_scale::page_pt;
 use super::styles::{LINE_EM, g6};
 use super::table_chunks::{emit_table_chunks, link_target_index};
 use super::table_styles::{apply_border, border_style_symbol, padding_values, side_keys};
-use super::tables::{self, Border, Padding, read_border, read_padding, read_sides};
+use super::tables::{self, Border, Pad, Padding, read_border, read_padding, read_sides};
 use super::title::opens_with_title;
 use super::writing::Bidi;
 use super::{GenerateError, Generator, measure, model_err, py, st, sym};
@@ -166,6 +167,11 @@ pub(crate) struct BoxSpec {
     pub float_wrapper: bool,
     /// A horizontal-tb block in vertical text (#247).
     pub horizontal: bool,
+    /// A vertical-rl block inside a horizontal one (#247, a8b9683), and its space before and
+    /// after it, in ems of the main size.
+    pub vertical: bool,
+    pub start: f64,
+    pub end: f64,
 }
 
 /// A box block (#238): its look and the blocks in it.
@@ -212,6 +218,9 @@ pub(crate) fn read_box(b: &PyValue, at: &str, depth: usize) -> Result<BoxBlock, 
         centred: truthy(d.get("centred")),
         float_wrapper: false,
         horizontal: truthy(d.get("horizontal")),
+        vertical: truthy(d.get("vertical")),
+        start: opt_key(d, "start", &at_box, "a number", number)?.unwrap_or(0.0),
+        end: opt_key(d, "end", &at_box, "a number", number)?.unwrap_or(0.0),
     };
     let blocks = b
         .get("blocks")
@@ -356,6 +365,8 @@ pub(crate) struct BoxStyle {
     pub float_side: Option<String>,
     pub centred: bool,
     pub horizontal: bool,
+    /// A vertical block's (a8b9683): the flag, its space before and after.
+    pub vertical: Option<(f64, f64)>,
 }
 
 impl BoxStyle {
@@ -385,6 +396,11 @@ impl BoxStyle {
             float_side: open.spec.float.clone(),
             centred: open.spec.centred,
             horizontal: open.spec.horizontal,
+            // In the main size already (`_margin_em`; QA's U14, U15).
+            vertical: open
+                .spec
+                .vertical
+                .then_some((open.spec.start, open.spec.end)),
         }
     }
 }
@@ -405,6 +421,40 @@ pub(crate) fn build_box_style_157(g: &mut Generator, name: &str, s: &BoxStyle) -
             padding_values(p, None).expect("checked before it was allocated (BoxStyle::check)");
         for (key, value) in values {
             v.insert(key, value);
+        }
+        if s.vertical.is_some() {
+            // A vertical block's padding by its own axes, as Previewer writes it (QA's Q763
+            // T02): top and bottom along the line, in em; left and right across it, in line
+            // heights (a8b9683).
+            let side = |name: &str| p.iter().find(|(s, _)| s == name).map(|(_, v)| *v);
+            for (name, key) in [("top", "$52"), ("bottom", "$54")] {
+                match side(name) {
+                    // A % stays a % (QA's U08).
+                    Some(Pad::Pct(n)) => v.insert(key, g6(n, "$314")),
+                    Some(Pad::Em(em)) if em != 0.0 => v.insert(key, g6(em, "$308")),
+                    _ => {}
+                }
+            }
+            for (name, key) in [("left", "$53"), ("right", "$55")] {
+                let em = match side(name) {
+                    // A % of the page, in ems (U08: 5% is 2em).
+                    Some(Pad::Pct(n)) => n * page_pt() / 1200.0,
+                    Some(Pad::Em(em)) => em,
+                    None => 0.0,
+                };
+                if em != 0.0 {
+                    v.insert(key, g6(em / LINE_EM, "$310"));
+                }
+            }
+        }
+    }
+    if let Some((start, end)) = s.vertical {
+        // A vertical block's space before and after it, its right and left, in line heights
+        // (PSB R06; QA's Q763 T01).
+        for (key, em) in [("$50", start), ("$48", end)] {
+            if em != 0.0 {
+                v.insert(key, g6(em / LINE_EM, "$310"));
+            }
         }
     }
     for (key, pct) in [("$48", s.margin_left), ("$50", s.margin_right)] {
@@ -433,6 +483,14 @@ pub(crate) fn build_box_style_157(g: &mut Generator, name: &str, s: &BoxStyle) -
         // #247, 0bc705d :3913): horizontal-tb, the page's width, and its two fit flags.
         v.insert("$560", sym("$557"));
         v.insert("$56", measure(py::decimal("100"), "$314"));
+        v.insert("$478", Value::Bool(true));
+        v.insert("$784", Value::Bool(true));
+    }
+    if s.vertical.is_some() {
+        // A vertical-rl block inside a horizontal one, as Kindle Previewer 4.0.3 writes it
+        // (PSB R01-R07, QA's P749 Q09c): vertical-rl, the page's height, and the two fit flags.
+        v.insert("$560", sym("$559"));
+        v.insert("$57", measure(py::decimal("100"), "$314"));
         v.insert("$478", Value::Bool(true));
         v.insert("$784", Value::Bool(true));
     }

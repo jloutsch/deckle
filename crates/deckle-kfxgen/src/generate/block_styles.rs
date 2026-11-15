@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
 use super::boxes::BoxStyle;
-use super::chunks::{Chunk, InCell, Marker, Node};
+use super::chunks::{Chunk, InCell, Marker, Mode, Node};
 use super::inline::run_font_size;
 use super::styles::{Rotation, Style157, StyleArgs, Styles};
 use super::table_styles::{self, CellStyle};
@@ -430,10 +430,10 @@ pub(crate) fn keep_space(
 pub(crate) struct Containers {
     pub sizes: Vec<Option<f64>>,
     bidis: Vec<Option<Bidi>>,
-    /// The chapter is vertical-rl text, and whether each open container is a horizontal
-    /// block in it (0bc705d :7514).
+    /// The chapter is vertical-rl text, and the mode each open container opens in it
+    /// (a8b9683).
     vertical: bool,
-    horizontals: Vec<bool>,
+    modes: Vec<Option<Mode>>,
 }
 
 impl Containers {
@@ -466,15 +466,15 @@ impl Containers {
                 self.sizes.pop();
                 self.bidis.pop();
                 styles.fills.pop();
-                self.horizontals.pop();
-                styles.rotation = Rotation::of(self.vertical, &self.horizontals);
+                self.modes.pop();
+                styles.rotation = Rotation::of(self.vertical, &self.modes);
                 return Ok((None, None));
             }
         };
         // In a horizontal block, and on it, margins stay where the book puts them (0bc705d
         // :7546).
-        self.horizontals.push(node.opens_horizontal());
-        styles.rotation = Rotation::of(self.vertical, &self.horizontals);
+        self.modes.push(node.opens_mode());
+        styles.rotation = Rotation::of(self.vertical, &self.modes);
         // A box's or cell's fill (#383, :7422).
         styles.fills.push(match node {
             Node::Box(b) => b.spec.background,
@@ -516,7 +516,15 @@ impl Containers {
             Node::Box(b) => {
                 let style = BoxStyle::of(b, sizes.rem(b.spec.font_px));
                 style.check()?;
+                // A vertical block's own margins are laid out in the horizontal block around
+                // it, unturned (PSB R06, a8b9683).
+                let inside = styles.rotation;
+                if b.spec.vertical {
+                    styles.rotation =
+                        Rotation::of(self.vertical, &self.modes[..self.modes.len() - 1]);
+                }
                 let name = styles.allocate_in(g, "_box", StyleArgs::Box(style), &bidi);
+                styles.rotation = inside;
                 (None, Some(name))
             }
             _ => table_styles::marker_styles(

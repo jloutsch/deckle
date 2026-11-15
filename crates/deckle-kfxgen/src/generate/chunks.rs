@@ -63,16 +63,29 @@ pub(crate) enum Node {
     Link(LinkOpen),
 }
 
+/// The writing mode a block opens in vertical text (#247).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Mode {
+    Horizontal,
+    Vertical,
+}
+
 impl Node {
-    /// `_opens_horizontal` (0bc705d :974): a horizontal-tb box or table, as in vertical text
-    /// (P247h, #247).
-    pub(crate) fn opens_horizontal(&self) -> bool {
+    /// `_opens_mode` (a8b9683): `Horizontal` for a horizontal-tb box or table, as in vertical
+    /// text (P247h, #247), `Vertical` for a vertical-rl box inside one (PSB R01-R07).
+    pub(crate) fn opens_mode(&self) -> Option<Mode> {
         match self {
-            Node::Box(b) => b.spec.horizontal,
-            Node::Table(t) => t.horizontal,
-            _ => false,
+            Node::Box(b) if b.spec.horizontal => Some(Mode::Horizontal),
+            Node::Box(b) if b.spec.vertical => Some(Mode::Vertical),
+            Node::Table(t) if t.horizontal => Some(Mode::Horizontal),
+            _ => None,
         }
     }
+}
+
+/// `_innermost_mode` (a8b9683): the mode of the innermost open block that sets one.
+pub(crate) fn innermost_mode(modes: &[Option<Mode>]) -> Option<Mode> {
+    modes.iter().rev().find_map(|m| *m)
 }
 
 /// A picture's container (0bc705d :5900): its link's target, if any; whether it is a plain
@@ -95,8 +108,8 @@ pub(crate) struct ChapterNow {
 }
 
 impl ChapterNow {
-    /// `_in_horizontal_block` (0bc705d :5491): whether a chunk appended now is inside a
-    /// horizontal block of a vertical-rl chapter.
+    /// `_in_horizontal_block` (a8b9683): whether a chunk appended now is inside a horizontal
+    /// block of a vertical-rl chapter; inside a vertical block in it, vertical text again.
     pub(crate) fn in_horizontal_block(&self, chunks: &[Chunk]) -> bool {
         if !self.vertical {
             return false;
@@ -104,14 +117,14 @@ impl ChapterNow {
         let mut open = Vec::new();
         for c in &chunks[self.start..] {
             match &c.marker {
-                Some(Marker::Open(node)) => open.push(node.opens_horizontal()),
+                Some(Marker::Open(node)) => open.push(node.opens_mode()),
                 Some(Marker::Close) => {
                     open.pop();
                 }
                 None => {}
             }
         }
-        open.contains(&true)
+        innermost_mode(&open) == Some(Mode::Horizontal)
     }
 }
 
