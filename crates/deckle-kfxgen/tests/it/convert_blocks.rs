@@ -3,7 +3,7 @@
 //! dumps (`fixtures/kfxgen/convert/<name>/blocks/NNN.json.gz`), and what it refuses.
 
 use std::collections::{BTreeMap, HashSet};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use deckle_kfx::fixtures;
 use deckle_kfxgen::book::read_book;
@@ -505,6 +505,98 @@ fn margins_carried_through_too_many_divs_are_refused() {
         budget.charged() > deckle_limits::MAX_CASCADE_DECLS,
         "{}",
         budget.charged()
+    );
+    assert!(took < COST_LIMIT, "{took:?}");
+}
+
+/// One long paragraph inside 250 nested divs, with or without a side margin on each.
+fn long_paragraph_in_divs(margined: bool) -> deckle_kfxgen::book::File {
+    let (mut dom, body) = empty_page();
+    let mut at = body;
+    for _ in 0..250 {
+        at = dom.append_child(at, "div");
+    }
+    let p = dom.append_child(at, "p");
+    dom.set_text(p, &"word ".repeat(2 << 20));
+    let css = if margined {
+        "div { margin-left: 1px; margin-right: 1px }"
+    } else {
+        "div { }"
+    };
+    file_of(dom, css)
+}
+
+/// kfxgen looks for words outside picture tokens in a paragraph's whole text at each margined
+/// div round it (`_has_real_text` in `_carry_container_margins`). The text does not change
+/// between divs, so it is read once here: a 10 MB paragraph under 250 margined divs costs
+/// about what it costs under 250 divs without margins.
+#[test]
+fn a_long_paragraph_in_nested_margined_divs_is_read_once() {
+    let time = |margined: bool| {
+        let file = long_paragraph_in_divs(margined);
+        let start = Instant::now();
+        let got = extract(&file);
+        let took = start.elapsed();
+        assert_eq!(got.unwrap().blocks.len(), 1);
+        took
+    };
+    let (plain, margined) = (time(false), time(true));
+    eprintln!("10 MB paragraph in 250 divs: {plain:?} without margins, {margined:?} with");
+    assert!(
+        margined < 2 * plain + Duration::from_millis(200),
+        "{plain:?} without margins, {margined:?} with"
+    );
+}
+
+/// `n` paragraphs holding only a picture inside 250 nested divs, each div with side margins
+/// of a whole number `digits + 1` long (calibre keeps a whole number's digits, and rounds a
+/// fraction to six places).
+fn pictures_in_long_margined_divs(n: usize, digits: usize) -> deckle_kfxgen::book::File {
+    let (mut dom, body) = empty_page();
+    let mut at = body;
+    for _ in 0..250 {
+        at = dom.append_child(at, "div");
+    }
+    for _ in 0..n {
+        let p = dom.append_child(at, "p");
+        let img = dom.append_child(p, "img");
+        dom.set_attr(img, "src", Some("a.png"));
+    }
+    let number = format!("1{}", "3".repeat(digits));
+    file_of(
+        dom,
+        &format!("div {{ margin-left: {number}px; margin-right: {number}px }}"),
+    )
+}
+
+/// A paragraph holding only a picture keeps each container's side margins as written, one
+/// pair per container (`picture_boxes`), as kfxgen does. Each pair copied is charged by its
+/// length, so long margins under many containers are refused after bounded work.
+#[test]
+fn long_margins_kept_for_pictures_in_many_divs_are_refused() {
+    let got = extract(&pictures_in_long_margined_divs(1, 10)).unwrap();
+    match got.blocks[0].get("picture_boxes") {
+        Some(PyValue::Tuple(boxes)) => assert_eq!(boxes.len(), 250),
+        other => panic!("{other:?}"),
+    }
+    let file = pictures_in_long_margined_divs(20, 3_200);
+    let budget = TextBudget::new();
+    let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+    let mut serials = Serials::default();
+    let none = HashSet::new();
+    let opts = ExtractOptions {
+        native_tables: true,
+        toc_targets: &none,
+        link_targets: &none,
+        keep_nav_listings: false,
+    };
+    let start = Instant::now();
+    let got = extract_blocks(&mut Walk::new(&file, &resolver, &mut serials), &opts);
+    let took = start.elapsed();
+    assert!(
+        matches!(got, Err(ItemError::Error(Error::Book(_)))),
+        "{:?}",
+        got.map(|b| b.blocks.len())
     );
     assert!(took < COST_LIMIT, "{took:?}");
 }

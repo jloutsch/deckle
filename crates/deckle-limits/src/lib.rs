@@ -124,7 +124,7 @@ pub const MAX_BOOK_SELECTOR_WORK: u64 = 1_000_000_000;
 /// Apart from the cascades, the converter's resolvers for a file count the style text they copy
 /// or read per element against the same limit, together: a unit for each 64 bytes (a value
 /// under 64 bytes costs nothing) and one for each pseudo-class declaration copied, so a long
-/// value read for every element is refused after bounded work; the 184 fixture files use at
+/// value read for every element is refused after bounded work; the 185 fixture files use at
 /// most 173.
 pub const MAX_CASCADE_DECLS: usize = 500_000;
 

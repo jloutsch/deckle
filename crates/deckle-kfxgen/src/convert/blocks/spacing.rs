@@ -79,6 +79,9 @@ pub(super) struct Noted {
     /// which the next one that might is looked for (0: not known, as a later index is
     /// always above 0). Each node is looked at once, however many children ask.
     next_maybe: Vec<usize>,
+    /// Per block, what `_carry_container_margins` finds in its text: worked out at the first
+    /// container round it and kept, as a block's text never changes once it is made.
+    carry_text: HashMap<BlockId, CarryText>,
     /// Per element and side (top: true): whether its border or padding there stops a margin.
     stops: HashMap<(NodeId, bool), bool>,
     /// Per element: the share `_box_share`'s second loop has worked out once it reaches it.
@@ -95,7 +98,33 @@ impl Noted {
             next_maybe: vec![0; dom.node_count()],
             stops: HashMap::new(),
             shares: HashMap::new(),
+            carry_text: HashMap::new(),
         }
+    }
+}
+
+/// What a block's text is to `_carry_container_margins`.
+#[derive(Clone, Copy, PartialEq)]
+enum CarryText {
+    /// Words outside the picture tokens (`_has_real_text`): its style takes the margins.
+    Words,
+    /// Picture tokens and no words: its `picture_boxes` take them.
+    Pictures,
+    /// Neither: left as it is.
+    Nothing,
+}
+
+/// The bytes of the strings in a `(magnitude, unit)` pair, or none.
+fn pair_bytes(v: &PyValue) -> usize {
+    match v {
+        PyValue::Tuple(parts) => parts
+            .iter()
+            .map(|p| match p {
+                PyValue::Str(t) => t.len(),
+                _ => 0,
+            })
+            .sum(),
+        _ => 0,
     }
 }
 
@@ -615,6 +644,7 @@ impl Walker<'_, '_, '_, '_> {
         let (left, right) = (length_py(&left), length_py(&right));
         let mut empty_style = None;
         let (mut left_buf, mut right_buf) = (String::new(), String::new());
+        let pushed = pair_bytes(&left).saturating_add(pair_bytes(&right));
         for i in start.min(self.blocks.len())..self.blocks.len() {
             // Each block costs a step at each container round it: nested containers over
             // many blocks are refused after bounded work.
@@ -624,11 +654,27 @@ impl Walker<'_, '_, '_, '_> {
                 Some("table") => continue,
                 _ => {}
             }
-            let text = text_field(&self.blocks[i]);
-            if !has_real_text(text) {
-                if IMG_TOKEN.is_match(text) {
+            let id = self.blocks[i].id();
+            let found = match self.noted.carry_text.get(&id) {
+                Some(&known) => known,
+                None => {
+                    let text = text_field(&self.blocks[i]);
+                    let found = if has_real_text(text) {
+                        CarryText::Words
+                    } else if IMG_TOKEN.is_match(text) {
+                        CarryText::Pictures
+                    } else {
+                        CarryText::Nothing
+                    };
+                    self.noted.carry_text.insert(id, found);
+                    found
+                }
+            };
+            if found != CarryText::Words {
+                if found == CarryText::Pictures {
                     // Pictures alone: each container's margins kept as written, the
-                    // innermost first.
+                    // innermost first. Each copy of them is charged.
+                    self.resolver.charge(pushed)?;
                     let pair = PyValue::Tuple(vec![left.clone(), right.clone()]);
                     let b = &mut self.blocks[i];
                     match b.get_mut("picture_boxes") {
