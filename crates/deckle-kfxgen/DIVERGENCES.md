@@ -752,3 +752,20 @@ kfxgen's list code (`src/convert/blocks/lists.rs`, at ad38ec8):
   hold many elements and no text are refused where kfxgen makes the book.
 - A nested list's box copies its items' texts and ids once more at each level (`_list_box`); the
   copies are charged to the same budget.
+
+## Boxes
+
+kfxgen's boxes (`src/convert/blocks/boxes.rs`, at ad38ec8):
+
+- A box copies its blocks' texts and ids once more at each level of nesting (`_make_box`, as
+  `_list_box`); the copies are charged to the file's style text budget. 32 bordered `<div>`s
+  nested round one paragraph of 999,806 characters (32 is the deepest the generator writes) stop
+  the file (`Error::Book`, "the CSS of this book file gives its elements more than 500000
+  declarations"); 999,805 characters convert. kfxgen writes the 32 nested boxes, each holding the
+  paragraph's whole text (about 32 MB in its model). At 64 levels the limit is 499,838
+  characters, at 128 levels 249,854.
+- Each block a bordered, filled, sized or turned container looks at costs one unit of the same
+  budget. A container that draws no box round its blocks (a width round no picture, a contents
+  entry naming a block past the first) leaves them for each such container round it to look at
+  again, so a file is refused where kfxgen makes the book only past 500,000 such looks (with the
+  file's other charges).
