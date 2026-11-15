@@ -33,12 +33,17 @@
 # used nor changed.
 set -euo pipefail
 
+ONLY="${KFXGEN_ONLY:-}"
+# A source name only: it becomes a folder name under the fixture folders, which are replaced.
+[[ "$ONLY" =~ ^[A-Za-z0-9_]*$ ]] || { echo "KFXGEN_ONLY must be a source name: '$ONLY'" >&2; exit 2; }
+[ -z "$ONLY" ] || [ "${1:-}" != --corpus ] || { echo "--corpus does not take KFXGEN_ONLY" >&2; exit 2; }
+[ -z "$ONLY" ] || [ "${1:-}" != --refresh-sources ] || { echo "--refresh-sources does not take KFXGEN_ONLY" >&2; exit 2; }
+
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 KFXGEN="$(cd "${KFXGEN:-$ROOT/../kfxgen-public}" && pwd)"
 # The commit the port targets, and the oldest the script takes.
 KFXGEN_MIN=ad38ec8f192126f8cf2b9b61814c6dabe3d12c52
 KFXGEN_REF="${KFXGEN_REF:-$KFXGEN_MIN}"
-ONLY="${KFXGEN_ONLY:-}"
 PY="${KFXGEN_PYTHON:-$KFXGEN/.venv/bin/python}"
 EBOOK_CONVERT="${EBOOK_CONVERT:-ebook-convert}"
 CALIBRE_CUSTOMIZE="${CALIBRE_CUSTOMIZE:-calibre-customize}"

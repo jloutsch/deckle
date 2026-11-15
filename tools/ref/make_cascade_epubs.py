@@ -27,8 +27,9 @@ Writes, into OUT_DIR (fixtures/kfxgen/sources):
   between the head's children (its whitespace reset), a rule inside a comment in a <style>
   (the Stylizer reads a child's text), a left-floated drop cap holding a comment beside one
   without (flatcss is_drop_cap counts children), and a comment before the first child of a
-  <div> whose children :first-child and :nth-child(2) pick (css_selectors counts it); and
-  comments whose tails hold text, before and after an element.
+  <div> whose children :first-child and :nth-child(2) pick (css_selectors counts it), and the
+  same before an only element child (:only-child) and before a :first-of-type; and comments
+  whose tails hold text, before and after an element.
 
 tools/ref/kfxgen_models.sh --cascade runs it. Fixed zip dates: the same script makes the same
 bytes. The dumps are the reference; nothing here says what Calibre does with them.
@@ -324,6 +325,8 @@ def comments_in_tree(out):
         "span.cap { float: left; font-size: 3em; line-height: 0.5 }\n"
         "div.picks p:first-child { color: green }\n"
         "div.picks p:nth-child(2) { color: blue }\n"
+        "div.alone p:only-child { color: purple }\n"
+        "div.types p:first-of-type { color: olive }\n"
     )
     body = (
         '<p id="b1">Before <b><!--c--></b>after a bold holding only a comment.</p>\n'
@@ -333,7 +336,9 @@ def comments_in_tree(out):
         '<p class="ruled">Coloured by the rule inside the comment in the style element.</p>\n'
         '<p id="cap1"><span class="cap">T<!--c--></span>he drop cap holds a comment.</p>\n'
         '<p id="cap2"><span class="cap">T</span>he drop cap holds none.</p>\n'
-        '<div class="picks"><!-- c --><p>First paragraph.</p><p>Second paragraph.</p></div>'
+        '<div class="picks"><!-- c --><p>First paragraph.</p><p>Second paragraph.</p></div>\n'
+        '<div class="alone"><!-- c --><p>The only element child.</p></div>\n'
+        '<div class="types"><!-- c --><p>The first paragraph of its type.</p><p>The second.</p></div>'
     )
     text = (
         '<?xml version="1.0" encoding="utf-8"?>\n'

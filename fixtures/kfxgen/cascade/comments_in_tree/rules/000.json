@@ -3,9 +3,11 @@
  "rules": [
   [1, "p", {"margin-top": "0", "margin-right": "0", "margin-bottom": "0", "margin-left": "0"}, [], [1, 0, 0, 0, 1, 83]],
   [1, "span.cap", {"float": "left", "font-size": "3em", "line-height": "0.5"}, [], [1, 0, 0, 1, 1, 84]],
-  [1, "p.ruled", {"color": "red"}, [], [1, 0, 0, 1, 1, 87]],
+  [1, "p.ruled", {"color": "red"}, [], [1, 0, 0, 1, 1, 89]],
   [1, "div.picks p:first-child", {"color": "green"}, [], [1, 0, 0, 2, 2, 85]],
-  [1, "div.picks p:nth-child(2)", {"color": "blue"}, [], [1, 0, 0, 2, 2, 86]]
+  [1, "div.picks p:nth-child(2)", {"color": "blue"}, [], [1, 0, 0, 2, 2, 86]],
+  [1, "div.alone p:only-child", {"color": "purple"}, [], [1, 0, 0, 2, 2, 87]],
+  [1, "div.types p:first-of-type", {"color": "olive"}, [], [1, 0, 0, 2, 2, 88]]
  ],
  "ua_rules": 180
 }

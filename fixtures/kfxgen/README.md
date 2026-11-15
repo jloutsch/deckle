@@ -158,7 +158,7 @@ the macOS app's).
 | `no_toc` | synthetic, the same script | neither NCX nor nav: Calibre makes the contents |
 | `fake_margins` | synthetic, the same script | margins Calibre's RemoveFakeMargins removes and keeps |
 | `malformed` | synthetic, the same script | files Calibre reads with its HTML parser, entities, HTML 4, windows-1252 |
-| `comments_in_tree` | synthetic, the same script | comments where Calibre's steps count lxml's children: an empty `<b>` and a `<br>` holding one, one between the head's children, a rule inside one in `<style>`, a drop cap holding one, one before the children `:first-child` and `:nth-child(2)` pick, comments whose tails hold text |
+| `comments_in_tree` | synthetic, the same script | comments where Calibre's steps count lxml's children: an empty `<b>` and a `<br>` holding one, one between the head's children, a rule inside one in `<style>`, a drop cap holding one, one before the children `:first-child` and `:nth-child(2)` pick, one beside an only element child (`:only-child`) and one before a `:first-of-type`, comments whose tails hold text |
 | `text_edges` | synthetic (`tools/ref/make_convert_epubs.py`) | paragraphs of only no-break spaces, U+001C in text (Calibre drops it), a tab in `<pre>`, a literal U+2028, astral characters before a link; shifts in shifts, a not-bold span in bold and in a heading, `<sub>`, line-through by `<s>`, `<del>` and CSS |
 | `block_edges` | synthetic, the same script | `<pre>` with spaces, tabs and blank lines; hidden elements; an `<epub:switch>`; page breaks before and after; `clear` after a float; comments in and between paragraphs |
 | `tables_more` | synthetic, the same script | a rows-path table (a hidden row, loose text), a notes table, a row holding a table, a caption, colspan and rowspan, cells of paragraphs |
@@ -271,7 +271,7 @@ The manifest is Calibre's after its transforms: the book's stylesheets are gone,
 | `no_toc` | 2 | 17 KB | the same script: no NCX and no nav, so Calibre makes the contents |
 | `fake_margins` | 2 | 20 KB | the same script: a margin `RemoveFakeMargins` removes, and one it keeps |
 | `malformed` | 4 | 29 KB | the same script: files Calibre does not read as plain XHTML: tags left open and an unquoted attribute (its HTML parser), DOCTYPE entities, HTML 4 in upper case, windows-1252 |
-| `comments_in_tree` | 1 | 13 KB | the same script: comments where Calibre's steps count or read lxml's children (`parse_html`'s empty-element removal, `<br>` and head whitespace, the Stylizer's `<style>` text, a drop cap, `:first-child` and `:nth-child`) |
+| `comments_in_tree` | 1 | 14 KB | the same script: comments where Calibre's steps count or read lxml's children (`parse_html`'s empty-element removal, `<br>` and head whitespace, the Stylizer's `<style>` text, a drop cap, `:first-child` and `:nth-child`) |
 | `lists` | 2 | 28 KB | lists |
 | `notes` | 6 | 62 KB | pop-up notes (`noteref`), notes lists |
 | `vertical` | 3 | 51 KB | vertical-rl Japanese, rtl spine, ruby |
@@ -281,7 +281,7 @@ The manifest is Calibre's after its transforms: the book's stylesheets are gone,
 | `frames` | 6 | 78 KB | figures, pictures, floats |
 | `navigation` | 4 | 37 KB | an NCX naming places inside chapters |
 
-760 KB in all, with `ua_rules.json` (19 KB).
+761 KB in all, with `ua_rules.json` (19 KB).
 
 ## convert/
 
