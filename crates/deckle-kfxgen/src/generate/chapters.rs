@@ -2,6 +2,7 @@
 //! A chapter of the model's `chapters` argument, read into what `_build_chapter_content` works
 //! from. What kfxgen does with a chapter or block key not ported yet is
 //! [`GenerateError::Unsupported`], so a book needing it fails rather than coming out different.
+//! A key the port neither reads nor knowingly ignores is a [`GenerateError::Model`] naming it.
 
 use super::block_styles::{BlockStyle, Length, number, read_block_style, read_length};
 use super::boxes::{BoxBlock, ListItem, RuleStyle, read_box, read_rule};
@@ -28,6 +29,103 @@ const BLOCK_UNPORTED: [(&str, &str); 7] = [
     ("clear", "clearing floats"),
     ("label_texts", "equations"),
 ];
+
+/// Keys kfxgen's converter writes that no generator code reads, kept only so the model
+/// matches kfxgen's (phase 3 research, book §3 and blocks §2), at any level. `font_px` is a
+/// box block's own; its `box`'s is read.
+const IGNORED_KEYS: [&str; 13] = [
+    "_spine_file",
+    "_from_spine",
+    "_had_nav_listing",
+    "_nav_listing_at",
+    "anchor_ids",
+    "row",
+    "front_matter",
+    "break_before",
+    "own_bottom_em",
+    "bottom_in_em",
+    "outer_em_ratio",
+    "padding_below",
+    "font_px",
+];
+
+/// Every chapter key `read_chapter` reads, `CHAPTER_UNPORTED`'s included.
+const CHAPTER_KEYS: [&str; 15] = [
+    "title",
+    "text",
+    "blocks",
+    "toc_level",
+    "font_size",
+    "heading_level",
+    "anchor_keys",
+    "anchor_offsets",
+    "toc_links",
+    "sub_entries",
+    "preserved_images",
+    "_omit_title_heading",
+    "_omit_from_toc",
+    "page_bidi",
+    "_is_cover",
+];
+
+/// Every block key `read_block`, `read_chapter`, `read_box`, `read_rule` and
+/// `read_table_block` read, `BLOCK_UNPORTED`'s included.
+const BLOCK_KEYS: [&str; 30] = [
+    "type",
+    "text",
+    "spans",
+    "block_style",
+    "heading",
+    "heading_level",
+    "in_list",
+    "margin_above",
+    "margin_below",
+    "space_above",
+    "tight",
+    "picture_align",
+    "picture_block",
+    "pictures_apart",
+    "picture_boxes",
+    "list_item",
+    "anchor_keys",
+    "anchor_offsets",
+    "writing_mode",
+    "box",
+    "blocks",
+    "rule",
+    "table",
+    "trailing_space",
+    "preformatted",
+    "float_wrapped",
+    "in_cell_paragraph",
+    "trailing",
+    "clear",
+    "label_texts",
+];
+
+/// `d`'s first key outside `read` and [`IGNORED_KEYS`] is a [`GenerateError::Model`],
+/// named with where it is.
+pub(crate) fn known_keys(d: &PyValue, read: &[&str], at: &str) -> Result<(), GenerateError> {
+    let PyValue::Dict(pairs) = d else {
+        return Ok(());
+    };
+    for (k, _) in pairs {
+        match k.as_str() {
+            Some(k) if read.contains(&k) || IGNORED_KEYS.contains(&k) => {}
+            Some(k) => {
+                return Err(model_err(format!(
+                    "a model key the port does not know: {at}.{k}"
+                )));
+            }
+            None => {
+                return Err(model_err(format!(
+                    "a model key the port does not know: {at}: {k:?}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
 
 pub(crate) struct Chapter {
     pub title: String,
@@ -173,6 +271,7 @@ pub(crate) fn read_chapters(chapters: &PyValue) -> Result<Vec<Chapter>, Generate
 }
 
 fn read_chapter(ch: &PyValue, at: &str) -> Result<Chapter, GenerateError> {
+    known_keys(ch, &CHAPTER_KEYS, at)?;
     for (key, feature) in CHAPTER_UNPORTED {
         if truthy(ch.get(key)) {
             return Err(Unsupported(feature));
@@ -306,6 +405,7 @@ pub(crate) fn read_block(
     at: &str,
     boxes_around: usize,
 ) -> Result<Block, GenerateError> {
+    known_keys(b, &BLOCK_KEYS, at)?;
     let kind = match b.get("type") {
         None | Some(PyValue::None) => None,
         Some(PyValue::Str(t)) if t == "text" => None,

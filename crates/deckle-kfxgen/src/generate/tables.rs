@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 
 use super::block_styles::{BlockStyle, number, read_block_style};
-use super::chapters::Block;
+use super::chapters::{Block, known_keys};
 use super::images;
 use super::inline::{Anchors, Span, read_spans};
 use super::inline_pictures::cut_after_picture_lines;
@@ -156,6 +156,47 @@ fn read_keys(d: &PyValue, at: &str) -> Result<Vec<String>, GenerateError> {
     Ok(Anchors::read(d, at)?.keys)
 }
 
+/// Every key of a table, a row and a cell that their readers read.
+const TABLE_KEYS: [&str; 8] = [
+    "rows",
+    "column_widths",
+    "border",
+    "width",
+    "bidi",
+    "horizontal",
+    "anchor_keys",
+    "anchor_offsets",
+];
+const ROW_KEYS: [&str; 9] = [
+    "group",
+    "cells",
+    "border",
+    "group_border",
+    "bidi",
+    "group_bidi",
+    "anchor_keys",
+    "anchor_offsets",
+    "source_order",
+];
+const CELL_KEYS: [&str; 16] = [
+    "text",
+    "spans",
+    "paragraphs",
+    "header",
+    "not_bold",
+    "heading",
+    "colspan",
+    "rowspan",
+    "valign",
+    "border",
+    "width_set",
+    "padding",
+    "background",
+    "block_style",
+    "anchor_keys",
+    "anchor_offsets",
+];
+
 /// A block of type "table".
 pub(crate) fn read_table_block(b: &PyValue, at: &str) -> Result<Block, GenerateError> {
     // Read by `_emit_table_chunks` (#381, #680) and `page_bidi`, and not ported.
@@ -183,6 +224,7 @@ pub(crate) fn read_table_block(b: &PyValue, at: &str) -> Result<Block, GenerateE
         .get("table")
         .ok_or_else(|| model_err(format!("{at}.table: a dict")))?;
     let at_t = format!("{at}.table");
+    known_keys(t, &TABLE_KEYS, &at_t)?;
     let bidi = Bidi::read(t.get("bidi"), &format!("{at_t}.bidi"))?;
     let rows = t
         .get("rows")
@@ -241,6 +283,7 @@ pub(crate) fn read_table_block(b: &PyValue, at: &str) -> Result<Block, GenerateE
 }
 
 fn read_row(r: &PyValue, at: &str) -> Result<Row, GenerateError> {
+    known_keys(r, &ROW_KEYS, at)?;
     let group = match r.get("group").and_then(PyValue::as_str) {
         Some("head") => "head",
         Some("body") => "body",
@@ -275,6 +318,7 @@ fn read_row(r: &PyValue, at: &str) -> Result<Row, GenerateError> {
 }
 
 fn read_cell(c: &PyValue, at: &str) -> Result<Cell, GenerateError> {
+    known_keys(c, &CELL_KEYS, at)?;
     let text = match c.get("text") {
         Some(PyValue::None) => String::new(),
         Some(PyValue::Str(s)) => s.clone(),

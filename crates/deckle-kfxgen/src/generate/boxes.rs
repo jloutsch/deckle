@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use deckle_kfx::ion::{Struct, Value};
 
 use super::block_styles::{keep_space, number, unit_symbol};
-use super::chapters::{Block, read_block};
+use super::chapters::{Block, known_keys, read_block};
 use super::chunks::{ChapterNow, Chunk, Marker, Node, emit_paragraph};
 use super::frames;
 use super::images::{IMG_TOKEN, Images};
@@ -118,7 +118,16 @@ pub(crate) fn read_rule(b: &PyValue, at: &str) -> Result<RuleStyle, GenerateErro
                 | "border" | "fill" | "height",
             ) => {}
             Some("clear") => return Err(Unsupported("clearing floats")),
-            _ => return Err(Unsupported("a rule's look")),
+            Some(k) => {
+                return Err(model_err(format!(
+                    "a model key the port does not know: {at}.{k}"
+                )));
+            }
+            None => {
+                return Err(model_err(format!(
+                    "a model key the port does not know: {at}: {k:?}"
+                )));
+            }
         }
     }
     // `rule["space_above"]`: kfxgen reads both as there.
@@ -273,6 +282,38 @@ pub(crate) struct BoxBlock {
     pub opened: bool,
 }
 
+/// Every key of a box's `box` that `read_box` reads, those it refuses included.
+const BOX_KEYS: [&str; 28] = [
+    "float_wrapper",
+    "clear",
+    "border",
+    "background",
+    "padding",
+    "font_px",
+    "margin_left",
+    "margin_right",
+    "bidi",
+    "width",
+    "width_px",
+    "float",
+    "centred",
+    "horizontal",
+    "vertical",
+    "start",
+    "end",
+    "plain",
+    "list",
+    "item",
+    "before",
+    "after",
+    "before_fixed",
+    "after_fixed",
+    "before_inner",
+    "after_inner",
+    "over",
+    "under",
+];
+
 /// A box block's `box` and `blocks`; `depth` is 1 for a box in no other.
 pub(crate) fn read_box(b: &PyValue, at: &str, depth: usize) -> Result<BoxBlock, GenerateError> {
     // Reading and writing boxes recurse once a level: stop before an EPUB's boxes can
@@ -285,6 +326,7 @@ pub(crate) fn read_box(b: &PyValue, at: &str, depth: usize) -> Result<BoxBlock, 
         Some(d @ PyValue::Dict(_)) => d,
         _ => return Err(model_err(format!("{at_box}: a dict"))),
     };
+    known_keys(d, &BOX_KEYS, &at_box)?;
     // A floated paragraph's frame is kfxgen's own (:5673), which the converter never writes.
     if truthy(d.get("float_wrapper")) {
         return Err(Unsupported("a box marked as a float's frame"));
