@@ -823,13 +823,20 @@ static LENGTH: LazyLock<Regex> =
 /// or a result past the context's 28 digits, raises `InvalidOperation` there.
 pub(crate) fn up(pct: f64) -> Result<f64, GenerateError> {
     let x = pct.min(100.0);
+    let cannot = || {
+        model_err(format!(
+            "a picture's percentage of {pct}: kfxgen cannot round it"
+        ))
+    };
+    // Before the text: "-inf" has no fraction to slice.
+    if !x.is_finite() {
+        return Err(cannot());
+    }
     let text = format!("{:.9}", x.abs());
     let (int, frac) = text.split_once('.').unwrap_or((&text, ""));
     let digits = format!("{int}{}", &frac[..3]);
-    if !x.is_finite() || digits.trim_start_matches('0').len() > 28 {
-        return Err(model_err(format!(
-            "a picture's percentage of {pct}: kfxgen cannot round it"
-        )));
+    if digits.trim_start_matches('0').len() > 28 {
+        return Err(cannot());
     }
     let mut milli: i128 = digits.parse().unwrap();
     if frac.as_bytes()[3] >= b'5' {
@@ -1396,4 +1403,18 @@ pub(crate) fn push_preserved(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::up;
+
+    /// `_up` of -inf raises in kfxgen (`Decimal.quantize` of an infinity): an error here, not
+    /// a panic. NaN is 100, as `min(100.0, nan)` is in Python.
+    #[test]
+    fn up_of_a_number_that_is_not_finite() {
+        assert!(up(f64::NEG_INFINITY).is_err());
+        assert_eq!(up(f64::NAN).unwrap(), 100.0);
+        assert_eq!(up(f64::INFINITY).unwrap(), 100.0);
+    }
 }

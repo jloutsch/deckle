@@ -782,6 +782,8 @@ pub(crate) fn read_tcy_flag(v: &PyValue, at: &str) -> Result<Flag, GenerateError
 }
 
 /// `make_turn_flag`'s `("turn", (serial, mode, text, spans))` (#247, b067638).
+/// Its recursion through `read_spans` is bounded, for a model `load.rs` read, by serde_json's
+/// limit of 128 nested levels.
 pub(crate) fn read_turn_flag(v: &PyValue, at: &str) -> Result<Flag, GenerateError> {
     let Some(
         [

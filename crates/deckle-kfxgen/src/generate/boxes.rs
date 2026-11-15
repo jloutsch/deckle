@@ -198,6 +198,9 @@ pub(crate) struct ListItem {
     pub n: Option<i64>,
     pub value: Option<i64>,
     pub empty: bool,
+    /// Its dict holds a key: Python's `if item`. kfxgen asks `is not None` of a paragraph's
+    /// `list_item` but `if item` of a box's `item`, so `{}` is an item only on a paragraph.
+    pub truthy: bool,
 }
 
 impl ListItem {
@@ -214,6 +217,7 @@ impl ListItem {
             n: int("n")?,
             value: int("value")?,
             empty: truthy(d.get("empty")),
+            truthy: d.is_truthy(),
         }))
     }
 
@@ -309,7 +313,7 @@ pub(crate) fn read_box(b: &PyValue, at: &str, depth: usize) -> Result<BoxBlock, 
         end: opt_key(d, "end", &at_box, "a number", number)?.unwrap_or(0.0),
         plain: truthy(d.get("plain")),
         list: read_list(d, &at_box)?,
-        item: ListItem::read(d.get("item"), &format!("{at_box}.item"))?,
+        item: ListItem::read(d.get("item"), &format!("{at_box}.item"))?.filter(|i| i.truthy),
         list_sides: {
             let em = |key: &str| -> Result<f64, GenerateError> {
                 Ok(opt_key(d, key, &at_box, "a number", number)?.unwrap_or(0.0))
@@ -510,7 +514,7 @@ fn mark_list_item(chunks: &mut Vec<Chunk>, first: usize, item: &ListItem) {
         _ => {
             let open = BoxOpen {
                 spec: BoxSpec {
-                    item: Some(item.clone()),
+                    item: Some(item.clone()).filter(|i| i.truthy),
                     ..BoxSpec::default()
                 },
                 space_above: 0.0,
