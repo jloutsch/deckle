@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "kfxgen_version": "5.24.0",
- "kfxgen_commit": "0bc705d",
+ "kfxgen_commit": "ad38ec8",
  "args": {
   "$dict": [
    [
@@ -23,7 +23,7 @@
        ],
        [
         "text",
-        "1. Image floated left\n\nThe picture sits at the left, and the text wraps down its right side.\n\n\u0000IMG\u0001p.png\u0001picture\u0001w=30%\u0001left\u0000The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it. The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it.\n\nThe boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it."
+        "1. Image floated left\n\nThe picture sits at the left, and the text wraps down its right side.\n\n\u0000IMG\u0001p.png\u0001picture\u0001w=30%\u0001left\u0001mr=1em\u0000The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it. The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it.\n\nThe boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it."
        ],
        [
         "blocks",
@@ -374,7 +374,7 @@
           "$dict": [
            [
             "text",
-            "\u0000IMG\u0001p.png\u0001picture\u0001w=30%\u0001left\u0000The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it. The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it."
+            "\u0000IMG\u0001p.png\u0001picture\u0001w=30%\u0001left\u0001mr=1em\u0000The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it. The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it."
            ],
            [
             "spans",
@@ -600,7 +600,7 @@
        ],
        [
         "text",
-        "2. Image floated right\n\nThe picture sits at the right, and the text wraps down its left side.\n\n\u0000IMG\u0001p.png\u0001picture\u0001w=30%\u0001right\u0000The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it. The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it.\n\nThe boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it."
+        "2. Image floated right\n\nThe picture sits at the right, and the text wraps down its left side.\n\n\u0000IMG\u0001p.png\u0001picture\u0001w=30%\u0001right\u0001ml=1em\u0000The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it. The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it.\n\nThe boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it."
        ],
        [
         "blocks",
@@ -951,7 +951,7 @@
           "$dict": [
            [
             "text",
-            "\u0000IMG\u0001p.png\u0001picture\u0001w=30%\u0001right\u0000The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it. The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it."
+            "\u0000IMG\u0001p.png\u0001picture\u0001w=30%\u0001right\u0001ml=1em\u0000The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it. The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it."
            ],
            [
             "spans",
@@ -1177,7 +1177,7 @@
        ],
        [
         "text",
-        "3. Image on its own line\n\nThe picture is on a line of its own in the book, floated left; the next two paragraphs wrap beside it.\n\n\u0000IMG\u0001p.png\u0001picture\u0001w=30%\u0001left\u0000\n\nThe boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it.\n\nThe boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it."
+        "3. Image on its own line\n\nThe picture is on a line of its own in the book, floated left; the next two paragraphs wrap beside it.\n\n\u0000IMG\u0001p.png\u0001picture\u0001w=30%\u0001left\u0001mr=1em\u0000\n\nThe boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it.\n\nThe boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it."
        ],
        [
         "blocks",
@@ -1532,7 +1532,7 @@
           "$dict": [
            [
             "text",
-            "\u0000IMG\u0001p.png\u0001picture\u0001w=30%\u0001left\u0000"
+            "\u0000IMG\u0001p.png\u0001picture\u0001w=30%\u0001left\u0001mr=1em\u0000"
            ],
            [
             "spans",
@@ -2439,7 +2439,7 @@
        ],
        [
         "text",
-        "5. Linked floated image\n\nThe picture is a link (to chapter 1) and floated left; the text wraps beside it.\n\n\u0000IMG\u0001p.png\u0001picture\u0001w=30%\u0001left\u0000The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it. The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it."
+        "5. Linked floated image\n\nThe picture is a link (to chapter 1) and floated left; the text wraps beside it.\n\n\u0000IMG\u0001p.png\u0001picture\u0001w=30%\u0001left\u0001mr=1em\u0000The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it. The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it."
        ],
        [
         "blocks",
@@ -2790,7 +2790,7 @@
           "$dict": [
            [
             "text",
-            "\u0000IMG\u0001p.png\u0001picture\u0001w=30%\u0001left\u0000The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it. The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it."
+            "\u0000IMG\u0001p.png\u0001picture\u0001w=30%\u0001left\u0001mr=1em\u0000The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it. The boats went out again past the harbour wall, and the people on the quay watched them go until the last sail was a white mark on the grey water. Nobody spoke much. The wind had turned in the night and come round to the west, and the older men said it would hold until evening, though none of them would have put money on it."
            ],
            [
             "spans",
@@ -2798,7 +2798,7 @@
              {
               "$tuple": [
                0,
-               30,
+               37,
                {
                 "$frozenset": [
                  {

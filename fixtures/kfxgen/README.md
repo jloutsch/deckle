@@ -2,7 +2,7 @@
 
 Output of [kfxgen](https://github.com/jloutsch/kfxgen) (GPL-3), the reference for the native
 converter (`docs/superpowers/specs/2026-11-10-native-kfx-design.md`, Oracles). The generator
-code is kfxgen commit `0bc705d` (5.24.0 plus #753 to #760). `models/` were dumped from that
+code is kfxgen commit `ad38ec8` (5.24.0 plus #753 to #778). `models/` were dumped from that
 commit with Deckle's own hook (`tools/ref/kfxgen_hook/`); nothing in the kfxgen repo is changed.
 
 ## golden/
@@ -15,11 +15,11 @@ synthetic EPUBs (`tests/fixtures/golden/inputs.py`) without Calibre, through
 |---|---|
 | `minimal.kfx` | `73fbd3c30597b43e` |
 | `with_cover.kfx` | `2694e310ff91d9b7` |
-| `body_images.kfx` | `7353137416ae4ad0` |
+| `body_images.kfx` | `6cd2d5426d20092e` |
 | `table_cells.kfx` | `2b646ac746a8baf9` |
 
-Regenerate: `git -C <kfxgen> show 0bc705d:tests/fixtures/golden/expected/<name>.kfx > golden/<name>.kfx`
-(the same files as at `4b81651`).
+Regenerate: `git -C <kfxgen> show ad38ec8:tests/fixtures/golden/expected/<name>.kfx > golden/<name>.kfx`
+(`body_images.kfx` changed at `f605dd6`, #769; the others are as at `4b81651`).
 
 **Found (phase 1, task 1):** `read_kfx` then `write_kfx` with `WriteOptions::from_doc`
 reproduces all four byte for byte. kfxgen's container framing is the same as kfxlib's, so the
@@ -35,9 +35,9 @@ them (calibre 9.18.0, Python 3.13.18, lxml 6.0.2). Regenerating expects the same
 handling shapes a Calibre-path fixture's `model.json`, so another version can change those, and
 possibly their `expected.kfx`. Rebuild all of them with `tools/ref/kfxgen_models.sh`; two runs
 give the same bytes. The script
-needs kfxgen `0bc705d` or later (the replay imports its `page_scale`), and stops on a
+needs kfxgen `ad38ec8` or later (the commit the port follows), and stops on a
 `KFXGEN_REF` that doesn't contain it. It exports commit
-`KFXGEN_REF` (default `0bc705d`) of the kfxgen repo `KFXGEN` (default `../kfxgen-public`, only
+`KFXGEN_REF` (default `ad38ec8`) of the kfxgen repo `KFXGEN` (default `../kfxgen-public`, only
 read) with `git archive`, puts the hook into the export
 (`tools/ref/kfxgen_hook/inject.py` adds a call at the top of `generate_full_book`, and the two
 calls `cascade/` needs, and stops if an anchor line has moved), and builds the Calibre plugin from that export. kfxgen's `convert`
@@ -134,6 +134,18 @@ the macOS app's).
 | `dark_boxes` | kfxgen `test_books/dark_box_colours_734/c734k.epub` | text colours in light and dark boxes (#383, #734) |
 | `drop_caps` | kfxgen `test_books/drop_caps/drop-caps-new-source.epub` | drop caps of several sizes and lengths (#240) |
 | `figures` | kfxgen `test_books/figures/figures-new-2-source.epub` | figures and captions, a run in small caps |
+| `horizontal_blocks_749` | kfxgen `test_books/horizontal_blocks_749/s749k.epub` | horizontal blocks in a vertical Japanese book: plain, bordered and padded boxes (#749) |
+| `vertical_pictures_761` | kfxgen `test_books/vertical_pictures_761/s761k.epub` | pictures directly in vertical-rl text, sized by a height or a width, linked, aligned (#761) |
+| `vertical_in_horizontal_763` | kfxgen `test_books/vertical_in_horizontal_763/s763k.epub` | vertical-rl blocks inside horizontal ones in a vertical book, their margins and padding (#763) |
+| `lists_horizontal_items_764` | kfxgen `test_books/lists_horizontal_items_764/s764k.epub` | horizontal items in vertical lists, the list's margins on them, padded wrappers (#764) |
+| `turned_words_765` | kfxgen `test_books/turned_words_765/s765k.epub` | words set the other way from their line: horizontal in vertical text, vertical in a horizontal block, with runs and links (#765) |
+| `pictures_side_by_side_766` | kfxgen `test_books/pictures_side_by_side_766/s766k.epub` | pictures side by side on one line, on lines of their own, linked, sized in em (#766) |
+| `lists_768` | kfxgen `test_books/lists_768/s768m.epub` | lists as list entries: marker styles, starts, values, inside markers, unmarked lists (#768) |
+| `block_picture_769` | kfxgen `test_books/block_picture_769/s769k.epub` | block pictures placed by their block: alignment, indent, side margins, linked (#769) |
+| `block_picture_770` | kfxgen `test_books/block_picture_770/s770k.epub` | block pictures in nested % and em margins, own margins, `display: block` with auto margins (#769) |
+| `lists_771` | kfxgen `test_books/lists_771/s771k.epub` | more lists: unmarked indents, empty items, start 0, armenian, items of several blocks (#768) |
+| `chapter_starts_773` | kfxgen `test_books/chapter_starts_773/t773k.epub` | contents entries naming an id at a file's very end (#772) |
+| `chapter_starts_777` | kfxgen `test_books/chapter_starts_777/t777k.epub` | a closing rule's id and the heading above a contents target as chapter starts (#774, #776) |
 
 The sources from kfxgen's `test_books` were written by kfxgen's author for its tests: made-up
 text and test pictures, no other book's content. kfxgen does not publish all of them; the copies

@@ -90,3 +90,13 @@ fn publisher_structure_matches_kfxgen() {
 fn vertical_page_matches_kfxgen() {
     matches_kfxgen("vertical_page");
 }
+
+#[test]
+fn chapter_starts_773_matches_kfxgen() {
+    matches_kfxgen("chapter_starts_773");
+}
+
+#[test]
+fn chapter_starts_777_matches_kfxgen() {
+    matches_kfxgen("chapter_starts_777");
+}

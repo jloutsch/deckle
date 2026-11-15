@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "kfxgen_version": "5.24.0",
- "kfxgen_commit": "0bc705d",
+ "kfxgen_commit": "ad38ec8",
  "args": {
   "$dict": [
    [
@@ -23,7 +23,7 @@
        ],
        [
         "text",
-        "Bullets and numbers\n\nBefore the lists.\n\n• Disc one\n\n• Disc two\n\n• Nested circle\n\n1. Decimal one\n\n2. Decimal two\n\n3. Letter c\n\n4. Letter d\n\nNo marker\n\nAfter the lists."
+        "Bullets and numbers\n\nBefore the lists.\n\nDisc one\n\nDisc two\n\nNested circle\n\nDecimal one\n\nDecimal two\n\nLetter c\n\nLetter d\n\nNo marker\n\nAfter the lists."
        ],
        [
         "blocks",
@@ -270,8 +270,16 @@
          {
           "$dict": [
            [
+            "type",
+            "box"
+           ],
+           [
+            "break_before",
+            false
+           ],
+           [
             "text",
-            "• Disc one"
+            "Disc one\n\nDisc two\n\nNested circle"
            ],
            [
             "spans",
@@ -279,15 +287,621 @@
            ],
            [
             "block_style",
+            null
+           ],
+           [
+            "font_px",
+            16.0
+           ],
+           [
+            "blocks",
+            [
+             {
+              "$dict": [
+               [
+                "text",
+                "Disc one"
+               ],
+               [
+                "spans",
+                []
+               ],
+               [
+                "block_style",
+                {
+                 "$dict": [
+                  [
+                   "align",
+                   null
+                  ],
+                  [
+                   "indent",
+                   null
+                  ],
+                  [
+                   "margin_left",
+                   null
+                  ],
+                  [
+                   "margin_right",
+                   null
+                  ],
+                  [
+                   "font_family",
+                   [
+                    "serif"
+                   ]
+                  ],
+                  [
+                   "line_height",
+                   1.2
+                  ],
+                  [
+                   "bold",
+                   false
+                  ],
+                  [
+                   "italic",
+                   false
+                  ],
+                  [
+                   "font_size",
+                   16.0
+                  ],
+                  [
+                   "bidi",
+                   {
+                    "$dict": [
+                     [
+                      "lang",
+                      "en"
+                     ]
+                    ]
+                   }
+                  ]
+                 ]
+                }
+               ],
+               [
+                "preformatted",
+                false
+               ],
+               [
+                "anchor_ids",
+                []
+               ],
+               [
+                "heading",
+                false
+               ],
+               [
+                "row",
+                false
+               ],
+               [
+                "in_list",
+                true
+               ],
+               [
+                "anchor_offsets",
+                {
+                 "$dict": []
+                }
+               ],
+               [
+                "own_bottom_em",
+                true
+               ],
+               [
+                "list_item",
+                {
+                 "$dict": [
+                  [
+                   "value",
+                   null
+                  ],
+                  [
+                   "n",
+                   null
+                  ]
+                 ]
+                }
+               ],
+               [
+                "margin_above",
+                0.0
+               ],
+               [
+                "margin_below",
+                0.0
+               ],
+               [
+                "anchor_keys",
+                []
+               ]
+              ]
+             },
+             {
+              "$dict": [
+               [
+                "type",
+                "box"
+               ],
+               [
+                "break_before",
+                false
+               ],
+               [
+                "text",
+                "Disc two\n\nNested circle"
+               ],
+               [
+                "spans",
+                []
+               ],
+               [
+                "block_style",
+                null
+               ],
+               [
+                "font_px",
+                null
+               ],
+               [
+                "blocks",
+                [
+                 {
+                  "$dict": [
+                   [
+                    "text",
+                    "Disc two"
+                   ],
+                   [
+                    "spans",
+                    []
+                   ],
+                   [
+                    "block_style",
+                    {
+                     "$dict": [
+                      [
+                       "bidi",
+                       {
+                        "$dict": [
+                         [
+                          "lang",
+                          "en"
+                         ]
+                        ]
+                       }
+                      ]
+                     ]
+                    }
+                   ],
+                   [
+                    "anchor_ids",
+                    []
+                   ],
+                   [
+                    "anchor_offsets",
+                    {
+                     "$dict": []
+                    }
+                   ],
+                   [
+                    "margin_above",
+                    0.0
+                   ],
+                   [
+                    "margin_below",
+                    0.0
+                   ],
+                   [
+                    "anchor_keys",
+                    []
+                   ]
+                  ]
+                 },
+                 {
+                  "$dict": [
+                   [
+                    "type",
+                    "box"
+                   ],
+                   [
+                    "break_before",
+                    false
+                   ],
+                   [
+                    "text",
+                    "Nested circle"
+                   ],
+                   [
+                    "spans",
+                    []
+                   ],
+                   [
+                    "block_style",
+                    null
+                   ],
+                   [
+                    "font_px",
+                    16.0
+                   ],
+                   [
+                    "blocks",
+                    [
+                     {
+                      "$dict": [
+                       [
+                        "text",
+                        "Nested circle"
+                       ],
+                       [
+                        "spans",
+                        []
+                       ],
+                       [
+                        "block_style",
+                        {
+                         "$dict": [
+                          [
+                           "align",
+                           null
+                          ],
+                          [
+                           "indent",
+                           null
+                          ],
+                          [
+                           "margin_left",
+                           null
+                          ],
+                          [
+                           "margin_right",
+                           null
+                          ],
+                          [
+                           "font_family",
+                           [
+                            "serif"
+                           ]
+                          ],
+                          [
+                           "line_height",
+                           1.2
+                          ],
+                          [
+                           "bold",
+                           false
+                          ],
+                          [
+                           "italic",
+                           false
+                          ],
+                          [
+                           "font_size",
+                           16.0
+                          ],
+                          [
+                           "bidi",
+                           {
+                            "$dict": [
+                             [
+                              "lang",
+                              "en"
+                             ]
+                            ]
+                           }
+                          ]
+                         ]
+                        }
+                       ],
+                       [
+                        "preformatted",
+                        false
+                       ],
+                       [
+                        "anchor_ids",
+                        []
+                       ],
+                       [
+                        "heading",
+                        false
+                       ],
+                       [
+                        "row",
+                        false
+                       ],
+                       [
+                        "in_list",
+                        true
+                       ],
+                       [
+                        "anchor_offsets",
+                        {
+                         "$dict": []
+                        }
+                       ],
+                       [
+                        "own_bottom_em",
+                        true
+                       ],
+                       [
+                        "list_item",
+                        {
+                         "$dict": [
+                          [
+                           "value",
+                           null
+                          ],
+                          [
+                           "n",
+                           null
+                          ]
+                         ]
+                        }
+                       ],
+                       [
+                        "margin_above",
+                        0.0
+                       ],
+                       [
+                        "margin_below",
+                        0.0
+                       ],
+                       [
+                        "padding_below",
+                        0.0
+                       ],
+                       [
+                        "anchor_keys",
+                        []
+                       ]
+                      ]
+                     }
+                    ]
+                   ],
+                   [
+                    "anchor_ids",
+                    []
+                   ],
+                   [
+                    "anchor_offsets",
+                    {
+                     "$dict": []
+                    }
+                   ],
+                   [
+                    "box",
+                    {
+                     "$dict": [
+                      [
+                       "border",
+                       null
+                      ],
+                      [
+                       "background",
+                       null
+                      ],
+                      [
+                       "padding",
+                       null
+                      ],
+                      [
+                       "font_px",
+                       16.0
+                      ],
+                      [
+                       "margin_left",
+                       null
+                      ],
+                      [
+                       "margin_right",
+                       null
+                      ],
+                      [
+                       "width",
+                       null
+                      ],
+                      [
+                       "width_px",
+                       null
+                      ],
+                      [
+                       "float",
+                       null
+                      ],
+                      [
+                       "centred",
+                       false
+                      ],
+                      [
+                       "bidi",
+                       {
+                        "$dict": [
+                         [
+                          "lang",
+                          "en"
+                         ]
+                        ]
+                       }
+                      ],
+                      [
+                       "list",
+                       {
+                        "$dict": [
+                         [
+                          "type",
+                          "$342"
+                         ],
+                         [
+                          "start",
+                          null
+                         ],
+                         [
+                          "inside",
+                          false
+                         ]
+                        ]
+                       }
+                      ]
+                     ]
+                    }
+                   ],
+                   [
+                    "bottom_in_em",
+                    false
+                   ],
+                   [
+                    "own_bottom_em",
+                    true
+                   ],
+                   [
+                    "margin_above",
+                    0.0
+                   ],
+                   [
+                    "margin_below",
+                    0.0
+                   ],
+                   [
+                    "padding_below",
+                    0.0
+                   ],
+                   [
+                    "anchor_keys",
+                    []
+                   ]
+                  ]
+                 }
+                ]
+               ],
+               [
+                "anchor_ids",
+                []
+               ],
+               [
+                "anchor_offsets",
+                {
+                 "$dict": []
+                }
+               ],
+               [
+                "box",
+                {
+                 "$dict": [
+                  [
+                   "border",
+                   null
+                  ],
+                  [
+                   "background",
+                   null
+                  ],
+                  [
+                   "padding",
+                   null
+                  ],
+                  [
+                   "font_px",
+                   null
+                  ],
+                  [
+                   "margin_left",
+                   null
+                  ],
+                  [
+                   "margin_right",
+                   null
+                  ],
+                  [
+                   "width",
+                   null
+                  ],
+                  [
+                   "width_px",
+                   null
+                  ],
+                  [
+                   "float",
+                   null
+                  ],
+                  [
+                   "centred",
+                   false
+                  ],
+                  [
+                   "bidi",
+                   null
+                  ],
+                  [
+                   "item",
+                   {
+                    "$dict": [
+                     [
+                      "value",
+                      null
+                     ],
+                     [
+                      "n",
+                      null
+                     ]
+                    ]
+                   }
+                  ]
+                 ]
+                }
+               ],
+               [
+                "margin_above",
+                0.0
+               ],
+               [
+                "margin_below",
+                0.0
+               ],
+               [
+                "padding_below",
+                0.0
+               ],
+               [
+                "anchor_keys",
+                []
+               ]
+              ]
+             }
+            ]
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": []
+            }
+           ],
+           [
+            "box",
             {
              "$dict": [
               [
-               "align",
+               "border",
                null
               ],
               [
-               "indent",
+               "background",
                null
+              ],
+              [
+               "padding",
+               null
+              ],
+              [
+               "font_px",
+               16.0
               ],
               [
                "margin_left",
@@ -298,26 +912,20 @@
                null
               ],
               [
-               "font_family",
-               [
-                "serif"
-               ]
+               "width",
+               null
               ],
               [
-               "line_height",
-               1.2
+               "width_px",
+               null
               ],
               [
-               "bold",
+               "float",
+               null
+              ],
+              [
+               "centred",
                false
-              ],
-              [
-               "italic",
-               false
-              ],
-              [
-               "font_size",
-               16.0
               ],
               [
                "bidi",
@@ -329,35 +937,32 @@
                  ]
                 ]
                }
+              ],
+              [
+               "list",
+               {
+                "$dict": [
+                 [
+                  "type",
+                  "$340"
+                 ],
+                 [
+                  "start",
+                  null
+                 ],
+                 [
+                  "inside",
+                  false
+                 ]
+                ]
+               }
               ]
              ]
             }
            ],
            [
-            "preformatted",
-            false
-           ],
-           [
-            "anchor_ids",
-            []
-           ],
-           [
-            "heading",
-            false
-           ],
-           [
-            "row",
-            false
-           ],
-           [
-            "in_list",
+            "bottom_in_em",
             true
-           ],
-           [
-            "anchor_offsets",
-            {
-             "$dict": []
-            }
            ],
            [
             "own_bottom_em",
@@ -368,10 +973,6 @@
             1.0
            ],
            [
-            "margin_below",
-            0.0
-           ],
-           [
             "anchor_keys",
             []
            ],
@@ -388,8 +989,16 @@
          {
           "$dict": [
            [
+            "type",
+            "box"
+           ],
+           [
+            "break_before",
+            false
+           ],
+           [
             "text",
-            "• Disc two"
+            "Decimal one\n\nDecimal two"
            ],
            [
             "spans",
@@ -397,21 +1006,274 @@
            ],
            [
             "block_style",
-            {
-             "$dict": [
-              [
-               "bidi",
-               {
-                "$dict": [
-                 [
-                  "lang",
-                  "en"
+            null
+           ],
+           [
+            "font_px",
+            16.0
+           ],
+           [
+            "blocks",
+            [
+             {
+              "$dict": [
+               [
+                "text",
+                "Decimal one"
+               ],
+               [
+                "spans",
+                []
+               ],
+               [
+                "block_style",
+                {
+                 "$dict": [
+                  [
+                   "align",
+                   null
+                  ],
+                  [
+                   "indent",
+                   null
+                  ],
+                  [
+                   "margin_left",
+                   null
+                  ],
+                  [
+                   "margin_right",
+                   null
+                  ],
+                  [
+                   "font_family",
+                   [
+                    "serif"
+                   ]
+                  ],
+                  [
+                   "line_height",
+                   1.2
+                  ],
+                  [
+                   "bold",
+                   false
+                  ],
+                  [
+                   "italic",
+                   false
+                  ],
+                  [
+                   "font_size",
+                   16.0
+                  ],
+                  [
+                   "bidi",
+                   {
+                    "$dict": [
+                     [
+                      "lang",
+                      "en"
+                     ]
+                    ]
+                   }
+                  ]
                  ]
-                ]
-               }
+                }
+               ],
+               [
+                "preformatted",
+                false
+               ],
+               [
+                "anchor_ids",
+                []
+               ],
+               [
+                "heading",
+                false
+               ],
+               [
+                "row",
+                false
+               ],
+               [
+                "in_list",
+                true
+               ],
+               [
+                "anchor_offsets",
+                {
+                 "$dict": []
+                }
+               ],
+               [
+                "own_bottom_em",
+                true
+               ],
+               [
+                "list_item",
+                {
+                 "$dict": [
+                  [
+                   "value",
+                   null
+                  ],
+                  [
+                   "n",
+                   1
+                  ]
+                 ]
+                }
+               ],
+               [
+                "margin_above",
+                0.0
+               ],
+               [
+                "margin_below",
+                0.0
+               ],
+               [
+                "anchor_keys",
+                []
+               ]
               ]
-             ]
-            }
+             },
+             {
+              "$dict": [
+               [
+                "text",
+                "Decimal two"
+               ],
+               [
+                "spans",
+                []
+               ],
+               [
+                "block_style",
+                {
+                 "$dict": [
+                  [
+                   "align",
+                   null
+                  ],
+                  [
+                   "indent",
+                   null
+                  ],
+                  [
+                   "margin_left",
+                   null
+                  ],
+                  [
+                   "margin_right",
+                   null
+                  ],
+                  [
+                   "font_family",
+                   [
+                    "serif"
+                   ]
+                  ],
+                  [
+                   "line_height",
+                   1.2
+                  ],
+                  [
+                   "bold",
+                   false
+                  ],
+                  [
+                   "italic",
+                   false
+                  ],
+                  [
+                   "font_size",
+                   16.0
+                  ],
+                  [
+                   "bidi",
+                   {
+                    "$dict": [
+                     [
+                      "lang",
+                      "en"
+                     ]
+                    ]
+                   }
+                  ]
+                 ]
+                }
+               ],
+               [
+                "preformatted",
+                false
+               ],
+               [
+                "anchor_ids",
+                []
+               ],
+               [
+                "heading",
+                false
+               ],
+               [
+                "row",
+                false
+               ],
+               [
+                "in_list",
+                true
+               ],
+               [
+                "anchor_offsets",
+                {
+                 "$dict": []
+                }
+               ],
+               [
+                "own_bottom_em",
+                true
+               ],
+               [
+                "list_item",
+                {
+                 "$dict": [
+                  [
+                   "value",
+                   null
+                  ],
+                  [
+                   "n",
+                   2
+                  ]
+                 ]
+                }
+               ],
+               [
+                "margin_above",
+                0.0
+               ],
+               [
+                "margin_below",
+                0.0
+               ],
+               [
+                "padding_below",
+                0.0
+               ],
+               [
+                "tight",
+                true
+               ],
+               [
+                "anchor_keys",
+                []
+               ]
+              ]
+             }
+            ]
            ],
            [
             "anchor_ids",
@@ -424,52 +1286,24 @@
             }
            ],
            [
-            "margin_above",
-            0.0
-           ],
-           [
-            "margin_below",
-            0.0
-           ],
-           [
-            "tight",
-            true
-           ],
-           [
-            "anchor_keys",
-            []
-           ],
-           [
-            "writing_mode",
-            "horizontal-tb"
-           ],
-           [
-            "_spine_file",
-            0
-           ]
-          ]
-         },
-         {
-          "$dict": [
-           [
-            "text",
-            "• Nested circle"
-           ],
-           [
-            "spans",
-            []
-           ],
-           [
-            "block_style",
+            "box",
             {
              "$dict": [
               [
-               "align",
+               "border",
                null
               ],
               [
-               "indent",
+               "background",
                null
+              ],
+              [
+               "padding",
+               null
+              ],
+              [
+               "font_px",
+               16.0
               ],
               [
                "margin_left",
@@ -480,26 +1314,20 @@
                null
               ],
               [
-               "font_family",
-               [
-                "serif"
-               ]
+               "width",
+               null
               ],
               [
-               "line_height",
-               1.2
+               "width_px",
+               null
               ],
               [
-               "bold",
+               "float",
+               null
+              ],
+              [
+               "centred",
                false
-              ],
-              [
-               "italic",
-               false
-              ],
-              [
-               "font_size",
-               16.0
               ],
               [
                "bidi",
@@ -511,157 +1339,32 @@
                  ]
                 ]
                }
+              ],
+              [
+               "list",
+               {
+                "$dict": [
+                 [
+                  "type",
+                  "$343"
+                 ],
+                 [
+                  "start",
+                  null
+                 ],
+                 [
+                  "inside",
+                  false
+                 ]
+                ]
+               }
               ]
              ]
             }
-           ],
-           [
-            "preformatted",
-            false
-           ],
-           [
-            "anchor_ids",
-            []
-           ],
-           [
-            "heading",
-            false
-           ],
-           [
-            "row",
-            false
-           ],
-           [
-            "in_list",
-            true
-           ],
-           [
-            "anchor_offsets",
-            {
-             "$dict": []
-            }
-           ],
-           [
-            "own_bottom_em",
-            true
            ],
            [
             "bottom_in_em",
             true
-           ],
-           [
-            "margin_above",
-            0.0
-           ],
-           [
-            "tight",
-            true
-           ],
-           [
-            "anchor_keys",
-            []
-           ],
-           [
-            "writing_mode",
-            "horizontal-tb"
-           ],
-           [
-            "_spine_file",
-            0
-           ]
-          ]
-         },
-         {
-          "$dict": [
-           [
-            "text",
-            "1. Decimal one"
-           ],
-           [
-            "spans",
-            []
-           ],
-           [
-            "block_style",
-            {
-             "$dict": [
-              [
-               "align",
-               null
-              ],
-              [
-               "indent",
-               null
-              ],
-              [
-               "margin_left",
-               null
-              ],
-              [
-               "margin_right",
-               null
-              ],
-              [
-               "font_family",
-               [
-                "serif"
-               ]
-              ],
-              [
-               "line_height",
-               1.2
-              ],
-              [
-               "bold",
-               false
-              ],
-              [
-               "italic",
-               false
-              ],
-              [
-               "font_size",
-               16.0
-              ],
-              [
-               "bidi",
-               {
-                "$dict": [
-                 [
-                  "lang",
-                  "en"
-                 ]
-                ]
-               }
-              ]
-             ]
-            }
-           ],
-           [
-            "preformatted",
-            false
-           ],
-           [
-            "anchor_ids",
-            []
-           ],
-           [
-            "heading",
-            false
-           ],
-           [
-            "row",
-            false
-           ],
-           [
-            "in_list",
-            true
-           ],
-           [
-            "anchor_offsets",
-            {
-             "$dict": []
-            }
            ],
            [
             "own_bottom_em",
@@ -672,10 +1375,6 @@
             1.0
            ],
            [
-            "margin_below",
-            0.0
-           ],
-           [
             "anchor_keys",
             []
            ],
@@ -692,8 +1391,16 @@
          {
           "$dict": [
            [
+            "type",
+            "box"
+           ],
+           [
+            "break_before",
+            false
+           ],
+           [
             "text",
-            "2. Decimal two"
+            "Letter c\n\nLetter d"
            ],
            [
             "spans",
@@ -701,15 +1408,304 @@
            ],
            [
             "block_style",
+            null
+           ],
+           [
+            "font_px",
+            16.0
+           ],
+           [
+            "blocks",
+            [
+             {
+              "$dict": [
+               [
+                "text",
+                "Letter c"
+               ],
+               [
+                "spans",
+                []
+               ],
+               [
+                "block_style",
+                {
+                 "$dict": [
+                  [
+                   "align",
+                   null
+                  ],
+                  [
+                   "indent",
+                   null
+                  ],
+                  [
+                   "margin_left",
+                   null
+                  ],
+                  [
+                   "margin_right",
+                   null
+                  ],
+                  [
+                   "font_family",
+                   [
+                    "serif"
+                   ]
+                  ],
+                  [
+                   "line_height",
+                   1.2
+                  ],
+                  [
+                   "bold",
+                   false
+                  ],
+                  [
+                   "italic",
+                   false
+                  ],
+                  [
+                   "font_size",
+                   16.0
+                  ],
+                  [
+                   "bidi",
+                   {
+                    "$dict": [
+                     [
+                      "lang",
+                      "en"
+                     ]
+                    ]
+                   }
+                  ]
+                 ]
+                }
+               ],
+               [
+                "preformatted",
+                false
+               ],
+               [
+                "anchor_ids",
+                []
+               ],
+               [
+                "heading",
+                false
+               ],
+               [
+                "row",
+                false
+               ],
+               [
+                "in_list",
+                true
+               ],
+               [
+                "anchor_offsets",
+                {
+                 "$dict": []
+                }
+               ],
+               [
+                "own_bottom_em",
+                true
+               ],
+               [
+                "list_item",
+                {
+                 "$dict": [
+                  [
+                   "value",
+                   null
+                  ],
+                  [
+                   "n",
+                   3
+                  ]
+                 ]
+                }
+               ],
+               [
+                "margin_above",
+                0.0
+               ],
+               [
+                "margin_below",
+                0.0
+               ],
+               [
+                "anchor_keys",
+                []
+               ]
+              ]
+             },
+             {
+              "$dict": [
+               [
+                "text",
+                "Letter d"
+               ],
+               [
+                "spans",
+                []
+               ],
+               [
+                "block_style",
+                {
+                 "$dict": [
+                  [
+                   "align",
+                   null
+                  ],
+                  [
+                   "indent",
+                   null
+                  ],
+                  [
+                   "margin_left",
+                   null
+                  ],
+                  [
+                   "margin_right",
+                   null
+                  ],
+                  [
+                   "font_family",
+                   [
+                    "serif"
+                   ]
+                  ],
+                  [
+                   "line_height",
+                   1.2
+                  ],
+                  [
+                   "bold",
+                   false
+                  ],
+                  [
+                   "italic",
+                   false
+                  ],
+                  [
+                   "font_size",
+                   16.0
+                  ],
+                  [
+                   "bidi",
+                   {
+                    "$dict": [
+                     [
+                      "lang",
+                      "en"
+                     ]
+                    ]
+                   }
+                  ]
+                 ]
+                }
+               ],
+               [
+                "preformatted",
+                false
+               ],
+               [
+                "anchor_ids",
+                []
+               ],
+               [
+                "heading",
+                false
+               ],
+               [
+                "row",
+                false
+               ],
+               [
+                "in_list",
+                true
+               ],
+               [
+                "anchor_offsets",
+                {
+                 "$dict": []
+                }
+               ],
+               [
+                "own_bottom_em",
+                true
+               ],
+               [
+                "list_item",
+                {
+                 "$dict": [
+                  [
+                   "value",
+                   null
+                  ],
+                  [
+                   "n",
+                   4
+                  ]
+                 ]
+                }
+               ],
+               [
+                "margin_above",
+                0.0
+               ],
+               [
+                "margin_below",
+                0.0
+               ],
+               [
+                "padding_below",
+                0.0
+               ],
+               [
+                "tight",
+                true
+               ],
+               [
+                "anchor_keys",
+                []
+               ]
+              ]
+             }
+            ]
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": []
+            }
+           ],
+           [
+            "box",
             {
              "$dict": [
               [
-               "align",
+               "border",
                null
               ],
               [
-               "indent",
+               "background",
                null
+              ],
+              [
+               "padding",
+               null
+              ],
+              [
+               "font_px",
+               16.0
               ],
               [
                "margin_left",
@@ -720,26 +1716,20 @@
                null
               ],
               [
-               "font_family",
-               [
-                "serif"
-               ]
+               "width",
+               null
               ],
               [
-               "line_height",
-               1.2
+               "width_px",
+               null
               ],
               [
-               "bold",
+               "float",
+               null
+              ],
+              [
+               "centred",
                false
-              ],
-              [
-               "italic",
-               false
-              ],
-              [
-               "font_size",
-               16.0
               ],
               [
                "bidi",
@@ -751,157 +1741,32 @@
                  ]
                 ]
                }
+              ],
+              [
+               "list",
+               {
+                "$dict": [
+                 [
+                  "type",
+                  "$343"
+                 ],
+                 [
+                  "start",
+                  3
+                 ],
+                 [
+                  "inside",
+                  false
+                 ]
+                ]
+               }
               ]
              ]
             }
-           ],
-           [
-            "preformatted",
-            false
-           ],
-           [
-            "anchor_ids",
-            []
-           ],
-           [
-            "heading",
-            false
-           ],
-           [
-            "row",
-            false
-           ],
-           [
-            "in_list",
-            true
-           ],
-           [
-            "anchor_offsets",
-            {
-             "$dict": []
-            }
-           ],
-           [
-            "own_bottom_em",
-            true
            ],
            [
             "bottom_in_em",
             true
-           ],
-           [
-            "margin_above",
-            0.0
-           ],
-           [
-            "tight",
-            true
-           ],
-           [
-            "anchor_keys",
-            []
-           ],
-           [
-            "writing_mode",
-            "horizontal-tb"
-           ],
-           [
-            "_spine_file",
-            0
-           ]
-          ]
-         },
-         {
-          "$dict": [
-           [
-            "text",
-            "3. Letter c"
-           ],
-           [
-            "spans",
-            []
-           ],
-           [
-            "block_style",
-            {
-             "$dict": [
-              [
-               "align",
-               null
-              ],
-              [
-               "indent",
-               null
-              ],
-              [
-               "margin_left",
-               null
-              ],
-              [
-               "margin_right",
-               null
-              ],
-              [
-               "font_family",
-               [
-                "serif"
-               ]
-              ],
-              [
-               "line_height",
-               1.2
-              ],
-              [
-               "bold",
-               false
-              ],
-              [
-               "italic",
-               false
-              ],
-              [
-               "font_size",
-               16.0
-              ],
-              [
-               "bidi",
-               {
-                "$dict": [
-                 [
-                  "lang",
-                  "en"
-                 ]
-                ]
-               }
-              ]
-             ]
-            }
-           ],
-           [
-            "preformatted",
-            false
-           ],
-           [
-            "anchor_ids",
-            []
-           ],
-           [
-            "heading",
-            false
-           ],
-           [
-            "row",
-            false
-           ],
-           [
-            "in_list",
-            true
-           ],
-           [
-            "anchor_offsets",
-            {
-             "$dict": []
-            }
            ],
            [
             "own_bottom_em",
@@ -912,10 +1777,6 @@
             1.0
            ],
            [
-            "margin_below",
-            0.0
-           ],
-           [
             "anchor_keys",
             []
            ],
@@ -932,127 +1793,13 @@
          {
           "$dict": [
            [
-            "text",
-            "4. Letter d"
+            "type",
+            "box"
            ],
            [
-            "spans",
-            []
-           ],
-           [
-            "block_style",
-            {
-             "$dict": [
-              [
-               "align",
-               null
-              ],
-              [
-               "indent",
-               null
-              ],
-              [
-               "margin_left",
-               null
-              ],
-              [
-               "margin_right",
-               null
-              ],
-              [
-               "font_family",
-               [
-                "serif"
-               ]
-              ],
-              [
-               "line_height",
-               1.2
-              ],
-              [
-               "bold",
-               false
-              ],
-              [
-               "italic",
-               false
-              ],
-              [
-               "font_size",
-               16.0
-              ],
-              [
-               "bidi",
-               {
-                "$dict": [
-                 [
-                  "lang",
-                  "en"
-                 ]
-                ]
-               }
-              ]
-             ]
-            }
-           ],
-           [
-            "preformatted",
+            "break_before",
             false
            ],
-           [
-            "anchor_ids",
-            []
-           ],
-           [
-            "heading",
-            false
-           ],
-           [
-            "row",
-            false
-           ],
-           [
-            "in_list",
-            true
-           ],
-           [
-            "anchor_offsets",
-            {
-             "$dict": []
-            }
-           ],
-           [
-            "own_bottom_em",
-            true
-           ],
-           [
-            "bottom_in_em",
-            true
-           ],
-           [
-            "margin_above",
-            0.0
-           ],
-           [
-            "tight",
-            true
-           ],
-           [
-            "anchor_keys",
-            []
-           ],
-           [
-            "writing_mode",
-            "horizontal-tb"
-           ],
-           [
-            "_spine_file",
-            0
-           ]
-          ]
-         },
-         {
-          "$dict": [
            [
             "text",
             "No marker"
@@ -1063,45 +1810,184 @@
            ],
            [
             "block_style",
+            null
+           ],
+           [
+            "font_px",
+            16.0
+           ],
+           [
+            "blocks",
+            [
+             {
+              "$dict": [
+               [
+                "text",
+                "No marker"
+               ],
+               [
+                "spans",
+                []
+               ],
+               [
+                "block_style",
+                {
+                 "$dict": [
+                  [
+                   "align",
+                   null
+                  ],
+                  [
+                   "indent",
+                   null
+                  ],
+                  [
+                   "margin_left",
+                   null
+                  ],
+                  [
+                   "margin_right",
+                   null
+                  ],
+                  [
+                   "font_family",
+                   [
+                    "serif"
+                   ]
+                  ],
+                  [
+                   "line_height",
+                   1.2
+                  ],
+                  [
+                   "bold",
+                   false
+                  ],
+                  [
+                   "italic",
+                   false
+                  ],
+                  [
+                   "font_size",
+                   16.0
+                  ],
+                  [
+                   "bidi",
+                   {
+                    "$dict": [
+                     [
+                      "lang",
+                      "en"
+                     ]
+                    ]
+                   }
+                  ]
+                 ]
+                }
+               ],
+               [
+                "preformatted",
+                false
+               ],
+               [
+                "anchor_ids",
+                []
+               ],
+               [
+                "heading",
+                false
+               ],
+               [
+                "row",
+                false
+               ],
+               [
+                "in_list",
+                true
+               ],
+               [
+                "anchor_offsets",
+                {
+                 "$dict": []
+                }
+               ],
+               [
+                "own_bottom_em",
+                true
+               ],
+               [
+                "margin_above",
+                0.0
+               ],
+               [
+                "margin_below",
+                0.0
+               ],
+               [
+                "padding_below",
+                0.0
+               ],
+               [
+                "anchor_keys",
+                []
+               ]
+              ]
+             }
+            ]
+           ],
+           [
+            "anchor_ids",
+            []
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": []
+            }
+           ],
+           [
+            "box",
             {
              "$dict": [
               [
-               "align",
+               "border",
                null
               ],
               [
-               "indent",
+               "background",
                null
+              ],
+              [
+               "padding",
+               null
+              ],
+              [
+               "font_px",
+               16.0
               ],
               [
                "margin_left",
-               null
+               4.6875
               ],
               [
                "margin_right",
                null
               ],
               [
-               "font_family",
-               [
-                "serif"
-               ]
+               "width",
+               null
               ],
               [
-               "line_height",
-               1.2
+               "width_px",
+               null
               ],
               [
-               "bold",
+               "float",
+               null
+              ],
+              [
+               "centred",
                false
-              ],
-              [
-               "italic",
-               false
-              ],
-              [
-               "font_size",
-               16.0
               ],
               [
                "bidi",
@@ -1113,42 +1999,20 @@
                  ]
                 ]
                }
+              ],
+              [
+               "plain",
+               true
               ]
              ]
             }
            ],
            [
-            "preformatted",
-            false
-           ],
-           [
-            "anchor_ids",
-            []
-           ],
-           [
-            "heading",
-            false
-           ],
-           [
-            "row",
-            false
-           ],
-           [
-            "in_list",
+            "bottom_in_em",
             true
-           ],
-           [
-            "anchor_offsets",
-            {
-             "$dict": []
-            }
            ],
            [
             "own_bottom_em",
-            true
-           ],
-           [
-            "bottom_in_em",
             true
            ],
            [

@@ -13,8 +13,8 @@
 #                                                                # each book's cascade dump too
 #
 # Needs a kfxgen repo (KFXGEN, default ../kfxgen-public; only read) with its .venv, and calibre.
-# KFXGEN_REF is the kfxgen commit to take (default 0bc705d, the one the port targets); it must
-# be 0bc705d or later, since the replay imports kfxgen's page_scale. It is exported with git
+# KFXGEN_REF is the kfxgen commit to take (default ad38ec8, the one the port targets); it must
+# be ad38ec8 or later, since the port follows that commit. It is exported with git
 # archive, and the dump hook (tools/ref/kfxgen_hook) is put into the export.
 # Nothing is written in the kfxgen repo. Calibre runs with its own config folder holding only
 # that export, so your installed plugins (and the Previewer-based "KFX Output") are neither
@@ -23,8 +23,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 KFXGEN="$(cd "${KFXGEN:-$ROOT/../kfxgen-public}" && pwd)"
-# The commit the port targets, and the oldest the replay works with.
-KFXGEN_MIN=0bc705d3ec9489417db5112ef8b40e57da938bed
+# The commit the port targets, and the oldest the script takes.
+KFXGEN_MIN=ad38ec8f192126f8cf2b9b61814c6dabe3d12c52
 KFXGEN_REF="${KFXGEN_REF:-$KFXGEN_MIN}"
 PY="${KFXGEN_PYTHON:-$KFXGEN/.venv/bin/python}"
 EBOOK_CONVERT="${EBOOK_CONVERT:-ebook-convert}"
@@ -232,6 +232,18 @@ figures|figures/figures-new-2-source.epub
 floats|floats/floats-fix-source.epub
 floats_697|floats_697/F697 kfxgen source.epub
 font_sizes|font_sizes/font-sizes-source.epub
+horizontal_blocks_749|horizontal_blocks_749/s749k.epub
+vertical_pictures_761|vertical_pictures_761/s761k.epub
+vertical_in_horizontal_763|vertical_in_horizontal_763/s763k.epub
+lists_horizontal_items_764|lists_horizontal_items_764/s764k.epub
+turned_words_765|turned_words_765/s765k.epub
+pictures_side_by_side_766|pictures_side_by_side_766/s766k.epub
+lists_768|lists_768/s768m.epub
+block_picture_769|block_picture_769/s769k.epub
+block_picture_770|block_picture_770/s770k.epub
+lists_771|lists_771/s771k.epub
+chapter_starts_773|chapter_starts_773/t773k.epub
+chapter_starts_777|chapter_starts_777/t777k.epub
 LIST
 for epub in "$SOURCES"/*.epub; do
   # The sources --cascade builds are cascade sources only; models/ has no fixture of them.

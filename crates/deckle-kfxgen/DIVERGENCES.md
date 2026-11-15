@@ -1,7 +1,7 @@
 # Where the port differs from kfxgen
 
-Deliberate differences between `deckle-kfxgen` and kfxgen `0bc705d`, each with why. Line
-citations are at `4b81651`, the previous pin, unless a section names another commit.
+Deliberate differences between `deckle-kfxgen` and kfxgen `ad38ec8`, each with why. Line
+citations are at `4b81651`, an earlier pin, unless a section names another commit.
 
 ## Unicode version of Python's character classes
 

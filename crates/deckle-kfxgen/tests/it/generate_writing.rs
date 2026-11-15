@@ -77,6 +77,31 @@ fn horizontal_blocks_ltr_matches_kfxgen() {
     matches_kfxgen("horizontal_blocks_ltr");
 }
 
+#[test]
+fn horizontal_blocks_749_matches_kfxgen() {
+    matches_kfxgen("horizontal_blocks_749");
+}
+
+#[test]
+fn vertical_pictures_761_matches_kfxgen() {
+    matches_kfxgen("vertical_pictures_761");
+}
+
+#[test]
+fn vertical_in_horizontal_763_matches_kfxgen() {
+    matches_kfxgen("vertical_in_horizontal_763");
+}
+
+#[test]
+fn lists_horizontal_items_764_matches_kfxgen() {
+    matches_kfxgen("lists_horizontal_items_764");
+}
+
+#[test]
+fn turned_words_765_matches_kfxgen() {
+    matches_kfxgen("turned_words_765");
+}
+
 fn directions() -> Model {
     load_model(&deckle_kfx::fixtures::kfxgen("models/directions")).unwrap()
 }

@@ -1,7 +1,7 @@
 deckle-kfxgen
 
 This crate is a Rust port of kfxgen (https://github.com/jloutsch/kfxgen) at commit
-0bc705d3ec9489417db5112ef8b40e57da938bed. The dump hook in tools/ref/kfxgen_hook runs inside
+ad38ec8f192126f8cf2b9b61814c6dabe3d12c52. The dump hook in tools/ref/kfxgen_hook runs inside
 kfxgen and is covered by this notice too.
 
     kfxgen

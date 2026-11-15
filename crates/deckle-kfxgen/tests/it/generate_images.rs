@@ -28,6 +28,21 @@ fn unused_manifest_image_matches_kfxgen() {
 }
 
 #[test]
+fn pictures_side_by_side_766_matches_kfxgen() {
+    matches_kfxgen("pictures_side_by_side_766");
+}
+
+#[test]
+fn block_picture_769_matches_kfxgen() {
+    matches_kfxgen("block_picture_769");
+}
+
+#[test]
+fn block_picture_770_matches_kfxgen() {
+    matches_kfxgen("block_picture_770");
+}
+
+#[test]
 fn contents_illustration_matches_kfxgen() {
     matches_kfxgen("contents_illustration");
 }

@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "kfxgen_version": "5.24.0",
- "kfxgen_commit": "0bc705d",
+ "kfxgen_commit": "ad38ec8",
  "args": {
   "$dict": [
    [
@@ -8549,7 +8549,7 @@
        ],
        [
         "text",
-        "D list item\n\n• D1 DELTAWORD marker in a list item[4] then more.\n\nD filler paragraph 1, long enough to fill some of the screen.\n\nD filler paragraph 2, long enough to fill some of the screen.\n\nD filler paragraph 3, long enough to fill some of the screen.\n\nD filler paragraph 4, long enough to fill some of the screen.\n\nD filler paragraph 5, long enough to fill some of the screen.\n\nD filler paragraph 6, long enough to fill some of the screen.\n\nD filler paragraph 7, long enough to fill some of the screen.\n\nD filler paragraph 8, long enough to fill some of the screen.\n\nD filler paragraph 9, long enough to fill some of the screen.\n\nD filler paragraph 10, long enough to fill some of the screen.\n\nD filler paragraph 11, long enough to fill some of the screen.\n\nD filler paragraph 12, long enough to fill some of the screen.\n\nD filler paragraph 13, long enough to fill some of the screen.\n\nD filler paragraph 14, long enough to fill some of the screen.\n\nD filler paragraph 15, long enough to fill some of the screen.\n\nD filler paragraph 16, long enough to fill some of the screen.\n\nD filler paragraph 17, long enough to fill some of the screen.\n\nD filler paragraph 18, long enough to fill some of the screen.\n\nD filler paragraph 19, long enough to fill some of the screen.\n\nD filler paragraph 20, long enough to fill some of the screen.\n\nD filler paragraph 21, long enough to fill some of the screen.\n\nD filler paragraph 22, long enough to fill some of the screen.\n\nD filler paragraph 23, long enough to fill some of the screen.\n\nD filler paragraph 24, long enough to fill some of the screen.\n\nD2 Note four, for a list item."
+        "D list item\n\nD1 DELTAWORD marker in a list item[4] then more.\n\nD filler paragraph 1, long enough to fill some of the screen.\n\nD filler paragraph 2, long enough to fill some of the screen.\n\nD filler paragraph 3, long enough to fill some of the screen.\n\nD filler paragraph 4, long enough to fill some of the screen.\n\nD filler paragraph 5, long enough to fill some of the screen.\n\nD filler paragraph 6, long enough to fill some of the screen.\n\nD filler paragraph 7, long enough to fill some of the screen.\n\nD filler paragraph 8, long enough to fill some of the screen.\n\nD filler paragraph 9, long enough to fill some of the screen.\n\nD filler paragraph 10, long enough to fill some of the screen.\n\nD filler paragraph 11, long enough to fill some of the screen.\n\nD filler paragraph 12, long enough to fill some of the screen.\n\nD filler paragraph 13, long enough to fill some of the screen.\n\nD filler paragraph 14, long enough to fill some of the screen.\n\nD filler paragraph 15, long enough to fill some of the screen.\n\nD filler paragraph 16, long enough to fill some of the screen.\n\nD filler paragraph 17, long enough to fill some of the screen.\n\nD filler paragraph 18, long enough to fill some of the screen.\n\nD filler paragraph 19, long enough to fill some of the screen.\n\nD filler paragraph 20, long enough to fill some of the screen.\n\nD filler paragraph 21, long enough to fill some of the screen.\n\nD filler paragraph 22, long enough to fill some of the screen.\n\nD filler paragraph 23, long enough to fill some of the screen.\n\nD filler paragraph 24, long enough to fill some of the screen.\n\nD2 Note four, for a list item."
        ],
        [
         "blocks",
@@ -8671,42 +8671,199 @@
          {
           "$dict": [
            [
+            "type",
+            "box"
+           ],
+           [
+            "break_before",
+            false
+           ],
+           [
             "text",
-            "• D1 DELTAWORD marker in a list item[4] then more."
+            "D1 DELTAWORD marker in a list item[4] then more."
            ],
            [
             "spans",
+            []
+           ],
+           [
+            "block_style",
+            null
+           ],
+           [
+            "font_px",
+            16.0
+           ],
+           [
+            "blocks",
             [
              {
-              "$tuple": [
-               36,
-               3,
-               {
-                "$frozenset": [
-                 "noteref",
+              "$dict": [
+               [
+                "text",
+                "D1 DELTAWORD marker in a list item[4] then more."
+               ],
+               [
+                "spans",
+                [
                  {
                   "$tuple": [
-                   "link",
-                   "d.xhtml#dn1"
+                   34,
+                   3,
+                   {
+                    "$frozenset": [
+                     "noteref",
+                     {
+                      "$tuple": [
+                       "link",
+                       "d.xhtml#dn1"
+                      ]
+                     }
+                    ]
+                   }
                   ]
                  }
                 ]
-               }
+               ],
+               [
+                "block_style",
+                {
+                 "$dict": [
+                  [
+                   "align",
+                   null
+                  ],
+                  [
+                   "indent",
+                   null
+                  ],
+                  [
+                   "margin_left",
+                   null
+                  ],
+                  [
+                   "margin_right",
+                   null
+                  ],
+                  [
+                   "font_family",
+                   [
+                    "serif"
+                   ]
+                  ],
+                  [
+                   "line_height",
+                   1.2
+                  ],
+                  [
+                   "bold",
+                   false
+                  ],
+                  [
+                   "italic",
+                   false
+                  ],
+                  [
+                   "font_size",
+                   16.0
+                  ]
+                 ]
+                }
+               ],
+               [
+                "preformatted",
+                false
+               ],
+               [
+                "anchor_ids",
+                []
+               ],
+               [
+                "heading",
+                false
+               ],
+               [
+                "row",
+                false
+               ],
+               [
+                "in_list",
+                true
+               ],
+               [
+                "anchor_offsets",
+                {
+                 "$dict": []
+                }
+               ],
+               [
+                "own_bottom_em",
+                true
+               ],
+               [
+                "list_item",
+                {
+                 "$dict": [
+                  [
+                   "value",
+                   null
+                  ],
+                  [
+                   "n",
+                   null
+                  ]
+                 ]
+                }
+               ],
+               [
+                "margin_above",
+                0.0
+               ],
+               [
+                "margin_below",
+                0.0
+               ],
+               [
+                "padding_below",
+                0.0
+               ],
+               [
+                "anchor_keys",
+                []
+               ]
               ]
              }
             ]
            ],
            [
-            "block_style",
+            "anchor_ids",
+            []
+           ],
+           [
+            "anchor_offsets",
+            {
+             "$dict": []
+            }
+           ],
+           [
+            "box",
             {
              "$dict": [
               [
-               "align",
+               "border",
                null
               ],
               [
-               "indent",
+               "background",
                null
+              ],
+              [
+               "padding",
+               null
+              ],
+              [
+               "font_px",
+               16.0
               ],
               [
                "margin_left",
@@ -8717,62 +8874,55 @@
                null
               ],
               [
-               "font_family",
-               [
-                "serif"
-               ]
+               "width",
+               null
               ],
               [
-               "line_height",
-               1.2
+               "width_px",
+               null
               ],
               [
-               "bold",
+               "float",
+               null
+              ],
+              [
+               "centred",
                false
               ],
               [
-               "italic",
-               false
+               "bidi",
+               {
+                "$dict": []
+               }
               ],
               [
-               "font_size",
-               16.0
+               "list",
+               {
+                "$dict": [
+                 [
+                  "type",
+                  "$340"
+                 ],
+                 [
+                  "start",
+                  null
+                 ],
+                 [
+                  "inside",
+                  false
+                 ]
+                ]
+               }
               ]
              ]
             }
            ],
            [
-            "preformatted",
-            false
-           ],
-           [
-            "anchor_ids",
-            []
-           ],
-           [
-            "heading",
-            false
-           ],
-           [
-            "row",
-            false
-           ],
-           [
-            "in_list",
+            "bottom_in_em",
             true
-           ],
-           [
-            "anchor_offsets",
-            {
-             "$dict": []
-            }
            ],
            [
             "own_bottom_em",
-            true
-           ],
-           [
-            "bottom_in_em",
             true
            ],
            [

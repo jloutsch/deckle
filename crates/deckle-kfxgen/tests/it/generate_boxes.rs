@@ -33,6 +33,16 @@ fn notes_matches_kfxgen() {
     matches_kfxgen("notes");
 }
 
+#[test]
+fn lists_768_matches_kfxgen() {
+    matches_kfxgen("lists_768");
+}
+
+#[test]
+fn lists_771_matches_kfxgen() {
+    matches_kfxgen("lists_771");
+}
+
 /// Paragraph and heading styles the Calibre-made fixtures don't reach: alignment, italic,
 /// line heights, indents, scene breaks, monospace, a language of its own, a box's language
 /// and padding at another size.
