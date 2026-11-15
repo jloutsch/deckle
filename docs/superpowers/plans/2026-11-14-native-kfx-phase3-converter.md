@@ -10,14 +10,14 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-10-native-kfx-design.md`. Research behind this plan, to read before the task that names it: `docs/superpowers/notes/2026-11-14-native-kfx-phase3-research-{book,blocks,inline}.md` (called R-book, R-blocks, R-inline below). Their line numbers are at kfxgen `0bc705d`; after Task 1 find functions by name.
 
-## Decisions in this plan that are mine, for the owner to accept or change
+## Decisions (all six accepted by the owner on 2026-11-14)
 
 1. **The pin moves first (Task 1).** kfxgen has 10 fixes after `0bc705d` (to `ad38ec8`): about 630 changed lines in the converter and 1,000 in the generator. Task 1 ports the generator changes and regenerates the fixtures, so the converter is ported once, from the newer text. **Accepted by the owner on 2026-11-14**, who had just finished kfxgen's last major open item (`ad38ec8` is kfxgen's newest commit). The pin then stays at `ad38ec8` until phase 3 ends; newer kfxgen commits wait for a sync after it.
-2. **Refused, not ported:** drawing SVG pictures (an SVG file in the manifest, an inline `<svg>` of shapes only), WOFF2 fonts, MathML. Each gives `Error::Unsupported` naming the feature and the file. Reasons: R-inline §4 and §5 (Qt draws SVG its own way and the picture's name is a hash of lxml's text; fontTools recompiles WOFF2 glyphs, so bytes cannot match without porting it). Phase 4 decides the fallback for such a book.
+2. **Refused, not ported:** drawing SVG pictures (an SVG file in the manifest, an inline `<svg>` of shapes only), WOFF2 fonts, MathML. Each gives `Error::Unsupported` naming the feature and the file. Reasons: R-inline §4 and §5 (Qt draws SVG its own way and the picture's name is a hash of lxml's text; fontTools recompiles WOFF2 glyphs, so bytes cannot match without porting it). Phase 4 decides the fallback for such a book. Follow-ups: jloutsch/deckle#96 (SVG), #97 (WOFF2).
 3. **Blocks are ordered maps, not typed structs.** The model is compared with Python's key order (R-blocks §2), and `generate` reads `PyValue`. A typed block would be a second contract to keep equal.
-4. **Fixture cap raised from 10 MB to 12 MB**, with the new dumps stored gzip-compressed. `fixtures/kfxgen` is at 9.1 MB.
+4. **Fixture cap raised from 10 MB to 12 MB**, with the new dumps stored gzip-compressed. `fixtures/kfxgen` was at 9.1 MB before Task 1 and 11.5 MB after it (86 models), so Task 2 also stores each `model.json` compressed (6.2 MB of JSON becomes about 0.2 MB).
 5. **Deferred from phase 1's "Before phase 3" list:** splitting `build_chapter_content` and the large `generate` modules, and the small structure items. The converter does not touch them. The allow-list item is done (Task 3).
-6. **Generator features still unsupported after this phase** (a real book reaching one gets `GenerateError::Unsupported`): a shift inside another (`<sup>` in a superscript span), block styles and margins on paragraphs in table cells, pictures in table cells and list items, preformatted text, `clear`. Task 23 counts how many fixture and corpus books reach each; porting them is a separate plan.
+6. **Generator features still unsupported after this phase** (a real book reaching one gets `GenerateError::Unsupported`): a shift inside another (`<sup>` in a superscript span), block styles and margins on paragraphs in table cells, pictures in table cells and list items, preformatted text, `clear`. Task 23 counts how many fixture and corpus books reach each; porting them is a separate plan. Follow-ups: jloutsch/deckle#98 to #102.
 
 ## Global Constraints
 
@@ -74,11 +74,12 @@
 - `units/inline_style.json` (one file, not per book): a table of inputs and outputs of the pure functions of `inline_style.py` and `font_table.py` (`parse_css_length`, `parse_vertical_align`, `css_rgb`, `css_text_colour`, `css_link_colour`, `css_letter_spacing`, `normalize_runs_with_anchors`, `parse_weight`, `emitted_name`), made by importing the exported kfxgen in plain Python, no Calibre.
 - A model (`models/<name>`) for each source that has none: `css_quirks`, `fake_margins`, `malformed`, `no_toc`, `package_quirks`.
 - New sources from `make_convert_epubs.py`, each a few kilobytes, each named for what it holds: `text_edges` (Review Focus 3, nested shifts, `not-bold`, `sub`, `line-through`), `block_edges` (`pre`, hidden elements, `epub:switch`, page breaks, `clear`, a comment splitting a paragraph), `tables_more` (rows path, notes table, split row, caption, colspan and rowspan, paragraph cells), `pictures_more` (a GIF, a CMYK JPEG, a 2,400 px PNG, an `<svg><image>` wrapper, a CSS background page), `fonts_woff` (one WOFF1 face), `package_more` (guide-only landmarks, NCX `pageList`, a year-only date, a publisher, a `class="toc"` listing, a dedication), `marks` (link colours, a horizontal block in vertical text).
+- Every `fixtures/kfxgen/models/<name>/model.json` becomes `model.json.gz` (the script writes it so; `load` reads either, with `flate2`, already in `Cargo.lock`); corpus models outside git stay plain.
 - `convert_support.rs`: `pub fn model_diff(ours: &PyValue, dump: &PyValue) -> Vec<String>` (paths of every difference; dict order, key presence, int against float and float bits all count; `$bytes` by hash), and `pub fn dump(name: &str, file: &str) -> PyValue`.
 
 - [ ] **Step 1:** Write `test_convert_dump.py` (each wrapper leaves the conversion's `model.json` byte-identical to a run without it) and `convert_support::model_diff_sees_order_presence_and_float_bits`. Run: FAIL.
 - [ ] **Step 2:** Write the hook, the injector anchor, `--convert`, the sources and the harness.
-- [ ] **Step 3:** Run `tools/ref/kfxgen_models.sh --convert`; both tests PASS; `du -sh fixtures/kfxgen` under 12 MB. If the dumps do not fit, keep D1 for 10 named fixtures only and say which in the README.
+- [ ] **Step 3:** Run `tools/ref/kfxgen_models.sh --convert`; both tests PASS; `du -sh fixtures/kfxgen` under 12 MB. If the dumps still do not fit, keep D1 for 10 named fixtures only and say which in the README.
 - [ ] **Step 4:** Commit.
 
 ### Task 3: The generator names every key it reads
