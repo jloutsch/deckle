@@ -641,6 +641,12 @@ fn what_kfxgen_raises_on_in_the_walk_is_raised() {
             ".m { margin-left: 2\u{131}n }",
             "KeyError",
         ),
+        // `_rule_look` → `parse_css_length`.
+        (
+            "<p>x</p><hr class=\"r\"/>",
+            ".r { width: 2\u{131}n }",
+            "KeyError",
+        ),
         // `_spacer_em`: `round()` of an infinite line.
         (
             "<p>x</p><p class=\"s\">\u{a0}</p>",
@@ -1016,4 +1022,88 @@ fn typed_markers_follow_kfxgen_s_rules() {
         texts("<ol reversed=\"\"><li><img src=\"a.png\"/></li><li>b</li></ol>")[1],
         "1. b"
     );
+}
+
+/// The walk's blocks of `body` styled by `css`, before spacing.
+fn before_spacing(body: &str, css: &str) -> Vec<Block> {
+    let file = page(body, css);
+    let budget = TextBudget::new();
+    let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+    let mut serials = Serials::default();
+    let none = HashSet::new();
+    let opts = ExtractOptions {
+        native_tables: true,
+        toc_targets: &none,
+        link_targets: &none,
+        keep_nav_listings: false,
+    };
+    blocks_before_spacing(&mut Walk::new(&file, &resolver, &mut serials), &opts)
+        .unwrap()
+        .blocks
+}
+
+/// What no dump holds: an `<hr>` that draws nothing is space (its margins and height as the
+/// pinned `_hidden_rule_em` gives them for the style the port resolves), a closing rule's id
+/// ends the file without naming a block after it, spacers after a closing rule are its
+/// trailing space (the pinned `_space_between` on the same blocks gives 1.9125), and a margin
+/// of `0` is a rule's own, not calibre's 0.5em.
+#[test]
+fn rules_no_dump_holds_are_written_as_kfxgen_writes_them() {
+    let f = |x: f64| Some(PyValue::Float(x));
+    let space = |b: &Block| {
+        assert_eq!(b.get("type"), Some(&PyValue::Str("space".into())));
+        ["margin", "line", "height", "margin_after"].map(|k| b.get(k).cloned())
+    };
+    let body = "<p>a</p><hr class=\"n\"/><p>b</p>";
+    let got = before_spacing(body, ".n { border: none }");
+    assert_eq!(space(&got[1]), [f(0.3), f(0.0), f(0.0), f(0.0)]);
+    assert_eq!(
+        extract(&page(body, ".n { border: none }"))
+            .unwrap()
+            .blocks
+            .len(),
+        2
+    );
+    let got = before_spacing(body, ".n { border: none; height: 4px; margin: 1em 0 2em }");
+    assert_eq!(space(&got[1]), [f(0.6), f(0.0), f(0.15), f(1.2)]);
+
+    let got = extract(&page("<p>a</p><hr id=\"r\"/>", "")).unwrap();
+    assert_eq!(got.trailing_ids, Vec::<String>::new());
+    assert_eq!(got.end_ids, ["r"]);
+    let ids = |b: &Block| b.get("anchor_ids").cloned();
+    assert_eq!(
+        ids(&got.blocks[0]),
+        Some(PyValue::List(vec![PyValue::Str("r".into())]))
+    );
+    assert_eq!(ids(&got.blocks[1]), Some(PyValue::List(Vec::new())));
+
+    let got = extract(&page("<p>a</p><hr/><p>\u{a0}</p>", "")).unwrap();
+    let rule = &got.blocks[1];
+    assert_eq!(rule.get("trailing_space").cloned(), f(1.9125));
+    let above = |b: &Block| b.get("rule").and_then(|r| r.get("space_above")).cloned();
+    assert_eq!(above(rule), f(1.0));
+
+    let got = before_spacing("<p>a</p><hr class=\"m\"/><p>b</p>", ".m { margin: 0 }");
+    let below = |b: &Block| b.get("rule").and_then(|r| r.get("space_below")).cloned();
+    assert_eq!((above(&got[1]), below(&got[1])), (f(0.0), f(0.0)));
+}
+
+/// Rules one after another, each with an id, every other one drawing nothing: each is read
+/// once, its ids wait for the paragraph after them all, and the space between is linear.
+#[test]
+fn rules_in_a_row_take_linear_time() {
+    let make = |n: usize| {
+        let mut body = String::new();
+        for i in 0..n {
+            let class = if i % 2 == 0 { "" } else { " class=\"n\"" };
+            body.push_str(&format!("<hr id=\"r{i}\"{class}/>"));
+        }
+        body.push_str("<p>after</p>");
+        page(&body, ".n { border: none }")
+    };
+    allocates_linearly("rules", 3_000, make);
+    let got = extract(&make(4)).unwrap();
+    assert_eq!(got.blocks.len(), 3);
+    let ids = got.blocks[2].get("anchor_ids").unwrap();
+    assert_eq!(ids.as_list().map(<[PyValue]>::len), Some(4));
 }
