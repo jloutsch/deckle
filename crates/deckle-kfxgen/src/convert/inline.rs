@@ -207,6 +207,15 @@ enum Bit {
     Yes,
 }
 
+/// A memo slot of one step of `_is_all_its_link_shows` from an element: unknown, the one
+/// element it shows when the text around it collapses, or none.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shows {
+    Unknown,
+    No,
+    One(NodeId),
+}
+
 /// A memo slot of `_last_shown`/`_text_before`: unknown, "" (none), or the last character
 /// of what was found (all its callers read).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -566,6 +575,12 @@ pub struct Walk<'a, 's> {
     hidden: Vec<Bit>,
     last_shown: Vec<Last>,
     text_before: Vec<Last>,
+    /// `_is_all_its_link_shows`: each element's one shown child (`Shows`), and whether every
+    /// step from the link down to an element shows only it (`reach`).
+    shows: Vec<Shows>,
+    reach: Vec<Bit>,
+    /// Elements and children the link check has looked at (`link_work`).
+    link_work: u64,
     /// Elements whose `data-kfxgen-horizontal`/`-vertical` marks `_turned_parts` took off
     /// (it pops them from the tree).
     unturned: Vec<bool>,
@@ -584,9 +599,18 @@ impl<'a, 's> Walk<'a, 's> {
             hidden: vec![Bit::Unknown; n],
             last_shown: vec![Last::Unknown; n],
             text_before: vec![Last::Unknown; n],
+            shows: vec![Shows::Unknown; n],
+            reach: vec![Bit::Unknown; n],
+            link_work: 0,
             unturned: vec![false; n],
             quotes: None,
         }
+    }
+
+    /// How many elements and children the link check (`_is_all_its_link_shows`) has looked
+    /// at so far, for tests that bound its work.
+    pub fn link_work(&self) -> u64 {
+        self.link_work
     }
 
     /// The book's serial counters.
@@ -819,7 +843,9 @@ impl<'a, 's> Walk<'a, 's> {
     }
 
     /// `_is_all_its_link_shows(elem, style_resolver)`: whether `elem` is all the link around
-    /// it shows. Its work is the depth of `elem` under the link times the children on the way.
+    /// it shows. kfxgen looks again at every element from the link down for each `elem`; the
+    /// port keeps each element's step (`shows`) and whether an element is reached from its
+    /// link (`reach`), so each element's children are looked at once per walk.
     fn is_all_its_link_shows(&mut self, elem: NodeId) -> Result<bool, ItemError> {
         let dom = self.dom;
         let Some(link) = dom
@@ -839,40 +865,70 @@ impl<'a, 's> Walk<'a, 's> {
         }
         let ahead = self.text_before(link)?;
         let lead_goes = ahead.is_none_or(|c| COLLAPSING.contains(&c));
-        let mut node = link;
-        while node != elem {
-            let mut shows = None;
-            for &k in dom.children(node) {
-                if !dom.is_comment(k) && !self.is_hidden(k, None)? {
-                    if shows.is_some() {
-                        return Ok(false);
-                    }
-                    shows = Some(k);
-                }
-            }
-            let Some(child) = shows else {
-                return Ok(false);
+        // The steps (parent, child) from `elem` up to the link or to an element whose answer
+        // is known; then taken from the top down, as kfxgen does, until one fails. There is no
+        // `<a>` between the link and `elem`, so each element on the way has this link, and
+        // its step and answer hold for every `elem` below it.
+        let mut steps = Vec::new();
+        let mut node = elem;
+        let mut reached = loop {
+            let Some(parent) = dom.parent(node) else {
+                unreachable!("the link is above `elem`");
             };
-            if child != elem && !dom.ancestors(elem).any(|a| a == child) {
-                return Ok(false);
+            steps.push((parent, node));
+            self.link_work += 1;
+            if parent == link {
+                break true;
             }
-            let goes = |text: &str, leading: bool| {
-                text.is_empty()
-                    || (text.trim_matches(COLLAPSING).is_empty() && leading && lead_goes)
-            };
-            if !goes(dom.text(node), true) {
-                return Ok(false);
+            match self.reach[parent.index()] {
+                Bit::Yes => break true,
+                Bit::No => break false,
+                Bit::Unknown => node = parent,
             }
-            let mut after = false;
-            for &k in dom.children(node) {
-                after = after || k == child;
-                if !goes(dom.tail(k), !after) {
-                    return Ok(false);
-                }
-            }
-            node = child;
+        };
+        for &(parent, child) in steps.iter().rev() {
+            reached = reached && self.shows(parent, lead_goes)? == Some(child);
+            self.reach[child.index()] = if reached { Bit::Yes } else { Bit::No };
         }
-        Ok(true)
+        Ok(reached)
+    }
+
+    /// One step of `_is_all_its_link_shows` from `node`: the one element it shows, hidden ones
+    /// left out, when its text and its children's tails all collapse (empty, or only leading
+    /// collapsing white space where `lead_goes`); else None. Kept per element.
+    fn shows(&mut self, node: NodeId, lead_goes: bool) -> Result<Option<NodeId>, ItemError> {
+        match self.shows[node.index()] {
+            Shows::One(child) => return Ok(Some(child)),
+            Shows::No => return Ok(None),
+            Shows::Unknown => {}
+        }
+        let dom = self.dom;
+        self.link_work += dom.children(node).len() as u64;
+        // All children looked at, as kfxgen's list does, before the count.
+        let (mut shown, mut count) = (None, 0);
+        for &k in dom.children(node) {
+            if !dom.is_comment(k) && !self.is_hidden(k, None)? {
+                shown = Some(k);
+                count += 1;
+            }
+        }
+        let goes = |text: &str, leading: bool| {
+            text.is_empty() || (text.trim_matches(COLLAPSING).is_empty() && leading && lead_goes)
+        };
+        let answer = shown.filter(|&child| {
+            count == 1 && goes(dom.text(node), true) && {
+                let mut after = false;
+                dom.children(node).iter().all(|&k| {
+                    after = after || k == child;
+                    goes(dom.tail(k), !after)
+                })
+            }
+        });
+        self.shows[node.index()] = match answer {
+            Some(child) => Shows::One(child),
+            None => Shows::No,
+        };
+        Ok(answer)
     }
 
     /// `_white_space_flags(elem, style_resolver, inherited)`.

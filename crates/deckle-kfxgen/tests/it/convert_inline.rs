@@ -567,3 +567,38 @@ fn the_text_before_a_link_is_found_once() {
         ["w|bold link=OEBPS/a.xhtml#x link-colour=(4291559424,4291559424)"]
     );
 }
+
+/// A red link holding many hidden words and then many black ones: each black word asks whether
+/// it is all its link shows, and kfxgen looks again at every child of the link for each
+/// (n × 2n children). The port looks at each element's children once.
+#[test]
+fn whether_a_word_is_all_its_link_shows_is_found_once() {
+    let n = 2_000;
+    let mut body = String::from("<p><a href=\"#x\" class=\"red\">");
+    for _ in 0..n {
+        body.push_str("<b class=\"h\">z</b>");
+    }
+    for _ in 0..n {
+        body.push_str("<i class=\"blk\">w</i>");
+    }
+    body.push_str("</a></p>");
+    let file = page(
+        &body,
+        ".red { color: #c00 } .blk { color: #111111 } .h { display: none }",
+    );
+    let budget = TextBudget::new();
+    let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+    let mut serials = Serials::default();
+    let mut walk = Walk::new(&file, &resolver, &mut serials);
+    let parts = walk.inline(first(&file, "p"), false).unwrap();
+    let work = walk.link_work();
+    eprintln!("{n} hidden and {n} black words in a link: {work} looked at");
+    // The link's 2n children once, and one step up from each black word.
+    assert!(work <= 3 * n as u64, "{work}");
+    assert_eq!(parts.len(), n);
+    // Not all its link shows: a black word keeps the link's colour.
+    assert_eq!(
+        show(&parts[..1]),
+        ["w|italic link=OEBPS/a.xhtml#x link-colour=(4291559424,4291559424)"]
+    );
+}
