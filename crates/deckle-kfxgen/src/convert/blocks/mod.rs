@@ -16,7 +16,8 @@
 //! with what any box takes part in: its margins, the space inside it and what leaves it, its
 //! blocks' anchor keys and the ids at the file's end; rules (Task 14, `rules.rs`), with the
 //! border reading boxes share; boxes (Task 15, `boxes.rs`): bordered, filled, sized and
-//! turned containers.
+//! turned containers; native tables (Task 16, `tables.rs`), a cell of several blocks walked as
+//! the body is.
 //! Each branch a later task ports stops the file with [`Error::Unsupported`] naming that task
 //! (`walk.rs`), so a book that needs one cannot be converted by accident.
 

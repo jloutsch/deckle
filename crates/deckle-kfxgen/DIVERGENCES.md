@@ -769,3 +769,21 @@ kfxgen's boxes (`src/convert/blocks/boxes.rs`, at ad38ec8):
   entry naming a block past the first) leaves them for each such container round it to look at
   again, so a file is refused where kfxgen makes the book only past 500,000 such looks (with the
   file's other charges).
+
+## Tables
+
+kfxgen's native tables (`src/convert/blocks/tables.rs`, at ad38ec8):
+
+- A table holding an `<epub:switch>` anywhere in it stops the file (`Error::Unsupported`,
+  "tables holding an epub:switch") when native tables are on. kfxgen's `_shown_tree` deep-copies
+  such a table (or cell) to drop the switch's cases, then asks the style resolver whether each
+  row, cell and caption of the copy is hidden, and `_is_nav_listing` whether it is a contents
+  listing; calibre never styled the copies, and the copy's root has no `data-kfxgen-source`, so
+  what kfxgen decides there is not known here. Smallest input: `<table><tr><td><epub:switch>
+  <epub:case required-namespace="…">…</epub:case><epub:default>x</epub:default></epub:switch>
+  </td></tr></table>`; kfxgen writes a native table (or rows, if its copy reads as hidden).
+- A `<col span="N">` repeats its width N times (up to 1,000) in the model's column widths. Each
+  repeat is charged to the file's style text budget before it is made, so a table whose `<col>`
+  spans add up to about a million widths stops the file (`Error::Book`, "the CSS of this book
+  file gives its elements more than 500000 declarations"): 2,000 `<col span="1000">` are refused
+  after about 1,000 of them. kfxgen writes the two million widths.
