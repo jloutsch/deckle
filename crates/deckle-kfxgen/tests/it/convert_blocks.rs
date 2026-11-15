@@ -8,8 +8,9 @@ use std::time::{Duration, Instant};
 use deckle_kfx::fixtures;
 use deckle_kfxgen::book::read_book;
 use deckle_kfxgen::convert::{
-    BeforeSpacing, Block, Error, ExtractOptions, FileBlocks, ItemError, Resolver, Serials,
-    TextBudget, Walk, blocks_before_spacing, extract_blocks,
+    BeforeSpacing, Block, CalibreOpf, ConvertOptions, Error, ExtractOptions, FileBlocks,
+    HORIZONTAL_PT, ItemError, Resolver, Serials, TextBudget, VERTICAL_PT, Walk,
+    blocks_before_spacing, book_args, extract_blocks, page_width,
 };
 use deckle_kfxgen::css::DEFAULT_PROFILE;
 use deckle_kfxgen::pyvalue::PyValue;
@@ -24,19 +25,29 @@ const FIXTURES: &[&str] = &[
     "block_edges",
     "block_picture_769",
     "block_picture_770",
+    "boxes",
     "chapter_starts_773",
     "chapter_starts_777",
+    "colour",
     "comments_in_tree",
+    "dark_boxes",
+    "drop_caps",
     "fake_margins",
+    "figures",
+    "floats",
+    "floats_697",
     "fonts",
     "fonts_woff",
+    "frames",
     "link_colours",
     "link_greys",
     "listing_rerun",
     "lists",
     "lists_768",
     "lists_771",
+    "lists_horizontal_items_764",
     "malformed",
+    "marks",
     "navigation",
     "no_toc",
     "notes",
@@ -49,8 +60,12 @@ const FIXTURES: &[&str] = &[
     "ruby_tcy",
     "rules_spaces",
     "text_edges",
+    "turned_words_765",
+    "typography",
     "vertical",
     "vertical_contents",
+    "vertical_in_horizontal_763",
+    "vertical_pictures_761",
 ];
 
 /// The sources recorded on a second pass (with `keep_nav_listings`): both passes are compared.
@@ -134,7 +149,8 @@ fn string_set(v: Option<&PyValue>) -> HashSet<String> {
 /// For each source in [`FIXTURES`] and each of its passes, every spine file's walk gives the
 /// blocks kfxgen handed its file's `_space_between` (D2a, the last call not inside another),
 /// with the margins and paddings noted beside them, and the whole extraction gives the dumped
-/// blocks and out-lists. The serials run on across the book and its passes, one
+/// blocks and out-lists, at the page width kfxgen gives the book. The serials run on across
+/// the book and its passes, one
 /// count for each of the two runs. Every spine file must have a dump holding a record for each
 /// of the source's passes, and none other, so no file is skipped without a failure.
 #[test]
@@ -143,6 +159,13 @@ fn blocks_match_the_dump() {
     for name in FIXTURES {
         let book = read_book(&fixtures::kfxgen(&format!("sources/{name}.epub")))
             .unwrap_or_else(|e| panic!("{name}: {e}"));
+        // kfxgen extracts a vertical book's chapters with percentages measured against a
+        // 480pt page, any other's against 384pt.
+        let opf = CalibreOpf::new(&book).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        let vertical = book_args(&book, &opf, &ConvertOptions::default())
+            .iter()
+            .any(|(k, v)| k == "writing_mode" && v.as_str() == Some("vertical-rl"));
+        let _page = page_width(if vertical { VERTICAL_PT } else { HORIZONTAL_PT });
         let listed: BTreeMap<String, String> = serde_json::from_slice(
             &std::fs::read(fixtures::kfxgen(&format!("convert/{name}/files.json"))).unwrap(),
         )
@@ -619,9 +642,9 @@ fn spacers_between_paragraphs_are_spaced_in_linear_time() {
 }
 
 /// Where kfxgen raises inside the walk (it leaves the spine item out), the port gives
-/// `ItemError::Raised` with Python's exception: a box tag's width in `in` spelt with U+0131
-/// (`_box_width` → `parse_css_length`), and a paragraph's `text-align` that calibre reads as
-/// a length (`compute_block_style`).
+/// `ItemError::Raised` with Python's exception: a box tag's width or side margin in `in`
+/// spelt with U+0131 (`_box_width`, `_make_box` → `parse_css_length`), a paragraph's
+/// `text-align` that calibre reads as a length (`compute_block_style`), and the rows below.
 #[test]
 fn what_kfxgen_raises_on_in_the_walk_is_raised() {
     for (body, css, exception) in [
@@ -634,6 +657,12 @@ fn what_kfxgen_raises_on_in_the_walk_is_raised() {
             "<p class=\"a\">x</p>",
             ".a { text-align: 5px }",
             "AttributeError",
+        ),
+        // `_make_box` → `parse_css_length`: a box's own side margin.
+        (
+            "<div class=\"b\"><p>x</p></div>",
+            ".b { border: 1px solid; margin-left: 2\u{131}n }",
+            "KeyError",
         ),
         // `_carry_container_margins` → `parse_css_length`.
         (
@@ -1106,4 +1135,419 @@ fn rules_in_a_row_take_linear_time() {
     assert_eq!(got.blocks.len(), 3);
     let ids = got.blocks[2].get("anchor_ids").unwrap();
     assert_eq!(ids.as_list().map(<[PyValue]>::len), Some(4));
+}
+
+/// The walk of `body` styled by `css`, before spacing, with the margins noted beside its
+/// blocks, `toc` the ids contents entries name.
+fn walked_with(body: &str, css: &str, toc: &[&str]) -> BeforeSpacing {
+    let file = page(body, css);
+    let budget = TextBudget::new();
+    let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+    let mut serials = Serials::default();
+    let toc: HashSet<String> = toc.iter().map(|t| (*t).to_owned()).collect();
+    let none = HashSet::new();
+    let opts = ExtractOptions {
+        native_tables: true,
+        toc_targets: &toc,
+        link_targets: &none,
+        keep_nav_listings: false,
+    };
+    blocks_before_spacing(&mut Walk::new(&file, &resolver, &mut serials), &opts).unwrap()
+}
+
+/// `repr` of a value the model holds, for the box values below.
+fn show(v: Option<&PyValue>) -> String {
+    match v {
+        None => "absent".into(),
+        Some(PyValue::None) => "None".into(),
+        Some(PyValue::Bool(b)) => if *b { "True" } else { "False" }.into(),
+        Some(PyValue::Float(f)) => format!("{f:?}"),
+        Some(PyValue::Str(s)) => format!("'{s}'"),
+        Some(PyValue::Tuple(items)) => {
+            let inner: Vec<String> = items.iter().map(|i| show(Some(i))).collect();
+            format!("({})", inner.join(", "))
+        }
+        Some(PyValue::Dict(pairs)) => {
+            let inner: Vec<String> = pairs
+                .iter()
+                .map(|(k, v)| format!("{}: {}", show(Some(k)), show(Some(v))))
+                .collect();
+            format!("{{{}}}", inner.join(", "))
+        }
+        Some(other) => format!("{other:?}"),
+    }
+}
+
+/// A box block's kids, as the model holds them.
+fn kids(b: &Block) -> Vec<PyValue> {
+    match b.to_py().get("blocks") {
+        Some(PyValue::List(kids)) => kids.clone(),
+        other => panic!("not a box: {other:?}"),
+    }
+}
+
+/// What no dump holds, each value read from the pinned `_make_box`, `_note_box_margins`,
+/// `_note_padding`, `_note_margins`, `_carry_container_margins` and `_space_between` for the
+/// style the port resolves (not run: they are closures of `extract_blocks_from_html`, which
+/// needs Calibre's resolver). The trailing space 1.9125 is the pinned `_space_between`'s on
+/// a rule and a spacer, as in `rules_no_dump_holds_are_written_as_kfxgen_writes_them`.
+#[test]
+fn boxes_no_dump_holds_are_made_as_kfxgen_makes_them() {
+    let bx = |b: &Block, key: &str| show(b.get("box").and_then(|d| d.get(key)));
+    let keys = |b: &Block| match b.to_py() {
+        PyValue::Dict(pairs) => pairs
+            .iter()
+            .map(|(k, _)| k.as_str().unwrap().to_owned())
+            .collect::<Vec<_>>(),
+        _ => unreachable!(),
+    };
+
+    // A clear set on the container's first block moves to the box, after `break_before`.
+    let got = walked_with(
+        "<div class=\"b\"><p class=\"c\">x</p></div>",
+        ".b { border: 1px solid } .c { clear: left }",
+        &[],
+    );
+    let b = &got.blocks[0];
+    assert_eq!(keys(b)[..4], ["type", "break_before", "clear", "text"]);
+    assert_eq!(show(b.get("clear")), "'left'");
+    assert_eq!(show(kids(b)[0].get("clear")), "absent");
+
+    // A contents entry naming a block past the first keeps the blocks flat; one naming the
+    // first does not.
+    let body = "<div class=\"b\"><p id=\"f\">x</p><p id=\"t\">y</p></div>";
+    let css = ".b { border: 1px solid }";
+    assert_eq!(walked_with(body, css, &["t"]).blocks.len(), 2);
+    assert_eq!(walked_with(body, css, &["f"]).blocks.len(), 1);
+
+    // A leaf box: the paragraph's side margins and its `set_here` go to the box.
+    let got = walked_with(
+        "<p class=\"b\" dir=\"rtl\">x</p>",
+        ".b { border: 1px solid; margin-left: 2em }",
+        &[],
+    );
+    let b = &got.blocks[0];
+    assert_eq!(bx(b, "margin_left"), "6.25");
+    assert_eq!(bx(b, "margin_right"), "None");
+    let kid = &kids(b)[0];
+    let style = kid.get("block_style");
+    assert_eq!(show(style.and_then(|s| s.get("margin_left"))), "None");
+    assert_eq!(show(style.and_then(|s| s.get("margin_right"))), "None");
+    let bidi = style.and_then(|s| s.get("bidi"));
+    assert_eq!(show(bidi.and_then(|d| d.get("direction"))), "'rtl'");
+    assert_eq!(show(bidi.and_then(|d| d.get("set_here"))), "absent");
+    assert_eq!(
+        show(
+            b.get("box")
+                .and_then(|d| d.get("bidi"))
+                .and_then(|d| d.get("set_here"))
+        ),
+        "('direction', 'unicode_bidi')"
+    );
+
+    // A padding in % stays one, and stops the margin inside from meeting the box's on that
+    // side.
+    let got = walked_with(
+        "<div class=\"b\"><p>x</p></div>",
+        ".b { border-left: 1px solid; padding: 5% 0 0 0; margin: 1em 0 }",
+        &[],
+    );
+    let b = &got.blocks[0];
+    assert_eq!(
+        bx(b, "padding"),
+        "{'top': ('%', 5.0), 'right': 0.0, 'bottom': 0.0, 'left': 0.0}"
+    );
+    // The paragraph's margin-bottom (calibre's 1em) met the box's; its top one did not.
+    assert_eq!(got.margins.get(&b.id()), Some(&[1.0, 1.0]));
+    assert_eq!(got.margins.len(), 2);
+    assert!(
+        got.margins.values().any(|m| *m == [1.0, 0.0]),
+        "{:?}",
+        got.margins
+    );
+
+    // A vertical box: the margins of the blocks inside meet its own right (`start`) and left
+    // (`end`), not its top and bottom.
+    let got = walked_with(
+        "<div data-kfxgen-vertical=\"1\" class=\"v\"><p class=\"m\">x</p></div>",
+        ".v { margin-left: 3em; margin-right: 0.5em } .m { margin: 1em 0 2em }",
+        &[],
+    );
+    let b = &got.blocks[0];
+    assert_eq!(
+        (bx(b, "vertical"), bx(b, "start"), bx(b, "end")),
+        ("True".into(), "1.0".into(), "3.0".into())
+    );
+    assert_eq!(
+        (bx(b, "margin_left"), bx(b, "margin_right")),
+        ("None".into(), "None".into())
+    );
+    assert_eq!(got.margins.get(&b.id()), Some(&[0.0, 0.0]));
+    assert_eq!(
+        got.margins.values().filter(|m| **m == [0.0, 0.0]).count(),
+        got.margins.len()
+    );
+
+    // A spacer after the last block meets its margin-bottom first: it stays the block's.
+    let got = walked_with(
+        "<div class=\"b\"><p class=\"m\">x</p><p>\u{a0}</p></div>",
+        ".b { background-color: #eee } .m { margin-bottom: 2em }",
+        &[],
+    );
+    let b = &got.blocks[0];
+    assert_eq!(got.margins.get(&b.id()), Some(&[1.0, 0.0]));
+    assert!(
+        got.margins.values().any(|m| *m == [0.0, 2.0]),
+        "{:?}",
+        got.margins
+    );
+
+    // A horizontal block in two padded wrappers: the second padding is added to the first.
+    let got = walked_with(
+        "<div class=\"o\"><div class=\"i\"><div data-kfxgen-horizontal=\"1\">x</div></div></div>",
+        ".i { padding-top: 1em } .o { padding-top: 2em }",
+        &[],
+    );
+    let b = &got.blocks[0];
+    assert_eq!(
+        (
+            bx(b, "before_inner"),
+            bx(b, "before_fixed"),
+            bx(b, "before")
+        ),
+        ("0.0".into(), "3.0".into(), "0.0".into())
+    );
+    // And in two wrappers with margins: they meet.
+    let got = walked_with(
+        "<div class=\"o\"><div class=\"i\"><div data-kfxgen-horizontal=\"1\">x</div></div></div>",
+        ".i { margin-top: 1em } .o { margin-top: 2em }",
+        &[],
+    );
+    assert_eq!(bx(&got.blocks[0], "before"), "2.0");
+
+    // A margined container round a box adds its side margins to the box's.
+    let got = walked_with(
+        "<div class=\"m\"><div class=\"b\">x</div></div>",
+        ".m { margin-left: 2em; margin-right: 10% } .b { border: 1px solid; margin-left: 1em }",
+        &[],
+    );
+    let b = &got.blocks[0];
+    assert_eq!(
+        (bx(b, "margin_left"), bx(b, "margin_right")),
+        ("9.375".into(), "10.0".into())
+    );
+
+    // A bordered container of nothing but a spacer is no box.
+    let got = walked_with(
+        "<div class=\"b\"><p>\u{a0}</p></div>",
+        ".b { border: 1px solid }",
+        &[],
+    );
+    assert_eq!(got.blocks.len(), 1);
+    assert_eq!(show(got.blocks[0].get("type")), "'space'");
+
+    // Spacers after a rule that ends a bordered box: in its padding, below the rule.
+    let got = extract(&page(
+        "<div class=\"b\"><p>x</p><hr/><p>\u{a0}</p></div>",
+        ".b { border: 1px solid }",
+    ))
+    .unwrap();
+    let b = &got.blocks[0];
+    assert_eq!(
+        bx(b, "padding"),
+        "{'top': 0.0, 'right': 0.0, 'bottom': 1.9125, 'left': 0.0}"
+    );
+    assert_eq!(show(kids(b)[1].get("trailing_space")), "absent");
+    // In a vertical box with no edge: after it, along its axis, meeting what its last
+    // paragraph's margin left there.
+    let got = extract(&page(
+        "<div data-kfxgen-vertical=\"1\"><p>x</p><hr/><p>\u{a0}</p></div>",
+        "",
+    ))
+    .unwrap();
+    let b = &got.blocks[0];
+    assert_eq!(
+        (bx(b, "start"), bx(b, "end")),
+        ("1.0".into(), "1.9125".into())
+    );
+}
+
+/// `deep` bordered `<div>`s nested in the body, a paragraph at the bottom: a box in a box at
+/// every level.
+fn nested_boxes(deep: usize) -> deckle_kfxgen::book::File {
+    let (mut dom, body) = empty_page();
+    let mut n = body;
+    for _ in 0..deep {
+        n = dom.append_child(n, "div");
+    }
+    let p = dom.append_child(n, "p");
+    dom.set_text(p, "x");
+    file_of(dom, "div { border: 1px solid; margin: 1em 0 }")
+}
+
+/// Bordered boxes as deep as `read_book` lets a tree be: made, spaced and keyed with no
+/// recursion, on a test thread's stack. (kfxgen itself raises `RecursionError` at about 249
+/// nested divs: DIVERGENCES, "The block walk".)
+#[test]
+fn bordered_boxes_as_deep_as_a_book_may_nest_are_walked() {
+    let deep = deckle_limits::MAX_DEPTH - 2;
+    let got = extract(&nested_boxes(deep)).unwrap();
+    assert_eq!(got.blocks.len(), 1);
+    assert_eq!(got.blocks[0].get("type"), Some(&PyValue::Str("box".into())));
+    assert_eq!(innermost_text(&got.blocks), "x");
+    let mut levels = 0;
+    let mut b = got.blocks[0].to_py();
+    while let Some(PyValue::List(kids)) = b.get("blocks") {
+        levels += 1;
+        b = kids[0].clone();
+    }
+    assert_eq!(levels, deep);
+}
+
+/// Bordered boxes nested one level past that, and 20,000 levels in a `File` built by hand:
+/// the block walk refuses them by name before any box is made (each is made at its element's
+/// end), within the time limit.
+#[test]
+fn bordered_boxes_nested_past_the_limit_are_refused_not_overflowed() {
+    for deep in [deckle_limits::MAX_DEPTH, 20_000] {
+        let file = nested_boxes(deep);
+        let start = Instant::now();
+        let got = extract(&file);
+        let took = start.elapsed();
+        match &got {
+            Err(ItemError::Error(Error::TooLarge { what })) => assert!(
+                what.ends_with("levels below the body"),
+                "not the block walk's: {what}"
+            ),
+            other => panic!("{deep}: {:?}", other.as_ref().map(|b| b.blocks.len())),
+        }
+        assert!(took < COST_LIMIT, "{deep}: {took:?}");
+    }
+}
+
+/// `levels` of a `<div class="m">` holding a `<div class="b">`, the innermost holding `n`
+/// paragraphs, each with an id.
+fn boxes_in_divs(levels: usize, n: usize, css: &str) -> deckle_kfxgen::book::File {
+    let (mut dom, body) = empty_page();
+    let mut at = body;
+    for _ in 0..levels {
+        at = dom.append_child(at, "div");
+        dom.set_attr(at, "class", Some("m"));
+        at = dom.append_child(at, "div");
+        dom.set_attr(at, "class", Some("b"));
+    }
+    for i in 0..n {
+        let p = dom.append_child(at, "p");
+        dom.set_attr(p, "id", Some(&format!("p{i}")));
+        dom.set_text(p, "item");
+    }
+    file_of(dom, css)
+}
+
+/// A finished box is one block: a margined container round it carries its side margins onto
+/// the box, one step, not onto each paragraph again, and the next box round it looks at one
+/// kid. Each box copies its kids' texts and ids into its own, as kfxgen's model holds them,
+/// each copy charged: twice the depth costs about twice as much, not four times. 127 levels
+/// of `<div class="m"><div class="b">` are as deep as the walk goes.
+#[test]
+fn nested_boxes_in_margined_containers_are_worked_once() {
+    let levels = (deckle_limits::MAX_DEPTH - 2) / 2;
+    let boxed = ".b { border: 1px solid }";
+    let margined = ".b { border: 1px solid } .m { margin: 1px 2px 3px 4px }";
+    let n = 1_000;
+    let (plain, _, _) = cost_of(&boxes_in_divs(levels, n, boxed));
+    let (deep, bytes, took) = cost_of(&boxes_in_divs(levels, n, margined));
+    eprintln!(
+        "{n} paragraphs in {levels} boxes in margined divs: {deep} units ({plain} unmargined), \
+         {bytes} bytes, {took:?}"
+    );
+    assert!(
+        deep - plain <= 2 * levels,
+        "{plain} units unmargined, {deep} margined"
+    );
+    let (half, half_bytes, half_took) = cost_of(&boxes_in_divs(levels / 2, n, margined));
+    eprintln!(
+        "in {}: {half} units, {half_bytes} bytes, {half_took:?}",
+        levels / 2
+    );
+    assert!(
+        deep < 3 * half,
+        "{half} units, then {deep} on twice the depth"
+    );
+    assert!(bytes < 3 * half_bytes, "{half_bytes} bytes, then {bytes}");
+}
+
+/// One long paragraph in 250 nested `<div>`s, each with a width or none.
+fn long_paragraph_in_sized_divs(sized: bool) -> deckle_kfxgen::book::File {
+    let (mut dom, body) = empty_page();
+    let mut at = body;
+    for _ in 0..250 {
+        at = dom.append_child(at, "div");
+    }
+    let p = dom.append_child(at, "p");
+    dom.set_text(p, &"word ".repeat(2 << 20));
+    file_of(
+        dom,
+        if sized {
+            "div { width: 50% }"
+        } else {
+            "div { }"
+        },
+    )
+}
+
+/// kfxgen looks for a picture in the whole text of every block a sized `<div>` made
+/// (`_IMG_TOKEN_RE.search` in `_make_box`). With none there is no box, so the paragraph is
+/// looked at again by each sized div round it; what is in its text is read once here: a
+/// 10 MB paragraph under 250 sized divs costs about what it costs under 250 plain ones.
+#[test]
+fn a_long_paragraph_in_nested_sized_divs_is_read_once() {
+    let time = |sized: bool| {
+        let file = long_paragraph_in_sized_divs(sized);
+        let start = Instant::now();
+        let got = extract(&file);
+        let took = start.elapsed();
+        assert_eq!(got.unwrap().blocks.len(), 1);
+        took
+    };
+    let (plain, sized) = (time(false), time(true));
+    eprintln!("10 MB paragraph in 250 divs: {plain:?} without a width, {sized:?} with");
+    assert!(
+        sized < 2 * plain + Duration::from_millis(200),
+        "{plain:?} without a width, {sized:?} with"
+    );
+}
+
+/// Widths, paddings, margins, borders and font sizes past what a float holds, negative, NaN
+/// or over 100%, on bordered, sized and turned boxes: each page is walked and spaced without a
+/// panic (kfxgen's answer for each is the dump-tested arithmetic on the same values).
+#[test]
+fn odd_box_values_do_not_panic() {
+    let huge = "9".repeat(400);
+    let values = [
+        format!("width: {huge}%"),
+        format!("width: {huge}px"),
+        "width: -5%".to_owned(),
+        "width: 250%".to_owned(),
+        "width: 0.0000000000000000000000000000001px".to_owned(),
+        format!("padding: {huge}px {huge}em {huge}% 0"),
+        format!("margin: {huge}em {huge}% -{huge}px {huge}%"),
+        format!("margin-left: {huge}%; margin-right: -{huge}%"),
+        format!("border: {huge}px solid red"),
+        "border: 1px solid rgb(300, -1, 2)".to_owned(),
+        format!("font-size: {huge}px; padding: 1em; margin: 1em"),
+        "font-size: 0.0001px; padding: 1em; margin: 1em".to_owned(),
+        "float: left; width: 50%; margin: auto".to_owned(),
+    ];
+    for v in &values {
+        for body in [
+            "<div class=\"b\"><p>x</p><img src=\"a.png\"/></div>",
+            "<p class=\"b\">x</p>",
+            "<div class=\"m\"><div class=\"b\" data-kfxgen-vertical=\"1\"><p>x</p></div></div>",
+            "<div class=\"m\"><div class=\"b\" data-kfxgen-horizontal=\"1\">x</div></div>",
+        ] {
+            let css = format!(".b {{ border: 1px solid; {v} }} .m {{ {v} }}");
+            let _ = extract(&page(body, &css));
+        }
+    }
 }

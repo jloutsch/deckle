@@ -24,6 +24,8 @@ mod pictures;
 mod quotes;
 mod resolver;
 
+/// The page width kfxgen's `convert` sets round the extraction, for the dump tests.
+pub use crate::generate::page_scale::{HORIZONTAL_PT, PageWidth, VERTICAL_PT, page_width};
 pub use args::book_args;
 pub use block_style::{StyleError, compute_block_style};
 pub use blocks::{
