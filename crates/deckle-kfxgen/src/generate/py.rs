@@ -385,12 +385,29 @@ fn is_number_space(c: char) -> bool {
 /// more raise). None where Python raises `ValueError`. Python's int has no bound; past an
 /// i64 this gives `i64::MAX` or `i64::MIN`. Linear in `s`.
 pub(crate) fn py_int(s: &str) -> Option<i64> {
+    py_int_wide(s).map(|v| match v {
+        Ok(v) => i64::try_from(v).unwrap_or(if v < 0 { i64::MIN } else { i64::MAX }),
+        Err(Past::Below) => i64::MIN,
+        Err(Past::Above) => i64::MAX,
+    })
+}
+
+/// Which side of an i128 a Python int lies past.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Past {
+    Below,
+    Above,
+}
+
+/// `int(s)` as [`py_int`] reads it, exact within an i128; past one, which side. None where
+/// Python raises `ValueError`. Linear in `s`.
+pub(crate) fn py_int_wide(s: &str) -> Option<Result<i128, Past>> {
     let s = s.trim_matches(is_number_space);
     let (negative, digits) = match s.strip_prefix('-') {
         Some(rest) => (true, rest),
         None => (false, s.strip_prefix('+').unwrap_or(s)),
     };
-    let mut value: i64 = 0;
+    let mut value: Option<i128> = Some(0);
     let mut count = 0usize;
     let mut after_digit = false;
     for c in digits.chars() {
@@ -402,14 +419,15 @@ pub(crate) fn py_int(s: &str) -> Option<i64> {
             after_digit = false;
             continue;
         }
-        let d = i64::from(digit_value(c)?);
+        let d = i128::from(digit_value(c)?);
         count += 1;
         after_digit = true;
         value = value
-            .saturating_mul(10)
-            .saturating_add(if negative { -d } else { d });
+            .and_then(|v| v.checked_mul(10))
+            .and_then(|v| v.checked_add(if negative { -d } else { d }));
     }
-    (after_digit && count <= 4300).then_some(value)
+    let past = if negative { Past::Below } else { Past::Above };
+    (after_digit && count <= 4300).then_some(value.ok_or(past))
 }
 
 /// `float(s)`: white space around (not U+001C to U+001F), decimal digits of any script, single

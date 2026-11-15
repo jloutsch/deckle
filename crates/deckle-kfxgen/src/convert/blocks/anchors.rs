@@ -14,6 +14,7 @@ use super::{Block, Field, FileBlocks, dedupe, dict_set, strs};
 use crate::convert::ItemError;
 use crate::convert::href::key_doc;
 use crate::convert::inline::Walk;
+use crate::convert::inline_style::Raised;
 use crate::generate::py;
 use crate::pyvalue::PyValue;
 
@@ -57,7 +58,16 @@ pub(super) fn finish(w: &mut Walk, walked: Walked) -> Result<FileBlocks, ItemErr
         let mut ids = strings(last.get("anchor_ids"));
         ids.extend(pending_ids.iter().cloned());
         last.set("anchor_ids", strs(&dedupe(ids)));
-        // A table's last row and a box's last kid take them too: Tasks 15 and 16.
+        // A table's last row takes them too: Task 16.
+        if last.kind() == Some("box") {
+            // Its last paragraph, not the box (#238).
+            let Some(kid) = last.blocks_mut().and_then(|kids| kids.last_mut()) else {
+                return Err(EMPTY_BOX.into());
+            };
+            let mut ids = strings(kid.get("anchor_ids"));
+            ids.extend(pending_ids.iter().cloned());
+            kid.set("anchor_ids", strs(&dedupe(ids)));
+        }
     }
     let resolver = w.resolver();
     let charge = |bytes: usize| -> Result<(), ItemError> { Ok(resolver.charge(bytes)?) };
@@ -105,6 +115,13 @@ pub(super) fn finish(w: &mut Walk, walked: Walked) -> Result<FileBlocks, ItemErr
     })
 }
 
+/// `last_block["blocks"][-1]` of a box holding no block.
+const EMPTY_BOX: Raised = Raised {
+    exception: "IndexError",
+    note: "extract_blocks_from_html: ids left at the file's end, its last block a box of no \
+           blocks",
+};
+
 /// A list of strings' values.
 fn strings(v: Option<&PyValue>) -> Vec<String> {
     v.and_then(PyValue::as_list)
@@ -116,14 +133,16 @@ fn strings(v: Option<&PyValue>) -> Vec<String> {
 
 /// `_attach_anchor_keys(blocks, base_href)`: each block's ids as `"<file>#<id>"`, its
 /// offsets re-keyed the same way, and the file's own key first on its first block. A box's
-/// blocks and a table's parts are Tasks 15 and 16.
+/// blocks are keyed too, however deep (kfxgen calls `key_block` on each; here a stack). A
+/// table's parts are Task 16's.
 fn attach_anchor_keys(
     blocks: &mut [Block],
     base_href: &str,
     charge: &dyn Fn(usize) -> Result<(), ItemError>,
 ) -> Result<(), ItemError> {
     let normalized = key_doc(base_href, "");
-    for block in blocks.iter_mut() {
+    let mut stack: Vec<&mut Block> = blocks.iter_mut().rev().collect();
+    while let Some(block) = stack.pop() {
         let ids = strings(block.get("anchor_ids"));
         let by_id: HashMap<String, PyValue> = match block.get("anchor_offsets") {
             Some(PyValue::Dict(pairs)) => pairs
@@ -150,6 +169,13 @@ fn attach_anchor_keys(
         };
         block.set("anchor_keys", PyValue::List(keys));
         block.set("anchor_offsets", PyValue::Dict(offsets));
+        if block.kind() == Some("box")
+            && let Some(kids) = block.blocks_mut()
+        {
+            // Its blocks are the link targets; the box carries their ids for the chapter
+            // split (#238, #310).
+            stack.extend(kids.iter_mut().rev());
+        }
     }
     // A link to the whole file lands on its first block (#62).
     if !normalized.is_empty()

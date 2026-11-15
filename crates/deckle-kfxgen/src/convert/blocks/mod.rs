@@ -12,11 +12,14 @@
 //! non-rendered elements, `<epub:switch>`, the contents-listing discard, `<img>` blocks,
 //! direction and language, page breaks, `clear`, front matter, trailing ids and anchor keys
 //! (Task 11); margins, padding, carried side margins, spacers and the space between blocks
-//! (Task 12, `spacing.rs`).
+//! (Task 12, `spacing.rs`); lists, typed markers and native list boxes (Task 13, `lists.rs`),
+//! with what any box takes part in: its margins, the space inside it and what leaves it, its
+//! blocks' anchor keys and the ids at the file's end.
 //! Each branch a later task ports stops the file with [`Error::Unsupported`] naming that task
 //! (`walk.rs`), so a book that needs one cannot be converted by accident.
 
 mod anchors;
+mod lists;
 mod spacing;
 mod walk;
 
@@ -63,6 +66,43 @@ impl Block {
             Field::Py(p) if *k == key => Some(p),
             _ => None,
         })
+    }
+
+    /// The blocks a box holds, under `blocks`.
+    fn blocks(&self) -> Option<&[Block]> {
+        self.fields.iter().find_map(|(k, v)| match v {
+            Field::Blocks(b) if *k == "blocks" => Some(b.as_slice()),
+            _ => None,
+        })
+    }
+
+    fn blocks_mut(&mut self) -> Option<&mut Vec<Block>> {
+        self.fields.iter_mut().find_map(|(k, v)| match v {
+            Field::Blocks(b) if *k == "blocks" => Some(b),
+            _ => None,
+        })
+    }
+
+    /// A box's blocks taken out to be worked on; [`Block::put_blocks`] puts them back.
+    fn take_blocks(&mut self) -> Vec<Block> {
+        self.blocks_mut().map(std::mem::take).unwrap_or_default()
+    }
+
+    /// `block["blocks"] = blocks`, in place.
+    fn put_blocks(&mut self, blocks: Vec<Block>) {
+        match self.blocks_mut() {
+            Some(b) => *b = blocks,
+            None => self.fields.push(("blocks", Field::Blocks(blocks))),
+        }
+    }
+
+    /// `block.pop(key, None)`.
+    fn remove(&mut self, key: &str) -> Option<PyValue> {
+        let at = self.fields.iter().position(|(k, _)| *k == key)?;
+        match self.fields.remove(at).1 {
+            Field::Py(p) => Some(p),
+            Field::Blocks(b) => Some(PyValue::List(b.iter().map(Block::to_py).collect())),
+        }
     }
 
     pub fn contains(&self, key: &str) -> bool {

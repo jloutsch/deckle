@@ -11,9 +11,10 @@
 //! Float arithmetic follows the Python operation for operation, in its order; `max` and `min`
 //! keep the first of equal arguments, as Python's do ([`py_max`], [`py_min`]).
 //!
-//! What a box changes (the box part of `_space_between`, a box's side margins, a horizontal
-//! box's sides) is Task 15's: each stops the file with "boxes (Task 15)". No box reaches here
-//! yet: the walk refuses one first.
+//! A box (a native list's, Task 13) is spaced as kfxgen spaces any: `_note_box_margins`, its
+//! side margins in `_carry_container_margins`, and the box part of `_space_between` (its
+//! blocks spaced inside it, what leaves it). A box drawn vertical, or horizontal in vertical
+//! text, is Task 15's: each such branch stops the file with "boxes (Task 15)".
 
 use std::collections::HashMap;
 
@@ -199,7 +200,7 @@ fn match_length(value: &str, signed: bool) -> Option<(&str, Option<&'static str>
 
 /// A padding or margin read by `_padding_em`: ems, or `("%", n)`.
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum Pad {
+pub(super) enum Pad {
     Em(f64),
     Pct(f64),
 }
@@ -207,7 +208,7 @@ enum Pad {
 /// `_padding_em(value, ratio)`: a padding in the 16px root's ems (an em the element's own,
 /// `ratio` its font size against 16px), a percentage, or None when unreadable. Raises where
 /// `float()` does.
-fn padding_em(value: &str, ratio: f64) -> Result<Option<Pad>, Raised> {
+pub(super) fn padding_em(value: &str, ratio: f64) -> Result<Option<Pad>, Raised> {
     let Some((number, unit)) = match_length(value, false) else {
         return Ok(None);
     };
@@ -228,7 +229,7 @@ fn padding_em(value: &str, ratio: f64) -> Result<Option<Pad>, Raised> {
 }
 
 /// `_font_ratio(css)`: the element's font size against the 16px root, 1.0 without one.
-fn font_ratio(css: Option<&Resolved>) -> f64 {
+pub(super) fn font_ratio(css: Option<&Resolved>) -> f64 {
     match css.and_then(Resolved::font_size) {
         Some(px) => number(Some(px)) / 16.0,
         None => 1.0,
@@ -421,7 +422,7 @@ fn set_added(style: &mut Vec<(PyValue, PyValue)>, key: &str, own: PyValue, added
 }
 
 /// `_has_real_text(text)`: words once the picture tokens are taken out.
-fn has_real_text(text: &str) -> bool {
+pub(super) fn has_real_text(text: &str) -> bool {
     has_words(&IMG_TOKEN.replace_all(text, ""))
 }
 
@@ -650,7 +651,33 @@ impl Walker<'_, '_, '_, '_> {
             // many blocks are refused after bounded work.
             self.resolver.charge(TEXT_UNIT)?;
             match self.blocks[i].kind() {
-                Some("box") => return Err(self.unsupported_box()),
+                Some("box") if horizontal_box(&self.blocks[i]) => {
+                    return Err(self.unsupported_box());
+                }
+                Some("box") => {
+                    // The box takes them, not its paragraphs: `(x or 0) + share or None`.
+                    let (left, right) = (page_share(&left)?, page_share(&right)?);
+                    if let Some(PyValue::Dict(bx)) = self.blocks[i].get_mut("box") {
+                        for (key, share) in [("margin_left", left), ("margin_right", right)] {
+                            let had = bx
+                                .iter()
+                                .find(|(k, _)| k.as_str() == Some(key))
+                                .map(|(_, v)| v);
+                            let sum = match had {
+                                Some(v) if v.is_truthy() => number(Some(v)) + share,
+                                // `0 + share`: Python's int 0 added to a float.
+                                _ => 0.0 + share,
+                            };
+                            let value = if truthy(sum) {
+                                PyValue::Float(sum)
+                            } else {
+                                PyValue::None
+                            };
+                            dict_set(bx, key, value);
+                        }
+                    }
+                    continue;
+                }
                 Some("table") => continue,
                 _ => {}
             }
@@ -740,6 +767,65 @@ impl Walker<'_, '_, '_, '_> {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// `_note_box_margins(box, css)` for the box at `self.blocks[at]`: its margins, spaced
+    /// as a paragraph's; on a side with no border or padding, the margin of the block inside
+    /// meets the box's and collapses into it. A box drawn vertical (`box.vertical`) is Task
+    /// 15's.
+    pub(super) fn note_box_margins(
+        &mut self,
+        at: usize,
+        css: Option<&Resolved>,
+    ) -> Result<(), ItemError> {
+        let mut top = margin_em(css, "top", 1.0)?;
+        let mut bottom = margin_em(css, "bottom", 1.0)?;
+        // In em or rem, a spacer after it reads it in the box's own size.
+        let in_em = truthy(bottom) && keyword(css, "margin-bottom")?.ends_with("em");
+        let Some(b) = self.blocks.get_mut(at) else {
+            return Ok(());
+        };
+        b.set("bottom_in_em", PyValue::Bool(in_em));
+        b.set("own_bottom_em", PyValue::Bool(!truthy(bottom) || in_em));
+        let b = &self.blocks[at];
+        let bx = b.get("box");
+        let side_of = |key: &str, side: &str| {
+            bx.and_then(|bx| bx.get(key))
+                .and_then(|d| d.get(side))
+                .is_some_and(PyValue::is_truthy)
+        };
+        let edge = |side: &str| side_of("border", side) || side_of("padding", side);
+        let (edge_top, edge_bottom) = (edge("top"), edge("bottom"));
+        if bx
+            .and_then(|bx| bx.get("vertical"))
+            .is_some_and(PyValue::is_truthy)
+        {
+            return Err(unsupported(self.w, "boxes (Task 15)"));
+        }
+        let id = b.id();
+        let kids = b.blocks().unwrap_or(&[]);
+        let counts = |k: &&Block| !matches!(k.kind(), Some("space" | "rule"));
+        let first = kids.iter().find(counts).map(Block::id);
+        let last = kids.iter().rev().find(counts).map(Block::id);
+        // A spacer or rule after the last block meets its margin first.
+        let spaced_end = kids
+            .last()
+            .is_some_and(|k| matches!(k.kind(), Some("space" | "rule")));
+        if let Some(inner) = first.and_then(|k| self.noted.margins.get_mut(&k))
+            && !edge_top
+        {
+            top = collapse(top, inner[0]);
+            inner[0] = 0.0;
+        }
+        if let Some(inner) = last.and_then(|k| self.noted.margins.get_mut(&k))
+            && !edge_bottom
+            && !spaced_end
+        {
+            bottom = collapse(bottom, inner[1]);
+            inner[1] = 0.0;
+        }
+        self.noted.margins.insert(id, [top, bottom]);
         Ok(())
     }
 
@@ -992,12 +1078,51 @@ enum How {
     Margin,
 }
 
+/// One `_space_between` call part-way through its blocks.
+struct Run {
+    blocks: std::vec::IntoIter<Block>,
+    out: Vec<Block>,
+    /// (index in `out`, gap, how): `how` None beside a heading.
+    gaps: Vec<(usize, f64, Option<How>)>,
+    above: f64,
+    lines: f64,
+    fixed: f64,
+    held: f64,
+    on_purpose: bool,
+}
+
+impl Run {
+    fn new(blocks: Vec<Block>) -> Run {
+        Run {
+            out: Vec::with_capacity(blocks.len()),
+            blocks: blocks.into_iter(),
+            gaps: Vec::new(),
+            above: 0.0,
+            lines: 0.0,
+            fixed: 0.0,
+            held: 0.0,
+            on_purpose: false,
+        }
+    }
+}
+
+/// A box whose blocks are being spaced: the run it stands in, and its margin-bottom there.
+struct OpenBox {
+    run: Run,
+    bx: Block,
+    bottom: f64,
+}
+
 /// `_space_between(blocks, margins, measured, paddings)`: `blocks` with the space blocks
 /// taken out and each block's space above and below written (`margin_above`,
 /// `margin_below`, `padding_below`, `trailing_space`), a run of short lines marked `tight`
-/// and a scene break's gap written as `space_above`.
+/// and a scene break's gap written as `space_above`. A box's blocks are spaced the same way,
+/// inside it, and what leaves its last one meets the box's margin-bottom.
 ///
-/// Linear in the blocks: one pass builds the new list, a second marks tight runs, a third
+/// kfxgen calls itself for each box; here each box being spaced is an [`OpenBox`] on a stack,
+/// one per box nested, and boxes nest no deeper than the elements that make them.
+///
+/// Linear in the blocks: one pass builds each new list, a second marks tight runs, a third
 /// writes the breaks; the gaps are counted in a hash map.
 pub(super) fn space_between(
     href: &str,
@@ -1006,118 +1131,238 @@ pub(super) fn space_between(
     measured: bool,
     paddings: &mut HashMap<BlockId, [f64; 4]>,
 ) -> Result<Vec<Block>, ItemError> {
-    let mut out: Vec<Block> = Vec::with_capacity(blocks.len());
-    // (index in `out`, gap, how): `how` None beside a heading.
-    let mut gaps: Vec<(usize, f64, Option<How>)> = Vec::new();
-    let mut above = 0.0;
-    let mut lines = 0.0;
-    let mut fixed = 0.0;
-    let mut held = 0.0;
-    let mut on_purpose = false;
-    for mut b in blocks {
+    let mut open: Vec<OpenBox> = Vec::new();
+    let mut run = Run::new(blocks);
+    loop {
+        let Some(mut b) = run.blocks.next() else {
+            let out = finish_run(run, margins, measured, paddings);
+            let Some(OpenBox {
+                run: outer,
+                mut bx,
+                bottom,
+            }) = open.pop()
+            else {
+                return Ok(out);
+            };
+            run = outer;
+            let bottom = box_tail(href, &mut bx, out, margins, bottom)?;
+            next_block(&mut run, bx, None, bottom, Some("box"), paddings);
+            continue;
+        };
         let kind = b.kind().map(str::to_owned);
         if kind.as_deref() == Some("space") {
             let margin = number(b.get("margin"));
-            if let Some(prev) = out.last()
+            if let Some(prev) = run.out.last()
                 && measured
-                && !on_purpose
+                && !run.on_purpose
                 && let Some(prev_pads) = paddings.get_mut(&prev.id())
                 && truthy(prev_pads[1])
             {
                 // After a padded block the spacer meets the margin outside its padding.
-                held = above + prev_pads[1];
-                above = prev_pads[3];
+                run.held = run.above + prev_pads[1];
+                run.above = prev_pads[3];
                 prev_pads[3] = 0.0;
                 if let Some(ratio) = true_number(prev.get("outer_em_ratio"))
                     && truthy(margin)
                 {
-                    above /= ratio;
+                    run.above /= ratio;
                 }
             }
             if truthy(margin)
-                && !on_purpose
-                && !truthy(held)
-                && let Some(prev) = out.last()
+                && !run.on_purpose
+                && !truthy(run.held)
+                && let Some(prev) = run.out.last()
                 && prev.get("bottom_in_em").is_some_and(PyValue::is_truthy)
                 && prev.get("own_bottom_em").is_some_and(PyValue::is_truthy)
             {
                 // The margin waiting above, in em or rem, read in the block's own size.
-                above /= ems_own(prev);
+                run.above /= ems_own(prev);
             }
             let height = number(b.get("height"));
             if truthy(height) {
-                fixed += collapse(above, margin) + height;
-                above = number(b.get("margin_after"));
+                run.fixed += collapse(run.above, margin) + height;
+                run.above = number(b.get("margin_after"));
             } else {
-                above = py_max(&[above, margin]);
+                run.above = py_max(&[run.above, margin]);
             }
-            lines += number(b.get("line"));
-            on_purpose = true;
+            run.lines += number(b.get("line"));
+            run.on_purpose = true;
             continue;
         }
         let [top, bottom] = margins.get(&b.id()).copied().unwrap_or([0.0; 2]);
         if measured {
-            let up_pads = out
+            let up_pads = run
+                .out
                 .last()
                 .and_then(|p| paddings.get(&p.id()).copied())
                 .unwrap_or([0.0; 4]);
             let own_pads = paddings.get(&b.id()).copied().unwrap_or([0.0; 4]);
             place_margin(
-                out.last_mut(),
+                run.out.last_mut(),
                 &mut b,
                 Placing {
-                    above,
+                    above: run.above,
                     top,
-                    lines,
-                    on_purpose,
-                    fixed: fixed + held,
-                    pad_up: if truthy(held) { 0.0 } else { up_pads[1] },
+                    lines: run.lines,
+                    on_purpose: run.on_purpose,
+                    fixed: run.fixed + run.held,
+                    pad_up: if truthy(run.held) { 0.0 } else { up_pads[1] },
                     pad_own: own_pads[0],
-                    outer_up: if truthy(held) { 0.0 } else { up_pads[3] },
+                    outer_up: if truthy(run.held) { 0.0 } else { up_pads[3] },
                     outer_own: own_pads[2],
                 },
             );
             if kind.as_deref() == Some("box") {
-                // Its blocks spaced inside it, and what leaves it: Task 15.
-                return Err(ItemError::Error(Error::Unsupported {
-                    feature: "boxes (Task 15)",
-                    file: href.to_owned(),
-                }));
+                // Its paragraphs are spaced the same way, inside it (#640).
+                let kids = b.take_blocks();
+                let outer = std::mem::replace(&mut run, Run::new(kids));
+                open.push(OpenBox {
+                    run: outer,
+                    bx: b,
+                    bottom,
+                });
+                continue;
             }
         }
-        if kind.is_none()
-            && let Some(prev) = out.last()
-        {
-            let beside = b.get("heading").is_some_and(PyValue::is_truthy)
-                || prev.get("heading").is_some_and(PyValue::is_truthy);
-            let mut how = if beside {
-                None
-            } else if on_purpose {
-                Some(How::Spacer)
-            } else {
-                Some(How::Margin)
-            };
-            if prev.kind().is_some() && how != Some(How::Spacer) {
-                // After a table, a box or a rule: a margin there is theirs to space.
-                how = None;
-            }
-            let padding = paddings.get(&prev.id()).map_or(0.0, |p| p[1])
-                + paddings.get(&b.id()).map_or(0.0, |p| p[0]);
-            let gap = py::round(collapse(above, top) + fixed + lines + padding, 4);
-            gaps.push((out.len(), gap, how));
-        }
-        // A box's margin-bottom waits for the next block, as a paragraph's.
-        above = if matches!(kind.as_deref(), None | Some("box")) {
-            bottom
-        } else {
-            0.0
-        };
-        lines = 0.0;
-        fixed = 0.0;
-        held = 0.0;
-        on_purpose = false;
-        out.push(b);
+        next_block(&mut run, b, Some(top), bottom, kind.as_deref(), paddings);
     }
+}
+
+/// The rest of `_space_between`'s loop for a block that is not a space: a paragraph's gap
+/// noted (`top` its margin-top), and its margin-bottom (`bottom`) left waiting.
+fn next_block(
+    run: &mut Run,
+    b: Block,
+    top: Option<f64>,
+    bottom: f64,
+    kind: Option<&str>,
+    paddings: &HashMap<BlockId, [f64; 4]>,
+) {
+    if kind.is_none()
+        && let Some(prev) = run.out.last()
+    {
+        let beside = b.get("heading").is_some_and(PyValue::is_truthy)
+            || prev.get("heading").is_some_and(PyValue::is_truthy);
+        let mut how = if beside {
+            None
+        } else if run.on_purpose {
+            Some(How::Spacer)
+        } else {
+            Some(How::Margin)
+        };
+        if prev.kind().is_some() && how != Some(How::Spacer) {
+            // After a table, a box or a rule: a margin there is theirs to space.
+            how = None;
+        }
+        let padding = paddings.get(&prev.id()).map_or(0.0, |p| p[1])
+            + paddings.get(&b.id()).map_or(0.0, |p| p[0]);
+        let gap = py::round(
+            collapse(run.above, top.unwrap_or(0.0)) + run.fixed + run.lines + padding,
+            4,
+        );
+        run.gaps.push((run.out.len(), gap, how));
+    }
+    // A box's margin-bottom waits for the next block, as a paragraph's.
+    run.above = if matches!(kind, None | Some("box")) {
+        bottom
+    } else {
+        0.0
+    };
+    run.lines = 0.0;
+    run.fixed = 0.0;
+    run.held = 0.0;
+    run.on_purpose = false;
+    run.out.push(b);
+}
+
+/// What leaves a box once its blocks are spaced (`out`): spacers after its last block, or
+/// the space below a last block with words when nothing marks the box's bottom edge, go in
+/// its padding (with an edge) or meet its margin-bottom. Returns that margin-bottom.
+fn box_tail(
+    href: &str,
+    bx: &mut Block,
+    mut out: Vec<Block>,
+    margins: &mut HashMap<BlockId, [f64; 2]>,
+    mut bottom: f64,
+) -> Result<f64, ItemError> {
+    let look = bx.get("box");
+    let side = |key: &str| look.and_then(|d| d.get(key)).filter(|v| v.is_truthy());
+    if look
+        .and_then(|d| d.get("vertical"))
+        .is_some_and(PyValue::is_truthy)
+    {
+        // A vertical block's blocks end at its left: Task 15.
+        return Err(ItemError::Error(Error::Unsupported {
+            feature: "boxes (Task 15)",
+            file: href.to_owned(),
+        }));
+    }
+    let edge = side("border")
+        .and_then(|d| d.get("bottom"))
+        .filter(|v| v.is_truthy())
+        .or_else(|| side("padding").and_then(|d| d.get("bottom")))
+        .is_some_and(PyValue::is_truthy);
+    let mut tail = 0.0;
+    if let Some(last) = out.last_mut() {
+        tail = match last.remove("trailing_space") {
+            Some(t) => number(Some(&t)),
+            None => 0.0,
+        };
+        let keep = match last.get("padding_below") {
+            Some(v) => number(Some(v)),
+            None => 0.0,
+        };
+        let below = true_number(last.get("margin_below")).unwrap_or(0.0);
+        if !edge && below > keep && has_real_text(text_field(last)) {
+            // Nothing at its bottom edge: the space below its last block leaves the box.
+            tail = py_max(&[tail, (below - keep) * ems_own(last)]);
+            last.set("margin_below", PyValue::Float(keep));
+        }
+    }
+    if truthy(tail) && edge {
+        // Spacers after a table that ends the box: below it, inside the box, in its padding.
+        let own = ems_own(bx);
+        if let Some(PyValue::Dict(d)) = bx.get_mut("box") {
+            let mut pad = match d.iter().find(|(k, _)| k.as_str() == Some("padding")) {
+                Some((_, PyValue::Dict(p))) if !p.is_empty() => p.clone(),
+                _ => BORDER_SIDES
+                    .iter()
+                    .map(|side| (s(side), PyValue::Float(0.0)))
+                    .collect(),
+            };
+            let was = pad
+                .iter()
+                .find(|(k, _)| k.as_str() == Some("bottom"))
+                .map_or(0.0, |(_, v)| number(Some(v)));
+            dict_set(&mut pad, "bottom", PyValue::Float(was + tail / own));
+            dict_set(d, "padding", PyValue::Dict(pad));
+        }
+    } else if truthy(tail) {
+        // It meets the box's margin-bottom, where the run around the box meets it.
+        let mine = margins.entry(bx.id()).or_insert([0.0; 2]);
+        mine[1] = collapse(mine[1], tail);
+        bottom = mine[1];
+    }
+    bx.put_blocks(out);
+    Ok(bottom)
+}
+
+/// The end of a `_space_between` call: the last block's space below, then the gaps.
+fn finish_run(
+    run: Run,
+    margins: &HashMap<BlockId, [f64; 2]>,
+    measured: bool,
+    paddings: &HashMap<BlockId, [f64; 4]>,
+) -> Vec<Block> {
+    let Run {
+        mut out,
+        gaps,
+        above,
+        lines,
+        fixed,
+        on_purpose,
+        ..
+    } = run;
     if measured
         && on_purpose
         && let Some(last) = out.last_mut()
@@ -1182,7 +1427,7 @@ pub(super) fn space_between(
             out[i].set("space_above", PyValue::Float(gap));
         }
     }
-    Ok(out)
+    out
 }
 
 /// `max(Counter(gaps), key=lambda g: (counts[g], -g))`: the most common gap, of two as

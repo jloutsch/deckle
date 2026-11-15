@@ -4,7 +4,7 @@
 //! `_is_block_at_body`, `_discard_listing`, `_emit_image_block`, `_inline_picture_parts`, and
 //! the module helpers they call (`_is_nav_listing`, `_is_front_matter`, `_page_breaks`,
 //! `_clear_side`, `_pictures_among_words`, `_lone_block_picture`, `_is_spacer`,
-//! `_anchors_follow_rows`, `_dedupe_keep_order`), at kfxgen `ad38ec8`.
+//! `_anchors_follow_rows`, `_dedupe_keep_order`), at kfxgen `ad38ec8`. Lists are `lists.rs`.
 //!
 //! kfxgen recurses once per nested element (`_walk` → `_walk_flow` → `_walk_element` →
 //! `_walk_container` → `_walk`, and `_discard_listing`); here each open call is a [`Frame`] on
@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 
 use deckle_limits::MAX_DEPTH;
 
+use super::lists::{Item, Lists, Native};
 use super::spacing::Noted;
 use super::{Block, BlockId, ExtractOptions, Field, dedupe, dict_set, s, strs, unsupported};
 use crate::convert::block_bidi::{BlockBidi, start_end_align};
@@ -45,7 +46,7 @@ const MATHML_NS: &str = "http://www.w3.org/1998/Math/MathML";
 const SOURCE_MARKED: &str = "data-kfxgen-source";
 const SOURCE_TOC: &str = "data-kfxgen-toc";
 const SOURCE_FRONT: &str = "data-kfxgen-front";
-const HORIZONTAL: &str = "data-kfxgen-horizontal";
+pub(super) const HORIZONTAL: &str = "data-kfxgen-horizontal";
 const VERTICAL: &str = "data-kfxgen-vertical";
 
 /// `block_tags`' local names (it holds each bare and in the XHTML namespace).
@@ -167,6 +168,16 @@ enum Frame {
         start: usize,
     },
     Container(Container),
+    /// `_walk_list_item(li, native)` after `_walk_element(li)`.
+    ListItemEnd {
+        li: NodeId,
+        list: NodeId,
+        start: usize,
+    },
+    /// The `li` branch of `_walk_flow` after `_walk_element(li)`: an unused marker dropped.
+    MarkerEnd {
+        before: usize,
+    },
     /// `_discard_listing(elem)` part-way through its children.
     Discard {
         elem: NodeId,
@@ -203,12 +214,14 @@ pub(super) struct Walker<'o, 'w, 'a, 's> {
     /// most one entry in kfxgen (it appends only to an empty list).
     break_at: Option<usize>,
     clear_at: Option<(usize, &'static str)>,
-    bidi: BlockBidi,
+    pub(super) bidi: BlockBidi,
     /// Whether a node's subtree, itself included, holds an element of `block_tags`.
     holds_block_tag: Vec<Bit>,
     stack: Vec<Frame>,
     /// `margins` and `paddings`, and what working them out reads more than once.
     pub(super) noted: Noted,
+    /// `pending_markers`, `list_ordinals`, `native_lists`, `cell_depth`.
+    pub(super) lists: Lists,
 }
 
 /// The walk of one file: everything `extract_blocks_from_html` does before `_space_between`.
@@ -234,6 +247,7 @@ pub(super) fn walk(w: &mut Walk, opts: &ExtractOptions) -> Result<Walked, ItemEr
         holds_block_tag: vec![Bit::Unknown; dom.node_count()],
         stack: Vec::new(),
         noted: Noted::new(dom),
+        lists: Lists::default(),
     };
     walker.walk_body(body)?;
     // Each listing's index counts the space blocks before it, which `_space_between` takes
@@ -332,6 +346,8 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
                 Frame::WalkEnd { elem, start, after } => self.walk_end(elem, start, after)?,
                 Frame::ContainerEnd { elem, start } => self.container_end(elem, start)?,
                 Frame::Container(c) => self.container_step(c)?,
+                Frame::ListItemEnd { li, list, start } => self.list_item_end(li, list, start)?,
+                Frame::MarkerEnd { before } => self.marker_end(before),
                 Frame::Discard { elem, next, depth } => {
                     if let Some(&child) = self.dom.children(elem).get(next) {
                         self.stack.push(Frame::Discard {
@@ -419,10 +435,19 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         Ok(())
     }
 
-    /// `_walk_flow(elem)`: a list item's marker path is Task 13's.
+    /// `_walk_flow(elem)`.
     fn walk_flow(&mut self, elem: NodeId, depth: usize) -> Result<(), ItemError> {
         if !self.dom.is_comment(elem) && self.dom.tag(elem) == "li" && !self.w.hidden(elem)? {
-            return Err(self.unsupported("lists (Task 13)"));
+            match self.list_item(elem)? {
+                Item::Native { list } => self.stack.push(Frame::ListItemEnd {
+                    li: elem,
+                    list,
+                    start: self.blocks.len(),
+                }),
+                Item::Marked { before } => self.stack.push(Frame::MarkerEnd { before }),
+                Item::Unmarked => {}
+            }
+            return self.walk_element(elem, depth);
         }
         // Tables counted in `tables_seen`/`notes_seen` are written as rows (Tasks 16, 17):
         // every `<table>` stops at `_walk_element` until then.
@@ -516,7 +541,7 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
     fn leaf(&mut self, elem: NodeId) -> Result<(), ItemError> {
         let dom = self.dom;
         let segments = self.w.inline(elem)?;
-        let (text, spans, marks) = normalize_runs_with_anchors(&segments);
+        let (mut text, mut spans, mut marks) = normalize_runs_with_anchors(&segments);
         drop(segments);
         // `ids = pending_ids[:] + _subtree_anchor_ids(elem)`, the pending ids moved only when
         // a block takes them (copying them for every empty block is quadratic).
@@ -531,10 +556,9 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         }
         let mut ids = self.take_pending();
         ids.extend(own);
-        // `_take_marker`: no list marker is pending until Task 13 ports lists.
+        self.take_marker(&mut text, &mut spans, &mut marks)?;
         let local = dom.tag(elem);
         let css = self.resolve(elem)?;
-        let mut spans = spans;
         let mut bstyle = PyValue::None;
         if let Some(css) = &css {
             bstyle = compute_block_style(css)?;
@@ -793,14 +817,14 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
             return Ok(());
         }
         let parts = std::mem::take(&mut c.parts);
-        let (text, spans, marks) = normalize_runs_with_anchors(&parts);
+        let (mut text, mut spans, mut marks) = normalize_runs_with_anchors(&parts);
         drop(parts);
         if !has_words(&text) {
             // An anchor with no visible text carries forward.
             self.pending_ids.extend(marks.into_iter().map(|(id, _)| id));
             return Ok(());
         }
-        // `_take_marker`: no list marker is pending until Task 13.
+        self.take_marker(&mut text, &mut spans, &mut marks)?;
         let mut ids = self.take_pending();
         ids.extend(marks.iter().map(|(id, _)| id.clone()));
         let block_ids = dedupe(ids);
@@ -840,9 +864,16 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
     /// The end of `_walk_element`'s container branch.
     fn container_end(&mut self, elem: NodeId, start: usize) -> Result<(), ItemError> {
         // A cell walked as a paragraph (`leaf_cells`) is Task 16's.
-        if matches!(self.dom.tag(elem), "ul" | "ol") {
-            // `_native_list(elem)` and `_make_list`.
-            return Err(self.unsupported("lists (Task 13)"));
+        if matches!(self.dom.tag(elem), "ul" | "ol")
+            && let Some(native) = self.native_list(elem)?
+        {
+            let plain = matches!(native, Native::Plain { .. });
+            self.make_list(elem, start)?;
+            if !plain {
+                // An unmarked list's side margins are in its indent.
+                self.carry_container_margins(elem, start)?;
+            }
+            return Ok(());
         }
         if self.would_box(elem, start, false)? {
             return Err(self.unsupported("boxes (Task 15)"));
