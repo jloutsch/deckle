@@ -29,10 +29,11 @@ use cssparser::{Parser, ParserInput};
 use deckle_limits::{MAX_BOOK_CASCADE_DECLS, MAX_BOOK_SELECTOR_WORK, MAX_STYLE_RULES};
 
 use super::cascade::{Spent, Units, decl_units, run};
-use super::style::{py_float, unit_number};
+use super::style::unit_number;
 use super::value::{declarations, write_value};
 use super::{Cascaded, Decls, Error, Origin, Profile, Rule, normalize};
 use crate::dom::{Dom, NodeId, SVG_NS, XHTML_NS, py_space};
+use crate::generate::py::{py_float, py_int};
 
 /// No class.
 pub(crate) const NO_CLASS: u32 = u32::MAX;
@@ -726,23 +727,6 @@ fn font_size(size: &str, profile: &Profile) -> f64 {
         fnum(esize).unwrap_or(three)
     } else {
         force_int(size).and_then(fnum).unwrap_or(three)
-    }
-}
-
-/// Python's `int()` of a run of digits and signs: one sign, then digits.
-fn py_int(s: &str) -> Option<i64> {
-    let digits = s.strip_prefix(['+', '-']).unwrap_or(s);
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    // Past i64 it is no size anyway: size 3's, or clamped.
-    match s.parse::<i64>() {
-        Ok(v) => Some(v),
-        Err(_) => Some(if s.starts_with('-') {
-            i64::MIN
-        } else {
-            i64::MAX
-        }),
     }
 }
 

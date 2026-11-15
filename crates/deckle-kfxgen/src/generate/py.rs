@@ -415,6 +415,38 @@ pub(crate) fn py_int(s: &str) -> Option<i64> {
     (after_digit && count <= 4300).then_some(value)
 }
 
+/// `float(s)`: white space around (not U+001C to U+001F), decimal digits of any script, single
+/// underscores between digits, a sign, a point, an exponent, `inf`, `infinity` and `nan` in any
+/// case. None where Python raises `ValueError`. Linear in `s`.
+pub(crate) fn py_float(s: &str) -> Option<f64> {
+    let mut ascii = String::with_capacity(s.len());
+    // CPython makes the digits ASCII first, then allows `_` only between two digits
+    // (`_Py_string_to_number_with_underscores`).
+    let mut prev = '\0';
+    for c in s.trim_matches(is_number_space).chars() {
+        let c = digit_value(c).map_or(c, |d| char::from(b'0' + d as u8));
+        if c == '_' {
+            if !prev.is_ascii_digit() {
+                return None;
+            }
+        } else {
+            if prev == '_' && !c.is_ascii_digit() {
+                return None;
+            }
+            if !(c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-')) {
+                return None;
+            }
+            ascii.push(c);
+        }
+        prev = c;
+    }
+    if prev == '_' {
+        return None;
+    }
+    // Rust reads the forms Python's `float()` reads from ASCII, and no others.
+    ascii.parse().ok()
+}
+
 /// `s.strip()`.
 pub(crate) fn strip(s: &str) -> &str {
     s.trim_matches(is_space)
@@ -704,6 +736,62 @@ mod tests {
         assert_eq!(py_int(&format!("-{}", "9".repeat(4300))), Some(i64::MIN));
         assert_eq!(py_int(&"0".repeat(4301)), None);
         assert_eq!(py_int(&format!("{}_1", "0".repeat(4299))), Some(1));
+    }
+
+    /// `float()`: expected values from Python 3.14.
+    #[test]
+    fn float_reads_what_python_reads() {
+        use super::py_float;
+        for (s, want) in [
+            ("1", Some(1.0)),
+            ("-1.5", Some(-1.5)),
+            ("+.5", Some(0.5)),
+            ("1.", Some(1.0)),
+            ("  2.5 ", Some(2.5)),
+            ("\u{3000}1\u{a0}", Some(1.0)),
+            ("1\u{3000}", Some(1.0)),
+            ("1_0", Some(10.0)),
+            ("1e1_0", Some(1e10)),
+            ("\u{661}.\u{665}", Some(1.5)),
+            ("\u{663}e\u{662}", Some(300.0)),
+            ("\u{661}_\u{662}", Some(12.0)),
+            ("\u{661}\u{662}", Some(12.0)),
+            ("1e+05", Some(100000.0)),
+            ("5e-400", Some(0.0)),
+            ("1_000.000_1", Some(1000.0001)),
+            ("0_0", Some(0.0)),
+            ("inf", Some(f64::INFINITY)),
+            ("iNf", Some(f64::INFINITY)),
+            ("INFINITY", Some(f64::INFINITY)),
+            ("-Infinity", Some(f64::NEG_INFINITY)),
+            ("1e400", Some(f64::INFINITY)),
+            (".", None),
+            ("-", None),
+            ("+", None),
+            ("", None),
+            ("\u{1c}1", None),
+            ("1\u{1f}", None),
+            ("1__0", None),
+            ("_1", None),
+            ("1_", None),
+            ("1_.5", None),
+            ("1._5", None),
+            ("1_e10", None),
+            ("infinit", None),
+            ("1e", None),
+            ("e5", None),
+            ("0x10", None),
+            ("1.2.3", None),
+            ("--5", None),
+            ("1 2", None),
+            ("2\u{2028}1", None),
+            ("1,5", None),
+        ] {
+            assert_eq!(py_float(s), want, "{s:?}");
+        }
+        for nan in ["nan", "-nan", "+nan", "NaN"] {
+            assert!(py_float(nan).is_some_and(f64::is_nan), "{nan}");
+        }
     }
 
     /// `Decimal(str(1e16))` is 1E+16 and `Decimal(str(2.0))` is 2.0 (issue #13).

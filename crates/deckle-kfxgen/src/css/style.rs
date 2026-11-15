@@ -21,6 +21,7 @@ use super::flatten::Flat;
 use super::normalize::{is_color, primitives};
 use super::{Decls, Error, INHERITED, Profile};
 use crate::dom::{Dom, NodeId, py_space};
+use crate::generate::py::py_float;
 
 /// A style value as Calibre's `Style[prop]` gives it.
 #[derive(Debug, Clone, PartialEq)]
@@ -524,26 +525,6 @@ pub(crate) fn unit_number(value: &str) -> Option<(f64, &str)> {
         return None;
     }
     Some((py_float(num).unwrap_or(0.0), unit))
-}
-
-/// Python's `float()` of a string, but for digits outside ASCII and `_` between digits.
-pub(crate) fn py_float(s: &str) -> Option<f64> {
-    let t = s.trim_matches(py_space);
-    let unsigned = t.strip_prefix(['+', '-']).unwrap_or(t);
-    // Rust reads `inf`, `infinity` and `nan` in any case, as Python does; it also reads
-    // forms Python does not.
-    let ok = unsigned.eq_ignore_ascii_case("inf")
-        || unsigned.eq_ignore_ascii_case("infinity")
-        || unsigned.eq_ignore_ascii_case("nan")
-        || (!unsigned.is_empty()
-            && unsigned
-                .bytes()
-                .all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'e' | b'E' | b'+' | b'-'))
-            && unsigned.bytes().any(|b| b.is_ascii_digit()));
-    if !ok {
-        return None;
-    }
-    t.parse::<f64>().ok()
 }
 
 #[cfg(test)]

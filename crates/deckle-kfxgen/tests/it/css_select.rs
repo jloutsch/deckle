@@ -86,6 +86,25 @@ fn page(body: &str) -> Dom {
         .unwrap()
 }
 
+/// `parse_series` reads `an+b` with Python's `int()`, which takes decimal digits of any
+/// script: `٣` (an identifier to Calibre's tokenizer) is 3. From reading Calibre's
+/// `css_selectors/parser.py`, not run.
+#[test]
+fn nth_child_reads_digits_of_any_script() {
+    let dom = page(&"<p>x</p>".repeat(6));
+    let body = dom.children(dom.root())[1];
+    let ps = dom.children(body);
+    let at = |sel: &str| -> Vec<usize> {
+        let (s, _, _) = ok(sel);
+        run(&s, &dom)
+            .into_iter()
+            .map(|n| ps.iter().position(|&p| p == n).unwrap() + 1)
+            .collect()
+    };
+    assert_eq!(at("p:nth-child(\u{663})"), [3]);
+    assert_eq!(at("p:nth-child(\u{662}n+\u{661})"), [1, 3, 5]);
+}
+
 #[test]
 fn selector_matches_agree_with_calibre() {
     let dir = fixtures::kfxgen("cascade/css_quirks");

@@ -523,9 +523,9 @@ so only an attribute value or an escaped name in the selector can differ.
 ## Numbers in :nth-child() and the like
 
 Calibre reads the `an+b` of `:nth-*()` with Python's `int()` and tests a position with true
-division. The port holds a number as an i128 that stops at ±2^125, refuses non-ASCII decimal
-digits (Python reads `٣` as 3), and divides as f64, which is Python's result when both numbers
-are below 2^53 and can round differently past it. Calibre's `int()` refuses more than 4300
+division. The port holds a number as an i64 that stops at ±(2^63 − 1) (`py::py_int`), and
+divides as f64, which is Python's result when both numbers are below 2^53 and can round
+differently past it. Calibre's `int()` refuses more than 4300
 digits, as the port does. A unicode escape naming a surrogate code point is read as U+FFFD,
 where Python keeps the surrogate.
 
@@ -603,9 +603,7 @@ line height (`Style.lineHeight`, inherited from the parent where the element set
 negative number of points and the element is not a drop cap. The port decides that from the
 sign of the value as written (a number, or a length `unit_convert` reads), taking the font size
 as positive and finite: where an element's font size is 0, infinite or NaN (`font-size: 0`,
-`1e999pt`), Calibre leaves the line height and the port sets it. The port reads numbers as
-Python's `float()` does but for `_` between digits and digits outside ASCII, which it does not
-read.
+`1e999pt`), Calibre leaves the line height and the port sets it.
 
 ## Values the flattener writes back
 
@@ -622,14 +620,11 @@ then lacks. The port works out again the styles of the elements the flattener ga
 An element the flattener does not walk, whose own `class` attribute happens to name a class the
 flattener made and edited, keeps the margin in the port.
 
-## Numbers and names in style values
+## Property names in style values
 
-`css::Styles` reads a number in a style value as Python's `float()` does, but for `_` between
-digits and digits outside ASCII, which it does not read (the same reader as "A negative line
-height"): where Calibre reads `1_0` as 10 pixels, the port gives the text back. And it answers a
-property by its CSS name only. Calibre's `Style[name]` first turns the name into a Python
-attribute name (`_toDOMname`), so `fontSize` or `font-Size` also reach the font size; kfxgen asks
-by CSS names.
+`css::Styles` answers a property by its CSS name only. Calibre's `Style[name]` first turns the
+name into a Python attribute name (`_toDOMname`), so `fontSize` or `font-Size` also reach the
+font size; kfxgen asks by CSS names.
 
 ## The nav and NCX kfxgen reads beside Calibre's OPF
 

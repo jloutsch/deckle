@@ -6,6 +6,7 @@
 use super::Fail;
 use super::parse::{AttrOp, Comb, Complex, Compound, PseudoElement, Simple};
 use super::tokens::{Tok, is_ws};
+use crate::generate::py;
 
 /// `INAPPROPRIATE_PSEUDO_CLASSES`: with `ignore_inappropriate_pseudo_classes`, they match every
 /// element (`get_func_for_pseudo`, `allow_all`).
@@ -457,39 +458,9 @@ pub(super) fn py_split(s: &str) -> impl Iterator<Item = &str> {
     s.split(py_space).filter(|t| !t.is_empty())
 }
 
-/// Python ints past this are held as this (`DIVERGENCES.md`).
-const BIG: i128 = i128::MAX / 4;
-
-/// Python's `int(s)` for base 10: white space around, a sign, ASCII digits with single
-/// underscores between them, at most 4300 digits (`sys.int_info.default_max_str_digits`).
-fn py_int(s: &str) -> Option<i128> {
-    let s = s.trim_matches(py_space);
-    let (neg, digits) = match s.as_bytes().first() {
-        Some(b'-') => (true, &s[1..]),
-        Some(b'+') => (false, &s[1..]),
-        _ => (false, s),
-    };
-    if digits.is_empty()
-        || digits.starts_with('_')
-        || digits.ends_with('_')
-        || digits.contains("__")
-    {
-        return None;
-    }
-    let mut v: i128 = 0;
-    let mut count = 0usize;
-    for c in digits.chars() {
-        if c == '_' {
-            continue;
-        }
-        let d = c.to_digit(10)?;
-        count += 1;
-        v = v.saturating_mul(10).saturating_add(i128::from(d)).min(BIG);
-    }
-    if count > 4300 {
-        return None;
-    }
-    Some(if neg { -v } else { v })
+/// `int(s)`, held as an i128 for `nth_ok`'s arithmetic.
+fn int(s: &str) -> Option<i128> {
+    py::py_int(s).map(i128::from)
 }
 
 /// `parse_series`: `(a, b)` of `an+b` from the argument tokens, joined without white space.
@@ -511,14 +482,14 @@ fn series(args: &[Tok]) -> Option<(i128, i128)> {
         _ => {}
     }
     let Some((a, b)) = s.split_once('n') else {
-        return Some((0, py_int(s)?));
+        return Some((0, int(s)?));
     };
     let a = match a {
         "" | "+" => 1,
         "-" => -1,
-        a => py_int(a)?,
+        a => int(a)?,
     };
-    let b = if b.is_empty() { 0 } else { py_int(b)? };
+    let b = if b.is_empty() { 0 } else { int(b)? };
     Some((a, b))
 }
 
