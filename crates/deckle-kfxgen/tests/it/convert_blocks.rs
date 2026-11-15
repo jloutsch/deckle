@@ -18,40 +18,69 @@ use crate::convert_resolver::{empty_page, file_of, page};
 use crate::convert_support::{dump, model_diff};
 use crate::support::{COST_LIMIT, allocated_by};
 
-/// The sources whose every spine file's blocks match the dump. A source joins in the task
-/// that makes it pass and never leaves. (`notes` and `vertical_contents` hold lists: Task 13.)
+/// The sources whose every spine file's blocks match the dump, on every pass recorded. A source
+/// joins in the task that makes it pass and never leaves. (`notes` and `vertical_contents` hold
+/// lists: Task 13 adds them.)
 const FIXTURES: &[&str] = &[
+    "block_edges",
+    "block_picture_769",
+    "comments_in_tree",
+    "fake_margins",
     "fonts",
-    "rtl",
+    "fonts_woff",
     "link_colours",
     "link_greys",
+    "listing_rerun",
+    "malformed",
     "navigation",
+    "no_toc",
+    "package_more",
+    "package_quirks",
     "page_list",
-    "vertical",
+    "pictures_side_by_side_766",
+    "refused_selector",
+    "rtl",
     "ruby_tcy",
-    "block_edges",
+    "vertical",
 ];
 
-/// Keys kfxgen's margins and spacing write (`_note_margins`, `_space_between`, Task 12): left
-/// out of both sides until that task.
-const SPACING_KEYS: &[&str] = &[
-    "own_bottom_em",
-    "bottom_in_em",
-    "outer_em_ratio",
-    "margin_above",
-    "margin_below",
-    "padding_below",
-    "space_above",
-    "tight",
-    "trailing_space",
-];
+/// The sources recorded on a second pass (with `keep_nav_listings`): both passes are compared.
+const TWO_PASSES: &[&str] = &["listing_rerun", "refused_selector"];
 
-fn without_spacing(block: &PyValue) -> PyValue {
+/// Keys left out of both sides of the comparison.
+struct LeftOut {
+    /// Written during the walk by `_note_margins`, `_note_padding` and
+    /// `_carry_container_margins`: left out of D2a and D2.
+    walk: &'static [&'static str],
+    /// Written by `_space_between`: left out of D2.
+    spacing: &'static [&'static str],
+}
+
+/// What Task 12 (margins and spacing) writes and this task does not. Task 12 removes this list.
+/// Until then the margins and paddings columns of each D2a entry (its second and third items)
+/// are not compared either.
+const LEFT_OUT_UNTIL_TASK_12: LeftOut = LeftOut {
+    walk: &["own_bottom_em", "bottom_in_em", "outer_em_ratio"],
+    spacing: &[
+        "margin_above",
+        "margin_below",
+        "padding_below",
+        "space_above",
+        "tight",
+        "trailing_space",
+    ],
+};
+
+/// `block` without the keys in `left_out`.
+fn without(block: &PyValue, left_out: &[&[&str]]) -> PyValue {
     match block {
         PyValue::Dict(pairs) => PyValue::Dict(
             pairs
                 .iter()
-                .filter(|(k, _)| !k.as_str().is_some_and(|k| SPACING_KEYS.contains(&k)))
+                .filter(|(k, _)| {
+                    !k.as_str()
+                        .is_some_and(|k| left_out.iter().any(|keys| keys.contains(&k)))
+                })
                 .cloned()
                 .collect(),
         ),
@@ -59,8 +88,21 @@ fn without_spacing(block: &PyValue) -> PyValue {
     }
 }
 
-fn blocks_py(blocks: &[Block]) -> PyValue {
-    PyValue::List(blocks.iter().map(|b| without_spacing(&b.to_py())).collect())
+/// D2a leaves out what the walk's margin hooks write.
+fn for_d2a(block: &PyValue) -> PyValue {
+    without(block, &[LEFT_OUT_UNTIL_TASK_12.walk])
+}
+
+/// D2 leaves out that and what `_space_between` writes.
+fn for_d2(block: &PyValue) -> PyValue {
+    without(
+        block,
+        &[LEFT_OUT_UNTIL_TASK_12.walk, LEFT_OUT_UNTIL_TASK_12.spacing],
+    )
+}
+
+fn blocks_py(blocks: &[Block], left_out: fn(&PyValue) -> PyValue) -> PyValue {
+    PyValue::List(blocks.iter().map(|b| left_out(&b.to_py())).collect())
 }
 
 fn strs(items: &[String]) -> PyValue {
@@ -111,8 +153,9 @@ fn string_set(v: Option<&PyValue>) -> HashSet<String> {
 
 /// For each source in [`FIXTURES`] and each pass recorded, every spine file's walk gives the
 /// blocks kfxgen handed its file's `_space_between` (D2a, the last call not inside another),
-/// and the whole extraction gives the dumped blocks and out-lists, the keys spacing writes left
-/// out of both. The serials run on across the book, one count for each of the two runs.
+/// and the whole extraction gives the dumped blocks and out-lists, with
+/// [`LEFT_OUT_UNTIL_TASK_12`] left out. The serials run on across the book and its passes, one
+/// count for each of the two runs.
 #[test]
 fn blocks_match_the_dump() {
     let mut failures = Vec::new();
@@ -168,13 +211,13 @@ fn blocks_match_the_dump() {
                         .and_then(PyValue::as_list)
                         .unwrap()
                         .iter()
-                        .map(|entry| without_spacing(&entry.as_list().unwrap()[0]))
+                        .map(|entry| for_d2a(&entry.as_list().unwrap()[0]))
                         .collect(),
                 );
                 let mut walk = Walk::new(file, &resolver, &mut walked_serials);
                 match blocks_before_spacing(&mut walk, &opts) {
                     Ok(got) => {
-                        for d in model_diff(&blocks_py(&got), &expected) {
+                        for d in model_diff(&blocks_py(&got, for_d2a), &expected) {
                             failures.push(format!("{where_} D2a{d}"));
                         }
                     }
@@ -193,10 +236,10 @@ fn blocks_match_the_dump() {
                                 .and_then(PyValue::as_list)
                                 .unwrap()
                                 .iter()
-                                .map(without_spacing)
+                                .map(for_d2)
                                 .collect(),
                         );
-                        for d in model_diff(&blocks_py(&got.blocks), &want) {
+                        for d in model_diff(&blocks_py(&got.blocks, for_d2), &want) {
                             failures.push(format!("{where_} D2 blocks{d}"));
                         }
                         for (key, ours) in out_lists(&got) {
@@ -212,6 +255,17 @@ fn blocks_match_the_dump() {
             }
         }
         eprintln!("{name}: {files} files, {blocks} blocks, passes {passes:?}");
+        if files == 0 {
+            failures.push(format!("{name}: no file compared"));
+        }
+        let want_passes: HashSet<i64> = if TWO_PASSES.contains(name) {
+            [0, 1].into()
+        } else {
+            [0].into()
+        };
+        if passes != want_passes {
+            failures.push(format!("{name}: passes {passes:?}, want {want_passes:?}"));
+        }
     }
     for f in failures.iter().take(60) {
         eprintln!("{f}");
