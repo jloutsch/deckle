@@ -24,6 +24,7 @@ use crate::convert::inline::{keyword, text_of};
 use crate::convert::inline_style::parse_css_length;
 use crate::convert::resolver::Resolved;
 use crate::convert::{Error, ItemError, Raised};
+use crate::css::TEXT_UNIT;
 use crate::dom::{Dom, NodeId};
 use crate::generate::images::IMG_TOKEN;
 use crate::generate::page_scale::page_pt;
@@ -71,10 +72,13 @@ pub(super) struct Noted {
     pub(super) paddings: HashMap<BlockId, [f64; 4]>,
     /// `_has_content(n)` per node.
     has_content: Vec<Option<bool>>,
-    /// Per parent: the index among its child nodes of the first and of the last child that
-    /// keeps a margin from collapsing past it (`_box_share`'s `near`), None for none.
-    first_blocker: HashMap<NodeId, Option<usize>>,
-    last_blocker: HashMap<NodeId, Option<usize>>,
+    /// Per node: whether it keeps a margin from collapsing past it (`_box_share`'s `near`),
+    /// once worked out.
+    blocks_margin: Vec<Option<bool>>,
+    /// Per node known not to keep a margin: the index among its parent's child nodes from
+    /// which the next one that might is looked for (0: not known, as a later index is
+    /// always above 0). Each node is looked at once, however many children ask.
+    next_maybe: Vec<usize>,
     /// Per element and side (top: true): whether its border or padding there stops a margin.
     stops: HashMap<(NodeId, bool), bool>,
     /// Per element: the share `_box_share`'s second loop has worked out once it reaches it.
@@ -87,8 +91,8 @@ impl Noted {
             margins: HashMap::new(),
             paddings: HashMap::new(),
             has_content: vec![None; dom.node_count()],
-            first_blocker: HashMap::new(),
-            last_blocker: HashMap::new(),
+            blocks_margin: vec![None; dom.node_count()],
+            next_maybe: vec![0; dom.node_count()],
             stops: HashMap::new(),
             shares: HashMap::new(),
         }
@@ -320,25 +324,71 @@ fn length_py(l: &Option<(String, &'static str)>) -> PyValue {
     }
 }
 
-/// `f"{x:.4f}"`.
-fn fixed_4(x: f64) -> String {
+/// `f"{x:.4f}"` written into `buf`.
+fn fixed_4(x: f64, buf: &mut String) {
+    use std::fmt::Write as _;
+    buf.clear();
     if x.is_nan() {
-        "nan".to_owned()
+        buf.push_str("nan");
     } else {
-        format!("{x:.4}")
+        // Writing to a String cannot fail.
+        let _ = write!(buf, "{x:.4}");
     }
 }
 
 /// `_add_margin(own, extra)`: a paragraph's margin with a container's added, as a share of
 /// the page width; with no container margin the paragraph's own as it is.
+#[cfg(test)]
 fn add_margin(own: &PyValue, extra: &PyValue) -> Result<PyValue, Raised> {
+    let mut buf = String::new();
+    Ok(if add_margin_into(own, extra, &mut buf)? {
+        PyValue::Tuple(vec![s(&buf), s("$314")])
+    } else {
+        own.clone()
+    })
+}
+
+/// `_add_margin(own, extra)` without making the value: true with the sum's magnitude in
+/// `buf` (its unit `$314`), false for no container margin (the margin is `own` as it is).
+fn add_margin_into(own: &PyValue, extra: &PyValue, buf: &mut String) -> Result<bool, Raised> {
     if matches!(extra, PyValue::None) {
-        return Ok(own.clone());
+        return Ok(false);
     }
     let total = page_share(own)? + page_share(extra)?;
-    let text = fixed_4(total);
-    let text = text.trim_end_matches('0').trim_end_matches('.');
-    Ok(PyValue::Tuple(vec![s(text), s("$314")]))
+    fixed_4(total, buf);
+    let kept = buf.trim_end_matches('0').trim_end_matches('.').len();
+    buf.truncate(kept);
+    Ok(true)
+}
+
+/// `_page_share` of what `_add_margin` gave: the sum in `buf`, or `own`.
+fn added_share(own: &PyValue, added: bool, buf: &str) -> Result<f64, Raised> {
+    if !added {
+        return page_share(own);
+    }
+    Ok(py::py_float(buf).ok_or(NOT_A_NUMBER)? * unit_percent("$314"))
+}
+
+/// `style[key] = new` for what `_add_margin` gave: a `(magnitude, unit)` pair already there
+/// is overwritten in place, so nested containers make no new value at each step.
+fn set_added(style: &mut Vec<(PyValue, PyValue)>, key: &str, own: PyValue, added: bool, buf: &str) {
+    if !added {
+        dict_set(style, key, own);
+        return;
+    }
+    if let Some((_, PyValue::Tuple(parts))) =
+        style.iter_mut().find(|(k, _)| k.as_str() == Some(key))
+        && let [PyValue::Str(mag), PyValue::Str(unit)] = parts.as_mut_slice()
+    {
+        mag.clear();
+        mag.push_str(buf);
+        if unit != "$314" {
+            unit.clear();
+            unit.push_str("$314");
+        }
+        return;
+    }
+    dict_set(style, key, PyValue::Tuple(vec![s(buf), s("$314")]));
 }
 
 /// `_has_real_text(text)`: words once the picture tokens are taken out.
@@ -564,7 +614,11 @@ impl Walker<'_, '_, '_, '_> {
         }
         let (left, right) = (length_py(&left), length_py(&right));
         let mut empty_style = None;
+        let (mut left_buf, mut right_buf) = (String::new(), String::new());
         for i in start.min(self.blocks.len())..self.blocks.len() {
+            // Each block costs a step at each container round it: nested containers over
+            // many blocks are refused after bounded work.
+            self.resolver.charge(TEXT_UNIT)?;
             match self.blocks[i].kind() {
                 Some("box") => return Err(self.unsupported_box()),
                 Some("table") => continue,
@@ -575,43 +629,70 @@ impl Walker<'_, '_, '_, '_> {
                 if IMG_TOKEN.is_match(text) {
                     // Pictures alone: each container's margins kept as written, the
                     // innermost first.
+                    let pair = PyValue::Tuple(vec![left.clone(), right.clone()]);
                     let b = &mut self.blocks[i];
-                    let mut boxes = match b.get("picture_boxes") {
-                        Some(PyValue::Tuple(items)) => items.clone(),
-                        _ => Vec::new(),
-                    };
-                    boxes.push(PyValue::Tuple(vec![left.clone(), right.clone()]));
-                    b.set("picture_boxes", PyValue::Tuple(boxes));
+                    match b.get_mut("picture_boxes") {
+                        Some(PyValue::Tuple(items)) => items.push(pair),
+                        _ => b.set("picture_boxes", PyValue::Tuple(vec![pair])),
+                    }
                 }
                 continue;
             }
-            let mut style = match self.blocks[i].get("block_style") {
-                Some(PyValue::Dict(pairs)) if !pairs.is_empty() => pairs.clone(),
-                _ => {
-                    if empty_style.is_none() {
-                        empty_style = Some(compute_block_style(&self.resolver.no_style())?);
-                    }
-                    match &empty_style {
-                        Some(PyValue::Dict(pairs)) => pairs.clone(),
-                        _ => Vec::new(),
-                    }
-                }
+            let has_own = |b: &Block| matches!(b.get("block_style"), Some(PyValue::Dict(pairs)) if !pairs.is_empty());
+            if !has_own(&self.blocks[i]) && empty_style.is_none() {
+                empty_style = Some(compute_block_style(&self.resolver.no_style())?);
+            }
+            let empty: &[(PyValue, PyValue)] = match &empty_style {
+                Some(PyValue::Dict(pairs)) => pairs,
+                _ => &[],
+            };
+            // kfxgen copies the style before adding (`dict(...)`), which keeps a style two
+            // blocks share apart; each block owns its style here, so it is changed in place,
+            // and only once the sum is under the cap.
+            let style: &[(PyValue, PyValue)] = match self.blocks[i].get("block_style") {
+                Some(PyValue::Dict(pairs)) if !pairs.is_empty() => pairs,
+                _ => empty,
             };
             let get = |key: &str| {
                 style
                     .iter()
                     .find(|(k, _)| k.as_str() == Some(key))
-                    .map_or(PyValue::None, |(_, v)| v.clone())
+                    .map_or(&PyValue::None, |(_, v)| v)
             };
-            let new_left = add_margin(&get("margin_left"), &left)?;
-            let new_right = add_margin(&get("margin_right"), &right)?;
-            if page_share(&new_left)? + page_share(&new_right)? > MAX_CARRIED_MARGINS {
+            let (own_left, own_right) = (get("margin_left"), get("margin_right"));
+            let added_left = add_margin_into(own_left, &left, &mut left_buf)?;
+            let added_right = add_margin_into(own_right, &right, &mut right_buf)?;
+            if added_share(own_left, added_left, &left_buf)?
+                + added_share(own_right, added_right, &right_buf)?
+                > MAX_CARRIED_MARGINS
+            {
                 // Nested indents would leave a narrow column: the paragraph's own margins.
                 continue;
             }
-            dict_set(&mut style, "margin_left", new_left);
-            dict_set(&mut style, "margin_right", new_right);
-            self.blocks[i].set("block_style", PyValue::Dict(style));
+            // Cloned only when no container margin is added on that side: None or a pair.
+            let own_left = if added_left {
+                PyValue::None
+            } else {
+                own_left.clone()
+            };
+            let own_right = if added_right {
+                PyValue::None
+            } else {
+                own_right.clone()
+            };
+            let b = &mut self.blocks[i];
+            let put = |style: &mut Vec<(PyValue, PyValue)>| {
+                set_added(style, "margin_left", own_left, added_left, &left_buf);
+                set_added(style, "margin_right", own_right, added_right, &right_buf);
+            };
+            match b.get_mut("block_style") {
+                Some(PyValue::Dict(pairs)) if !pairs.is_empty() => put(pairs),
+                _ => {
+                    let mut style = empty.to_vec();
+                    put(&mut style);
+                    b.set("block_style", PyValue::Dict(style));
+                }
+            }
         }
         Ok(())
     }
@@ -635,12 +716,13 @@ impl Walker<'_, '_, '_, '_> {
             let stops = self.stops(a, top)?;
             let at = dom.node_index(child);
             let text = if top { dom.text(a) } else { dom.tail(child) };
-            let near = if top {
-                self.first_blocker(a)?.is_some_and(|i| i < at)
-            } else {
-                self.last_blocker(a)?.is_some_and(|i| i > at)
-            };
-            let at_edge = !(has_words(text) || near);
+            // As Python's `or` and `any`: the children on that side are read only when the
+            // text has no words, in order, up to the first that keeps the margin.
+            let at_edge = !(has_words(text) || {
+                let kids = dom.children(a);
+                let (from, to) = if top { (0, at) } else { (at + 1, kids.len()) };
+                self.first_blocker(kids, from, to)?.is_some()
+            });
             if at_edge && !stops {
                 child = a;
                 continue;
@@ -690,38 +772,49 @@ impl Walker<'_, '_, '_, '_> {
         Ok(has_words(self.dom.tail(k)))
     }
 
-    fn first_blocker(&mut self, a: NodeId) -> Result<Option<usize>, ItemError> {
-        if let Some(&known) = self.noted.first_blocker.get(&a) {
-            return Ok(known);
-        }
-        let dom = self.dom;
-        let kids = dom.children(a);
-        let mut found = None;
-        for (i, &k) in kids.iter().enumerate() {
-            if self.blocks_margin(k)? {
-                found = Some(i);
-                break;
+    /// The first of `kids[from..to]` that keeps a margin from collapsing past it, the
+    /// children looked at in order, as `any` does over them.
+    fn first_blocker(
+        &mut self,
+        kids: &[NodeId],
+        from: usize,
+        to: usize,
+    ) -> Result<Option<usize>, ItemError> {
+        let mut j = self.next_maybe(kids, from);
+        while j < to.min(kids.len()) {
+            let k = kids[j];
+            let blocks = match self.noted.blocks_margin[k.index()] {
+                Some(known) => known,
+                None => {
+                    let found = self.blocks_margin(k)?;
+                    self.noted.blocks_margin[k.index()] = Some(found);
+                    found
+                }
+            };
+            if blocks {
+                return Ok(Some(j));
             }
+            self.noted.next_maybe[k.index()] = j + 1;
+            j = self.next_maybe(kids, j + 1);
         }
-        self.noted.first_blocker.insert(a, found);
-        Ok(found)
+        Ok(None)
     }
 
-    fn last_blocker(&mut self, a: NodeId) -> Result<Option<usize>, ItemError> {
-        if let Some(&known) = self.noted.last_blocker.get(&a) {
-            return Ok(known);
+    /// The first index from `from` whose child is not known to let a margin past: the
+    /// children known to are skipped, and the skips shortened for the next call.
+    fn next_maybe(&mut self, kids: &[NodeId], from: usize) -> usize {
+        let next = &mut self.noted.next_maybe;
+        let mut j = from;
+        while j < kids.len() && next[kids[j].index()] != 0 {
+            j = next[kids[j].index()];
         }
-        let dom = self.dom;
-        let kids = dom.children(a);
-        let mut found = None;
-        for (i, &k) in kids.iter().enumerate().rev() {
-            if self.blocks_margin(k)? {
-                found = Some(i);
-                break;
-            }
+        let mut i = from;
+        while i < j {
+            let after = next[kids[i].index()];
+            next[kids[i].index()] = j;
+            i = after;
         }
-        self.noted.last_blocker.insert(a, found);
-        Ok(found)
+        j
     }
 
     /// `_has_content(n)`: text in it, or a picture, rule or table; false for a comment. Each

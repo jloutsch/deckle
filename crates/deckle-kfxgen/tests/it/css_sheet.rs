@@ -231,7 +231,7 @@ fn book_rules_match_calibre_in_text_and_order() {
         "{matched} of {total} files match; differences:\n{}",
         failed.join("\n")
     );
-    // Every spine file of the 20 books, with their 403 rules and 3 font faces.
+    // Every spine file of the 20 books, with their 427 rules and 3 font faces.
     assert_eq!((matched, total), (66, 66));
     assert_eq!((rules_compared, faces_compared), (427, 3));
 }

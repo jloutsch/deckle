@@ -430,6 +430,85 @@ fn percent_margins_deep_in_the_tree_are_measured_once_per_div() {
     );
 }
 
+/// `n` paragraphs inside `deep` nested divs, each div with a side margin of 1px.
+fn paragraphs_in_margined_divs(deep: usize, n: usize) -> deckle_kfxgen::book::File {
+    // Built node by node: `dom::parse` of 250 nested divs overflows a debug test thread.
+    let (mut dom, body) = empty_page();
+    let mut at = body;
+    for _ in 0..deep {
+        at = dom.append_child(at, "div");
+    }
+    for _ in 0..n {
+        let p = dom.append_child(at, "p");
+        dom.set_text(p, "x");
+    }
+    file_of(dom, "div { margin-left: 1px; margin-right: 1px }")
+}
+
+/// Each margined div adds its side margins to every paragraph it holds, as kfxgen does
+/// (`_carry_container_margins`, which copies the paragraph's style at each div). Added in
+/// place here, so 250 divs cost about what one does.
+#[test]
+fn margins_carried_through_nested_divs_copy_no_style() {
+    let bytes = |file: deckle_kfxgen::book::File| {
+        let start = Instant::now();
+        let (got, bytes) = allocated_by(|| extract(&file));
+        let took = start.elapsed();
+        got.unwrap();
+        (bytes, took)
+    };
+    let (shallow, took_shallow) = bytes(paragraphs_in_margined_divs(1, 1_000));
+    let (deep, took_deep) = bytes(paragraphs_in_margined_divs(250, 1_000));
+    eprintln!(
+        "1,000 paragraphs: {shallow} bytes, {took_shallow:?} in one div; \
+         {deep} bytes, {took_deep:?} in 250"
+    );
+    assert!(
+        deep < 2 * shallow,
+        "{shallow} bytes in one div, {deep} in 250"
+    );
+    // Two divs of 1px: pinned kfxgen's `_add_margin` gives ('0.1172', '$314') after one and
+    // ('0.2344', '$314') after both, on each side.
+    let got = extract(&paragraphs_in_margined_divs(2, 1)).unwrap();
+    let style = got.blocks[0].get("block_style").unwrap();
+    let pair = Some(PyValue::Tuple(vec![
+        PyValue::Str("0.2344".into()),
+        PyValue::Str("$314".into()),
+    ]));
+    assert_eq!(style.get("margin_left"), pair.as_ref());
+    assert_eq!(style.get("margin_right"), pair.as_ref());
+}
+
+/// Each paragraph-and-div step of carrying margins is charged to the file's budget, so a
+/// file of many paragraphs in deeply nested margined divs is refused after bounded work.
+#[test]
+fn margins_carried_through_too_many_divs_are_refused() {
+    let file = paragraphs_in_margined_divs(250, 2_100);
+    let budget = TextBudget::new();
+    let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+    let mut serials = Serials::default();
+    let none = HashSet::new();
+    let opts = ExtractOptions {
+        native_tables: true,
+        toc_targets: &none,
+        link_targets: &none,
+        keep_nav_listings: false,
+    };
+    let start = Instant::now();
+    let got = extract_blocks(&mut Walk::new(&file, &resolver, &mut serials), &opts);
+    let took = start.elapsed();
+    assert!(
+        matches!(got, Err(ItemError::Error(Error::Book(_)))),
+        "{got:?}"
+    );
+    assert!(
+        budget.charged() > deckle_limits::MAX_CASCADE_DECLS,
+        "{}",
+        budget.charged()
+    );
+    assert!(took < COST_LIMIT, "{took:?}");
+}
+
 /// Spacer paragraphs between paragraphs: each is a space block the spacing pass takes out
 /// while it builds the file's list, in one pass.
 #[test]
