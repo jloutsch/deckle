@@ -6,10 +6,10 @@
 //! copies are charged to the file's text budget, so a long href over many ids ends in
 //! refusing the file, not in memory without bound.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use super::walk::Walked;
-use super::{Block, Field, FileBlocks};
+use super::{Block, Field, FileBlocks, dedupe, dict_set, strs};
 use crate::convert::ItemError;
 use crate::convert::href::key_doc;
 use crate::convert::inline::Walk;
@@ -52,7 +52,7 @@ pub(super) fn finish(w: &mut Walk, walked: Walked) -> Result<FileBlocks, ItemErr
         let last = &mut blocks[at];
         let mut ids = strings(last.get("anchor_ids"));
         ids.extend(pending_ids.iter().cloned());
-        last.set("anchor_ids", list(&dedupe(ids)));
+        last.set("anchor_ids", strs(&dedupe(ids)));
         // A table's last row and a box's last kid take them too: Tasks 15 and 16.
     }
     let href = w.file().href.clone();
@@ -87,7 +87,7 @@ pub(super) fn finish(w: &mut Walk, walked: Walked) -> Result<FileBlocks, ItemErr
                 ("text", Field::Py(PyValue::Str(text))),
                 ("spans", Field::Py(PyValue::List(Vec::new()))),
                 ("block_style", Field::Py(PyValue::None)),
-                ("anchor_ids", Field::Py(list(&dedupe(pending_ids)))),
+                ("anchor_ids", Field::Py(strs(&dedupe(pending_ids)))),
             ],
         });
         attach_anchor_keys(&mut blocks, &href, &charge)?;
@@ -108,19 +108,6 @@ fn strings(v: Option<&PyValue>) -> Vec<String> {
         .unwrap_or(&[])
         .iter()
         .filter_map(|i| i.as_str().map(str::to_owned))
-        .collect()
-}
-
-fn list(items: &[String]) -> PyValue {
-    PyValue::List(items.iter().map(|i| PyValue::Str(i.clone())).collect())
-}
-
-/// `_dedupe_keep_order(items)`.
-fn dedupe(items: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    items
-        .into_iter()
-        .filter(|i| seen.insert(i.clone()))
         .collect()
 }
 
@@ -169,16 +156,8 @@ fn attach_anchor_keys(
             keys.insert(0, PyValue::Str(normalized.clone()));
         }
         if let Some(PyValue::Dict(offsets)) = first.get_mut("anchor_offsets") {
-            dict_set(offsets, PyValue::Str(normalized), PyValue::Int(0));
+            dict_set(offsets, &normalized, PyValue::Int(0));
         }
     }
     Ok(())
-}
-
-/// `d[key] = value` on a dict's pairs, string keys.
-fn dict_set(pairs: &mut Vec<(PyValue, PyValue)>, key: PyValue, value: PyValue) {
-    match pairs.iter_mut().find(|(k, _)| *k == key) {
-        Some((_, v)) => *v = value,
-        None => pairs.push((key, value)),
-    }
 }

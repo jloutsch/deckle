@@ -18,8 +18,8 @@ use std::collections::{HashMap, HashSet};
 
 use deckle_limits::MAX_DEPTH;
 
-use super::{Block, BlockId, ExtractOptions, Field, unsupported};
-use crate::convert::block_bidi::{BlockBidi, dict_set, start_end_align};
+use super::{Block, BlockId, ExtractOptions, Field, dedupe, dict_set, s, strs, unsupported};
+use crate::convert::block_bidi::{BlockBidi, start_end_align};
 use crate::convert::block_style::compute_block_style;
 use crate::convert::initial::initial;
 use crate::convert::inline::{
@@ -118,22 +118,6 @@ fn is_box_tag(local: &str) -> bool {
 /// Whether `s` holds anything but Python's white space (`s.strip()` is not empty).
 fn has_words(s: &str) -> bool {
     !py::strip(s).is_empty()
-}
-
-fn s(v: &str) -> PyValue {
-    PyValue::Str(v.to_owned())
-}
-
-/// `_dedupe_keep_order(items)`.
-fn dedupe(items: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-    for it in items {
-        if seen.insert(it.clone()) {
-            out.push(it);
-        }
-    }
-    out
 }
 
 /// What the walk leaves for the steps after it (spacing, trailing ids, anchor keys).
@@ -1065,11 +1049,6 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
 /// A block's `text`, "" for none.
 fn text_field(b: &Block) -> &str {
     b.get("text").and_then(PyValue::as_str).unwrap_or("")
-}
-
-/// A list of strings as the model holds it.
-fn strs(items: &[String]) -> PyValue {
-    PyValue::List(items.iter().map(|i| s(i)).collect())
 }
 
 /// `{aid: mark_offsets.get(aid, 0) for aid in ids}`.

@@ -63,7 +63,7 @@ const COLLAPSING: [char; 5] = [' ', '\t', '\n', '\r', '\u{c}'];
 const OBJECT: char = '\u{fffc}';
 
 /// `_CELL_TAGS`.
-pub(super) fn is_cell(tag: &str) -> bool {
+fn is_cell(tag: &str) -> bool {
     matches!(tag, "td" | "th")
 }
 

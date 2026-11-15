@@ -153,3 +153,31 @@ fn unsupported(w: &Walk, feature: &'static str) -> ItemError {
         file: w.file().href.clone(),
     })
 }
+
+/// A string as the model holds it.
+pub(in crate::convert) fn s(v: &str) -> PyValue {
+    PyValue::Str(v.to_owned())
+}
+
+/// A list of strings as the model holds it.
+pub(in crate::convert) fn strs(items: &[String]) -> PyValue {
+    PyValue::List(items.iter().map(|i| s(i)).collect())
+}
+
+/// `_dedupe_keep_order(items)`.
+pub(in crate::convert) fn dedupe(items: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    items
+        .into_iter()
+        .filter(|i| seen.insert(i.clone()))
+        .collect()
+}
+
+/// `d[key] = value` on a dict's pairs, string keys: in place when the key is there, else at
+/// the end.
+pub(in crate::convert) fn dict_set(pairs: &mut Vec<(PyValue, PyValue)>, key: &str, value: PyValue) {
+    match pairs.iter_mut().find(|(k, _)| k.as_str() == Some(key)) {
+        Some((_, v)) => *v = value,
+        None => pairs.push((s(key), value)),
+    }
+}

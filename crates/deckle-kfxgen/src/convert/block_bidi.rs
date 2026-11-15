@@ -11,6 +11,7 @@
 
 use super::ItemError;
 use super::bidi::first_strong;
+use super::blocks::{dict_set, s};
 use super::inline::keyword;
 use super::resolver::Resolver;
 use crate::dom::{Dom, NodeId};
@@ -195,18 +196,6 @@ impl BlockBidi {
         };
         dict_set(&mut style, "bidi", PyValue::Dict(bidi));
         Ok(PyValue::Dict(style))
-    }
-}
-
-fn s(v: &str) -> PyValue {
-    PyValue::Str(v.to_owned())
-}
-
-/// `d[key] = value` on a dict's pairs: in place when the key is there, else at the end.
-pub(super) fn dict_set(pairs: &mut Vec<(PyValue, PyValue)>, key: &str, value: PyValue) {
-    match pairs.iter_mut().find(|(k, _)| k.as_str() == Some(key)) {
-        Some((_, v)) => *v = value,
-        None => pairs.push((s(key), value)),
     }
 }
 

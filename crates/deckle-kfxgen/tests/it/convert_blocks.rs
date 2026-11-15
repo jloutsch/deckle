@@ -151,11 +151,12 @@ fn string_set(v: Option<&PyValue>) -> HashSet<String> {
         .collect()
 }
 
-/// For each source in [`FIXTURES`] and each pass recorded, every spine file's walk gives the
+/// For each source in [`FIXTURES`] and each of its passes, every spine file's walk gives the
 /// blocks kfxgen handed its file's `_space_between` (D2a, the last call not inside another),
 /// and the whole extraction gives the dumped blocks and out-lists, with
 /// [`LEFT_OUT_UNTIL_TASK_12`] left out. The serials run on across the book and its passes, one
-/// count for each of the two runs.
+/// count for each of the two runs. Every spine file must have a dump holding a record for each
+/// of the source's passes, and none other, so no file is skipped without a failure.
 #[test]
 fn blocks_match_the_dump() {
     let mut failures = Vec::new();
@@ -169,24 +170,48 @@ fn blocks_match_the_dump() {
         let toc = dump(name, "toc.json.gz");
         let link_targets = string_set(toc.get("link_targets"));
         let (mut walked_serials, mut serials) = (Serials::default(), Serials::default());
-        let (mut files, mut blocks, mut passes) = (0, 0, HashSet::new());
-        for pass in [0, 1] {
+        let want_passes: &[i64] = if TWO_PASSES.contains(name) {
+            &[0, 1]
+        } else {
+            &[0]
+        };
+        let mut blocks = 0;
+        // Files compared on each pass.
+        let mut compared = vec![0usize; want_passes.len()];
+        for (p, &pass) in want_passes.iter().enumerate() {
             for file in &book.files {
-                let nnn = &listed[&file.href];
+                let Some(nnn) = listed.get(&file.href) else {
+                    failures.push(format!("{name} {}: not in files.json", file.href));
+                    continue;
+                };
                 let at = format!("blocks/{nnn}.json.gz");
                 if !fixtures::kfxgen(&format!("convert/{name}/{at}")).exists() {
+                    failures.push(format!("{name} {nnn}: no block dump"));
                     continue;
                 }
                 let PyValue::List(records) = dump(name, &at) else {
                     panic!("{name} {nnn}: no list");
                 };
+                if p == 0 {
+                    let mut recorded: Vec<i64> = records
+                        .iter()
+                        .filter_map(|r| r.get("pass").and_then(PyValue::as_int))
+                        .collect();
+                    recorded.sort_unstable();
+                    if recorded != want_passes {
+                        failures.push(format!(
+                            "{name} {nnn}: passes recorded {recorded:?}, want {want_passes:?}"
+                        ));
+                    }
+                }
                 let Some(record) = records
                     .iter()
                     .find(|r| r.get("pass").and_then(PyValue::as_int) == Some(pass))
                 else {
+                    failures.push(format!("{name} {nnn}: no record for pass {pass}"));
                     continue;
                 };
-                passes.insert(pass);
+                compared[p] += 1;
                 let where_ = format!("{name} {nnn} pass {pass}");
                 let args = record.get("args").unwrap();
                 let toc_targets = string_set(args.get("toc_targets"));
@@ -251,20 +276,23 @@ fn blocks_match_the_dump() {
                     }
                     Err(e) => failures.push(format!("{where_} D2: {e:?}")),
                 }
-                files += 1;
             }
         }
-        eprintln!("{name}: {files} files, {blocks} blocks, passes {passes:?}");
-        if files == 0 {
-            failures.push(format!("{name}: no file compared"));
+        eprintln!(
+            "{name}: {} spine files, compared on passes {want_passes:?}: {compared:?}, {blocks} blocks",
+            book.files.len()
+        );
+        if book.files.is_empty() {
+            failures.push(format!("{name}: no spine file"));
         }
-        let want_passes: HashSet<i64> = if TWO_PASSES.contains(name) {
-            [0, 1].into()
-        } else {
-            [0].into()
-        };
-        if passes != want_passes {
-            failures.push(format!("{name}: passes {passes:?}, want {want_passes:?}"));
+        for (p, n) in compared.iter().enumerate() {
+            if *n != book.files.len() {
+                failures.push(format!(
+                    "{name}: {n} of {} files compared on pass {}",
+                    book.files.len(),
+                    want_passes[p]
+                ));
+            }
         }
     }
     for f in failures.iter().take(60) {
@@ -307,10 +335,14 @@ fn a_div_nested_20000_deep_is_refused_not_overflowed() {
     let start = Instant::now();
     let got = extract(&file);
     let took = start.elapsed();
-    assert!(
-        matches!(got, Err(ItemError::Error(Error::TooLarge { .. }))),
-        "{got:?}"
-    );
+    // The block walk's refusal, not the inline walk's ("levels inside a paragraph").
+    match &got {
+        Err(ItemError::Error(Error::TooLarge { what })) => assert!(
+            what.ends_with("levels below the body"),
+            "not the block walk's: {what}"
+        ),
+        other => panic!("{other:?}"),
+    }
     assert!(took < COST_LIMIT, "{took:?}");
 }
 
