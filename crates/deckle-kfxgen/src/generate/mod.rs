@@ -21,7 +21,7 @@ mod notes;
 mod page_scale;
 mod pages;
 mod positions;
-mod py;
+pub(crate) mod py;
 mod skeleton;
 mod standard_symbols;
 mod styles;

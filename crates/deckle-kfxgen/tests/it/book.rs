@@ -25,10 +25,10 @@ fn read_book_matches_every_dump() {
         check_book(&book, &Dump::fixture(name), &mut tally);
     }
     tally.assert_clean(&allowed());
-    assert_eq!(tally.books.len(), 14);
+    assert_eq!(tally.books.len(), 19);
     assert_eq!(
         (tally.files, tally.rules, tally.font_faces),
-        (50, 313, 3),
+        (63, 393, 3),
         "files, book rules, @font-face rules"
     );
     assert!(tally.marks >= 3, "{} marks", tally.marks);
@@ -636,6 +636,7 @@ fn a_document_past_the_size_limit_is_too_large() {
     );
     let file = epub_of(opf_with("").as_bytes(), &[("c.xhtml", page.as_bytes())]);
     let what = too_large(&file);
+    eprintln!("WHAT {what}");
     assert!(what.starts_with("c.xhtml: "), "{what}");
 }
 
@@ -663,6 +664,7 @@ fn an_html_file_of_too_many_elements_is_too_large() {
     );
     let file = epub_of(opf_with("").as_bytes(), &[("c.xhtml", page.as_bytes())]);
     let what = too_large(&file);
+    eprintln!("WHAT {what}");
     assert!(what.starts_with("c.xhtml: "), "{what}");
 }
 

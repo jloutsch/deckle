@@ -207,9 +207,26 @@ fn img_size_attributes_fold_into_css() {
     assert_eq!(decls(img(13)), wh("auto", "2em"));
 }
 
-/// An element as the tree comparison sees it: (local name, id, width, height). The size
-/// attributes are those `img` keeps (Task 8 folds the others into CSS).
-type Shape = (String, Option<String>, Option<String>, Option<String>);
+/// An element as the tree comparison sees it: (local name, id, width, height, kfxgen's marks).
+/// The size attributes are those `img` keeps (Task 8 folds the others into CSS); the marks are
+/// its `data-kfxgen-*` attributes, sorted (phase 3 Task 5).
+type Shape = (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Vec<(String, String)>,
+);
+
+/// The `data-kfxgen-*` attributes of `attrs`, sorted.
+fn kfxgen_marks<'a>(attrs: impl Iterator<Item = (&'a str, &'a str)>) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = attrs
+        .filter(|(k, _)| k.starts_with("data-kfxgen-"))
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect();
+    out.sort();
+    out
+}
 
 /// Path → [`Shape`] of every element of a `dom/` dump.
 fn dump_tree(xhtml: &str) -> BTreeMap<Vec<u32>, Shape> {
@@ -226,6 +243,7 @@ fn dump_tree(xhtml: &str) -> BTreeMap<Vec<u32>, Shape> {
                 attr("id"),
                 attr("width").filter(|_| img),
                 attr("height").filter(|_| img),
+                kfxgen_marks(n.attributes().map(|a| (a.name(), a.value()))),
             ),
         );
         for (i, c) in n.children().filter(Node::is_element).enumerate() {
@@ -251,6 +269,7 @@ fn tree(dom: &Dom) -> BTreeMap<Vec<u32>, Shape> {
                     attr("id"),
                     attr("width").filter(|_| img),
                     attr("height").filter(|_| img),
+                    kfxgen_marks(dom.attrs(n).map(|(k, _, v)| (k, v))),
                 ),
             )
         })

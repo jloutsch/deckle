@@ -6,8 +6,10 @@
 //! ([`crate::dom::mark_chapters`]), the contents made from them when the book has none
 //! ([`crate::dom::generated_toc`], `structure.py` `DetectStructure`); then, file by file in
 //! spine order, `<body>`'s style set ([`css::prepare_body`]), the first cascade over the file's
-//! stylesheets ([`css::cascade`]) and the flattener ([`css::flatten`], one [`ClassNamer`] for
-//! the book); and last `RemoveFakeMargins` over the whole book ([`css::remove_fake_margins`]).
+//! stylesheets ([`css::cascade`]), kfxgen's `data-kfxgen-*` marks (`convert::marks`, which its
+//! plugin's `specialize_css_for_output` makes there) and the flattener ([`css::flatten`], one
+//! [`ClassNamer`] for the book); and last `RemoveFakeMargins` over the whole book
+//! ([`css::remove_fake_margins`]).
 //! What it gives is what kfxgen's `convert_oeb_to_kfx` receives, checked against dumps taken
 //! inside a kfxgen conversion (`tests/it/book.rs`, `tests/it/corpus_cascade.rs`).
 //!
@@ -23,6 +25,7 @@ use std::path::Path;
 use deckle_kfx::epub_zip::{EpubReader, InspectError, join, percent_decode};
 use deckle_limits::{MAX_BOOK_DOM_NODES, XmlError};
 
+use crate::convert::marks;
 use crate::css::{
     self, Budget, ClassNamer, DEFAULT_PROFILE, Decls, Flat, Origin, Profile, Rule, Sheet, Styles,
     cascade, flatten, media_ok, parse_sheet_in, prepare_body, remove_fake_margins,
@@ -55,8 +58,8 @@ pub struct Book {
 pub struct File {
     /// Its href from the book's root, as Calibre's manifest writes it.
     pub href: String,
-    /// Its tree as kfxgen's `Stylizer` reads it: chapter marks and contents ids in, styles
-    /// moved into classes, `<style>` and stylesheet links gone.
+    /// Its tree as kfxgen's `Stylizer` reads it: chapter marks, contents ids and kfxgen's
+    /// `data-kfxgen-*` marks in, styles moved into classes, `<style>` and stylesheet links gone.
     pub dom: Dom,
     /// The styles kfxgen's `Stylizer` gives its elements.
     pub flat: Flat,
@@ -219,6 +222,8 @@ pub fn read_book(path: &Path) -> Result<Book, Error> {
         let sheets = file_sheets(&mut zip, &css_items, href, &dom)?;
         let mut first =
             cascade(&mut dom, href, sheets, &DEFAULT_PROFILE).map_err(|e| too_large_in(href, e))?;
+        // kfxgen's `specialize_css_for_output`, which Calibre calls just before flattening.
+        marks::mark(&mut dom, &mut first).map_err(|e| too_large_in(href, e))?;
         // `flatten` takes the first cascade whole and keeps neither.
         let first_pass_rules = std::mem::take(&mut first.rules);
         // Both stay until the book is done.

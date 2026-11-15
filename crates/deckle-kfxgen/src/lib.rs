@@ -6,6 +6,7 @@
 //! unless the comment names another commit.
 
 pub mod book;
+mod convert;
 pub mod css;
 pub mod dom;
 pub mod epub;
