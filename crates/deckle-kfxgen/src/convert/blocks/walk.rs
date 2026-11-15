@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 
 use deckle_limits::MAX_DEPTH;
 
+use super::spacing::Noted;
 use super::{Block, BlockId, ExtractOptions, Field, dedupe, dict_set, s, strs, unsupported};
 use crate::convert::block_bidi::{BlockBidi, start_end_align};
 use crate::convert::block_style::compute_block_style;
@@ -116,7 +117,7 @@ fn is_box_tag(local: &str) -> bool {
 }
 
 /// Whether `s` holds anything but Python's white space (`s.strip()` is not empty).
-fn has_words(s: &str) -> bool {
+pub(super) fn has_words(s: &str) -> bool {
     !py::strip(s).is_empty()
 }
 
@@ -129,6 +130,8 @@ pub(super) struct Walked {
     pub(super) listing_ids: HashSet<String>,
     pub(super) nav_listing_at: Vec<(usize, Vec<String>)>,
     pub(super) body: NodeId,
+    pub(super) margins: HashMap<BlockId, [f64; 2]>,
+    pub(super) paddings: HashMap<BlockId, [f64; 4]>,
 }
 
 /// `_walk_container(elem)` part-way through its children.
@@ -182,12 +185,12 @@ enum Bit {
     No,
 }
 
-struct Walker<'o, 'w, 'a, 's> {
-    w: &'w mut Walk<'a, 's>,
-    dom: &'a Dom,
-    resolver: &'a Resolver<'a>,
+pub(super) struct Walker<'o, 'w, 'a, 's> {
+    pub(super) w: &'w mut Walk<'a, 's>,
+    pub(super) dom: &'a Dom,
+    pub(super) resolver: &'a Resolver<'a>,
     opts: &'o ExtractOptions<'o>,
-    blocks: Vec<Block>,
+    pub(super) blocks: Vec<Block>,
     next_id: usize,
     pending_ids: Vec<String>,
     listing_ids: HashSet<String>,
@@ -204,6 +207,8 @@ struct Walker<'o, 'w, 'a, 's> {
     /// Whether a node's subtree, itself included, holds an element of `block_tags`.
     holds_block_tag: Vec<Bit>,
     stack: Vec<Frame>,
+    /// `margins` and `paddings`, and what working them out reads more than once.
+    pub(super) noted: Noted,
 }
 
 /// The walk of one file: everything `extract_blocks_from_html` does before `_space_between`.
@@ -228,6 +233,7 @@ pub(super) fn walk(w: &mut Walk, opts: &ExtractOptions) -> Result<Walked, ItemEr
         bidi: BlockBidi::new(dom),
         holds_block_tag: vec![Bit::Unknown; dom.node_count()],
         stack: Vec::new(),
+        noted: Noted::new(dom),
     };
     walker.walk_body(body)?;
     // Each listing's index counts the space blocks before it, which `_space_between` takes
@@ -251,6 +257,8 @@ pub(super) fn walk(w: &mut Walk, opts: &ExtractOptions) -> Result<Walked, ItemEr
         listing_ids: walker.listing_ids,
         nav_listing_at: walker.nav_listing_at,
         body,
+        margins: walker.noted.margins,
+        paddings: walker.noted.paddings,
     })
 }
 
@@ -279,7 +287,7 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         unsupported(self.w, feature)
     }
 
-    fn new_block(&mut self, fields: Vec<(&'static str, Field)>) -> Block {
+    pub(super) fn new_block(&mut self, fields: Vec<(&'static str, Field)>) -> Block {
         let id = BlockId(self.next_id);
         self.next_id += 1;
         Block { id, fields }
@@ -291,7 +299,7 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         std::mem::take(&mut self.pending_ids)
     }
 
-    fn resolve(&self, n: NodeId) -> Result<Option<Resolved<'a>>, ItemError> {
+    pub(super) fn resolve(&self, n: NodeId) -> Result<Option<Resolved<'a>>, ItemError> {
         Ok(self.resolver.resolve(n)?)
     }
 
@@ -517,7 +525,7 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         if !has_words(&text) {
             self.pending_ids.extend(own);
             if is_spacer(dom, elem) {
-                return Err(self.unsupported("spacers (Task 12)"));
+                self.spacer(elem)?;
             }
             return Ok(());
         }
@@ -600,8 +608,8 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         if self.would_box(elem, at, true)? {
             return Err(self.unsupported("boxes (Task 15)"));
         }
-        // `_note_margins(elem, at, _note_padding(elem, at))`: Task 12.
-        Ok(())
+        let padded = self.note_padding(elem, at)?;
+        self.note_margins(elem, at, padded)
     }
 
     /// `_emit_image_block(elem)` for an `<img>`.
@@ -839,9 +847,9 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         if self.would_box(elem, start, false)? {
             return Err(self.unsupported("boxes (Task 15)"));
         }
-        // `_carry_container_margins(elem, start)`, `_note_margins(elem, start,
-        // _note_padding(elem, start))`: Task 12.
-        Ok(())
+        self.carry_container_margins(elem, start)?;
+        let padded = self.note_padding(elem, start)?;
+        self.note_margins(elem, start, padded)
     }
 
     /// Whether `_make_box(elem, start, leaf)` would draw a box round `blocks[start:]`: its
@@ -1047,7 +1055,7 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
 }
 
 /// A block's `text`, "" for none.
-fn text_field(b: &Block) -> &str {
+pub(super) fn text_field(b: &Block) -> &str {
     b.get("text").and_then(PyValue::as_str).unwrap_or("")
 }
 
@@ -1225,7 +1233,7 @@ fn anchors_follow_rows(dom: &Dom, elem: NodeId) -> bool {
 }
 
 /// `_BORDER_SIDES`.
-const BORDER_SIDES: [&str; 4] = ["top", "right", "bottom", "left"];
+pub(super) const BORDER_SIDES: [&str; 4] = ["top", "right", "bottom", "left"];
 /// `_PREVIEWER_PT_PER_CALIBRE_PT`: Previewer writes a border at 0.45pt a pixel, calibre
 /// computes it at 0.72pt.
 const PREVIEWER_PT_PER_CALIBRE_PT: f64 = 0.625;
@@ -1300,7 +1308,7 @@ pub(super) fn css_border(css: Option<&Resolved>) -> Result<Option<Vec<BorderSide
 }
 
 /// `_unit_percent(unit)`.
-fn unit_percent(unit: &str) -> f64 {
+pub(super) fn unit_percent(unit: &str) -> f64 {
     let em = em_percent();
     match unit {
         "$308" | "$505" => em,

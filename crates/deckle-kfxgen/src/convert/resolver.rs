@@ -321,6 +321,11 @@ impl<'a> Resolver<'a> {
         self.budget.charge(bytes)
     }
 
+    /// `{}`: a style with no values, as kfxgen hands `compute_block_style({})`.
+    pub(crate) fn no_style(&self) -> Resolved<'a> {
+        Resolved::new(self.budget)
+    }
+
     /// `resolve(elem)`: the element's resolved CSS, or None where kfxgen's `resolve` catches an
     /// exception (the fill behind it, `_box_background` on a colour Python's `float()` or
     /// `int()` refuses). A new value on every call, as kfxgen's; a caller that needs it again

@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 
+use super::spacing::space_between;
 use super::walk::Walked;
 use super::{Block, Field, FileBlocks, dedupe, dict_set, strs};
 use crate::convert::ItemError;
@@ -16,18 +17,21 @@ use crate::convert::inline::Walk;
 use crate::generate::py;
 use crate::pyvalue::PyValue;
 
-/// From the walk's blocks to the file's: spacing (Task 12), the trailing ids, anchor keys.
+/// From the walk's blocks to the file's: spacing, the trailing ids, anchor keys.
 pub(super) fn finish(w: &mut Walk, walked: Walked) -> Result<FileBlocks, ItemError> {
     let Walked {
-        mut blocks,
+        blocks,
         pending_ids,
         rule_ids,
         listing_ids,
         nav_listing_at,
         body,
+        mut margins,
+        mut paddings,
     } = walked;
-    // `_space_between(blocks, margins, …)`: Task 12. No space block reaches here yet: the walk
-    // stops at a spacer.
+    // `measured=style_resolver is not None`: a file always has one here.
+    let href = w.file().href.clone();
+    let mut blocks = space_between(&href, blocks, &mut margins, true, &mut paddings)?;
     let mut trailing_ids = Vec::new();
     let mut end_ids = Vec::new();
     if !blocks.is_empty() {
@@ -55,7 +59,6 @@ pub(super) fn finish(w: &mut Walk, walked: Walked) -> Result<FileBlocks, ItemErr
         last.set("anchor_ids", strs(&dedupe(ids)));
         // A table's last row and a box's last kid take them too: Tasks 15 and 16.
     }
-    let href = w.file().href.clone();
     let resolver = w.resolver();
     let charge = |bytes: usize| -> Result<(), ItemError> { Ok(resolver.charge(bytes)?) };
     if !blocks.is_empty() {

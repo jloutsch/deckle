@@ -5,19 +5,22 @@
 //!
 //! Blocks are ordered maps ([`Block`], plan decision 3): the model compares Python's key order.
 //! Each has a [`BlockId`] that stays with it when it moves (into a box, out of a cell), so the
-//! values kfxgen keeps beside its blocks by identity (`_ById`: margins, paddings) can be kept
-//! beside them here (Task 12).
+//! values kfxgen keeps beside its blocks by identity (`_ById`: margins, paddings) are kept
+//! beside them here, in maps keyed by [`BlockId`].
 //!
-//! Ported so far (Task 11): the walk, its leaf and container branches, inline runs, hidden
-//! and non-rendered elements, `<epub:switch>`, the contents-listing discard, `<img>` blocks,
-//! direction and language, page breaks, `clear`, front matter, trailing ids and anchor keys.
+//! Ported so far: the walk, its leaf and container branches, inline runs, hidden and
+//! non-rendered elements, `<epub:switch>`, the contents-listing discard, `<img>` blocks,
+//! direction and language, page breaks, `clear`, front matter, trailing ids and anchor keys
+//! (Task 11); margins, padding, carried side margins, spacers and the space between blocks
+//! (Task 12, `spacing.rs`).
 //! Each branch a later task ports stops the file with [`Error::Unsupported`] naming that task
 //! (`walk.rs`), so a book that needs one cannot be converted by accident.
 
 mod anchors;
+mod spacing;
 mod walk;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::inline::Walk;
 use super::{Error, ItemError};
@@ -140,10 +143,30 @@ pub fn extract_blocks(w: &mut Walk, opts: &ExtractOptions) -> Result<FileBlocks,
     anchors::finish(w, walked)
 }
 
+/// A file's blocks as kfxgen hands them to its `_space_between`, with what the walk noted
+/// beside them by identity (kfxgen's `_ById` tables).
+#[derive(Debug)]
+pub struct BeforeSpacing {
+    pub blocks: Vec<Block>,
+    /// `margins`: a block's margin-top and margin-bottom, in the 16px root's ems.
+    pub margins: HashMap<BlockId, [f64; 2]>,
+    /// `paddings`: a block's padding-top and padding-bottom, and the margins inside them
+    /// (top, bottom), in the 16px root's ems.
+    pub paddings: HashMap<BlockId, [f64; 4]>,
+}
+
 /// The blocks as kfxgen hands them to the file's `_space_between`, before spacing, trailing
 /// ids and anchor keys: the dump's D2a, for tests of the walk alone.
-pub fn blocks_before_spacing(w: &mut Walk, opts: &ExtractOptions) -> Result<Vec<Block>, ItemError> {
-    Ok(walk::walk(w, opts)?.blocks)
+pub fn blocks_before_spacing(
+    w: &mut Walk,
+    opts: &ExtractOptions,
+) -> Result<BeforeSpacing, ItemError> {
+    let walked = walk::walk(w, opts)?;
+    Ok(BeforeSpacing {
+        blocks: walked.blocks,
+        margins: walked.margins,
+        paddings: walked.paddings,
+    })
 }
 
 /// A file's [`Error::Unsupported`].

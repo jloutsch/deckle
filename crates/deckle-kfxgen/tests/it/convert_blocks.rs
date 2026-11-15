@@ -8,8 +8,8 @@ use std::time::Instant;
 use deckle_kfx::fixtures;
 use deckle_kfxgen::book::read_book;
 use deckle_kfxgen::convert::{
-    Block, Error, ExtractOptions, FileBlocks, ItemError, Resolver, Serials, TextBudget, Walk,
-    blocks_before_spacing, extract_blocks,
+    BeforeSpacing, Block, Error, ExtractOptions, FileBlocks, ItemError, Resolver, Serials,
+    TextBudget, Walk, blocks_before_spacing, extract_blocks,
 };
 use deckle_kfxgen::css::DEFAULT_PROFILE;
 use deckle_kfxgen::pyvalue::PyValue;
@@ -24,6 +24,7 @@ use crate::support::{COST_LIMIT, allocated_by};
 const FIXTURES: &[&str] = &[
     "block_edges",
     "block_picture_769",
+    "block_picture_770",
     "comments_in_tree",
     "fake_margins",
     "fonts",
@@ -41,68 +42,40 @@ const FIXTURES: &[&str] = &[
     "refused_selector",
     "rtl",
     "ruby_tcy",
+    "text_edges",
     "vertical",
 ];
 
 /// The sources recorded on a second pass (with `keep_nav_listings`): both passes are compared.
 const TWO_PASSES: &[&str] = &["listing_rerun", "refused_selector"];
 
-/// Keys left out of both sides of the comparison.
-struct LeftOut {
-    /// Written during the walk by `_note_margins`, `_note_padding` and
-    /// `_carry_container_margins`: left out of D2a and D2.
-    walk: &'static [&'static str],
-    /// Written by `_space_between`: left out of D2.
-    spacing: &'static [&'static str],
+fn blocks_py(blocks: &[Block]) -> PyValue {
+    PyValue::List(blocks.iter().map(Block::to_py).collect())
 }
 
-/// What Task 12 (margins and spacing) writes and this task does not. Task 12 removes this list.
-/// Until then the margins and paddings columns of each D2a entry (its second and third items)
-/// are not compared either.
-const LEFT_OUT_UNTIL_TASK_12: LeftOut = LeftOut {
-    walk: &["own_bottom_em", "bottom_in_em", "outer_em_ratio"],
-    spacing: &[
-        "margin_above",
-        "margin_below",
-        "padding_below",
-        "space_above",
-        "tight",
-        "trailing_space",
-    ],
-};
-
-/// `block` without the keys in `left_out`.
-fn without(block: &PyValue, left_out: &[&[&str]]) -> PyValue {
-    match block {
-        PyValue::Dict(pairs) => PyValue::Dict(
-            pairs
-                .iter()
-                .filter(|(k, _)| {
-                    !k.as_str()
-                        .is_some_and(|k| left_out.iter().any(|keys| keys.contains(&k)))
-                })
-                .cloned()
-                .collect(),
-        ),
-        other => other.clone(),
-    }
+fn floats(v: &[f64]) -> PyValue {
+    PyValue::List(v.iter().map(|f| PyValue::Float(*f)).collect())
 }
 
-/// D2a leaves out what the walk's margin hooks write.
-fn for_d2a(block: &PyValue) -> PyValue {
-    without(block, &[LEFT_OUT_UNTIL_TASK_12.walk])
-}
-
-/// D2 leaves out that and what `_space_between` writes.
-fn for_d2(block: &PyValue) -> PyValue {
-    without(
-        block,
-        &[LEFT_OUT_UNTIL_TASK_12.walk, LEFT_OUT_UNTIL_TASK_12.spacing],
+/// The walk's blocks as the dump writes `_space_between`'s input: each block with its noted
+/// margins and paddings (`margins.get(block)`, `paddings.get(block)`), or None.
+fn before_spacing_py(got: &BeforeSpacing) -> PyValue {
+    PyValue::List(
+        got.blocks
+            .iter()
+            .map(|b| {
+                PyValue::List(vec![
+                    b.to_py(),
+                    got.margins
+                        .get(&b.id())
+                        .map_or(PyValue::None, |m| floats(m)),
+                    got.paddings
+                        .get(&b.id())
+                        .map_or(PyValue::None, |p| floats(p)),
+                ])
+            })
+            .collect(),
     )
-}
-
-fn blocks_py(blocks: &[Block], left_out: fn(&PyValue) -> PyValue) -> PyValue {
-    PyValue::List(blocks.iter().map(|b| left_out(&b.to_py())).collect())
 }
 
 fn strs(items: &[String]) -> PyValue {
@@ -153,8 +126,8 @@ fn string_set(v: Option<&PyValue>) -> HashSet<String> {
 
 /// For each source in [`FIXTURES`] and each of its passes, every spine file's walk gives the
 /// blocks kfxgen handed its file's `_space_between` (D2a, the last call not inside another),
-/// and the whole extraction gives the dumped blocks and out-lists, with
-/// [`LEFT_OUT_UNTIL_TASK_12`] left out. The serials run on across the book and its passes, one
+/// with the margins and paddings noted beside them, and the whole extraction gives the dumped
+/// blocks and out-lists. The serials run on across the book and its passes, one
 /// count for each of the two runs. Every spine file must have a dump holding a record for each
 /// of the source's passes, and none other, so no file is skipped without a failure.
 #[test]
@@ -230,19 +203,11 @@ fn blocks_match_the_dump() {
                     .iter()
                     .rfind(|c| c.get("depth").and_then(PyValue::as_int) == Some(0))
                     .unwrap_or_else(|| panic!("{where_}: no spacing call"));
-                let expected = PyValue::List(
-                    file_call
-                        .get("blocks")
-                        .and_then(PyValue::as_list)
-                        .unwrap()
-                        .iter()
-                        .map(|entry| for_d2a(&entry.as_list().unwrap()[0]))
-                        .collect(),
-                );
+                let expected = file_call.get("blocks").unwrap();
                 let mut walk = Walk::new(file, &resolver, &mut walked_serials);
                 match blocks_before_spacing(&mut walk, &opts) {
                     Ok(got) => {
-                        for d in model_diff(&blocks_py(&got, for_d2a), &expected) {
+                        for d in model_diff(&before_spacing_py(&got), expected) {
                             failures.push(format!("{where_} D2a{d}"));
                         }
                     }
@@ -255,16 +220,8 @@ fn blocks_match_the_dump() {
                 let mut walk = Walk::new(file, &resolver, &mut serials);
                 match extract_blocks(&mut walk, &opts) {
                     Ok(got) => {
-                        let want = PyValue::List(
-                            record
-                                .get("blocks")
-                                .and_then(PyValue::as_list)
-                                .unwrap()
-                                .iter()
-                                .map(for_d2)
-                                .collect(),
-                        );
-                        for d in model_diff(&blocks_py(&got.blocks, for_d2), &want) {
+                        let want = record.get("blocks").unwrap();
+                        for d in model_diff(&blocks_py(&got.blocks), want) {
                             failures.push(format!("{where_} D2 blocks{d}"));
                         }
                         for (key, ours) in out_lists(&got) {
@@ -433,6 +390,56 @@ fn empty_paragraphs_in_a_row_carry_their_ids_in_linear_time() {
     assert_eq!(ids.as_list().map(<[PyValue]>::len), Some(3));
 }
 
+/// Paragraphs with % margins inside 200 nested divs: kfxgen measures each paragraph's share of
+/// the page through every div round it again (`_box_share`, a style resolved per div). Each
+/// div's share is worked out once here, so the deep page costs about what a shallow one does.
+#[test]
+fn percent_margins_deep_in_the_tree_are_measured_once_per_div() {
+    // Built node by node: `dom::parse` of 200 nested divs overflows a test thread's stack.
+    let make = |deep: usize, n: usize| {
+        let (mut dom, body) = empty_page();
+        let mut at = body;
+        for _ in 0..deep {
+            at = dom.append_child(at, "div");
+        }
+        for _ in 0..n {
+            let p = dom.append_child(at, "p");
+            dom.set_text(p, "x");
+        }
+        file_of(dom, "p { margin: 5% 0 } div { padding: 0 1em }")
+    };
+    let bytes = |file: deckle_kfxgen::book::File| {
+        let (got, bytes) = allocated_by(|| extract(&file));
+        got.unwrap();
+        bytes
+    };
+    let (shallow, deep) = (bytes(make(1, 1_000)), bytes(make(200, 1_000)));
+    eprintln!("1,000 paragraphs: {shallow} bytes in one div, {deep} in 200");
+    assert!(
+        deep < 2 * shallow,
+        "{shallow} bytes in one div, {deep} in 200"
+    );
+    allocates_linearly("% margins in 200 divs", 1_000, |n| make(200, n));
+    // The share is the page's less each div's side padding, at 384pt: 2em is 2/32 of it.
+    let got = extract(&make(2, 2)).unwrap();
+    assert_eq!(
+        got.blocks[1].get("margin_above"),
+        Some(&PyValue::Float(
+            5.0 * (384.0 / 1200.0) * (1.0 - 2.0 / 32.0 - 2.0 / 32.0)
+        ))
+    );
+}
+
+/// Spacer paragraphs between paragraphs: each is a space block the spacing pass takes out
+/// while it builds the file's list, in one pass.
+#[test]
+fn spacers_between_paragraphs_are_spaced_in_linear_time() {
+    let make = |n: usize| page(&"<p>x</p><p>\u{a0}</p>".repeat(n), "");
+    allocates_linearly("spacers between paragraphs", 2_000, make);
+    let got = extract(&make(3)).unwrap();
+    assert_eq!(got.blocks.len(), 3);
+}
+
 /// Where kfxgen raises inside the walk (it leaves the spine item out), the port gives
 /// `ItemError::Raised` with Python's exception: a box tag's width in `in` spelt with U+0131
 /// (`_box_width` → `parse_css_length`), and a paragraph's `text-align` that calibre reads as
@@ -449,6 +456,31 @@ fn what_kfxgen_raises_on_in_the_walk_is_raised() {
             "<p class=\"a\">x</p>",
             ".a { text-align: 5px }",
             "AttributeError",
+        ),
+        // `_carry_container_margins` → `parse_css_length`.
+        (
+            "<div class=\"m\"><p>x</p></div>",
+            ".m { margin-left: 2\u{131}n }",
+            "KeyError",
+        ),
+        // `_spacer_em`: `round()` of an infinite line.
+        (
+            "<p>x</p><p class=\"s\">\u{a0}</p>",
+            ".s { line-height: 1e400 }",
+            "OverflowError",
+        ),
+        (
+            "<p>x</p><p class=\"s\">\u{a0}</p>",
+            // calibre drops `1e400px` as a size; digits past a float's range are infinite.
+            concat!(
+                ".s { font-size: 1",
+                "00000000000000000000000000000000000000000000000000000000000000000000000000000",
+                "00000000000000000000000000000000000000000000000000000000000000000000000000000",
+                "00000000000000000000000000000000000000000000000000000000000000000000000000000",
+                "00000000000000000000000000000000000000000000000000000000000000000000000000000",
+                "px; line-height: normal }"
+            ),
+            "OverflowError",
         ),
     ] {
         match extract(&page(body, css)) {
