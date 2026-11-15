@@ -1242,7 +1242,7 @@ impl<'a, 's> Walk<'a, 's> {
                             bufs[job.buf].push(Self::mark(id));
                         }
                         // Task 10 writes the picture's token.
-                        return Err(self.unsupported("pictures in text"));
+                        return Err(self.unsupported("pictures in text (Task 10)"));
                     } else if is_cell_block(clocal) || clocal == "option" {
                         // A block walked inline: its edges are a word boundary (#279, #477).
                         bufs[job.buf].push(Self::space());

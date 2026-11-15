@@ -23,21 +23,38 @@ use crate::support::{COST_LIMIT, find};
 const SKIP: &[(&str, &str, &str)] = &[];
 
 /// Task 10 writes a picture's token: until then the walk stops at a visible `<img>` or `<svg>`
-/// with this feature, and the call is skipped. Only these sources have such calls.
-const PICTURES: &str = "pictures in text";
-const PICTURE_SOURCES: [&str; 12] = [
-    "block_picture_769",
-    "block_picture_770",
-    "css_quirks",
-    "figures",
-    "floats",
-    "floats_697",
-    "frames",
-    "horizontal_blocks",
-    "horizontal_blocks_ltr",
-    "pictures_more",
-    "pictures_side_by_side_766",
-    "vertical_pictures_761",
+/// with this feature, and the call is skipped. The skipped calls are exactly these:
+/// (source, NNN of `inline/NNN.json.gz`, indexes of the records in that dump). Task 10 empties
+/// the list.
+const PICTURES: &str = "pictures in text (Task 10)";
+#[rustfmt::skip]
+const PICTURE_CALLS: &[(&str, &str, &[usize])] = &[
+    ("block_picture_769", "000", &[2, 4, 6, 8, 10, 12, 14, 16]),
+    ("block_picture_770", "000", &[2, 4, 6, 8, 10, 12, 14, 16, 18, 20]),
+    ("css_quirks", "005", &[2]),
+    ("figures", "001", &[2]),
+    ("figures", "005", &[2]),
+    ("floats", "000", &[2]),
+    ("floats", "001", &[2]),
+    ("floats", "002", &[2]),
+    ("floats", "003", &[2]),
+    ("floats", "004", &[2]),
+    ("floats", "005", &[2]),
+    ("floats", "006", &[2]),
+    ("floats_697", "000", &[1, 2]),
+    ("floats_697", "001", &[1]),
+    ("floats_697", "002", &[1, 2]),
+    ("floats_697", "003", &[1, 2, 3, 5]),
+    ("frames", "001", &[1, 3]),
+    ("frames", "003", &[1, 2, 3, 4]),
+    ("frames", "004", &[1, 2, 3]),
+    ("frames", "005", &[1]),
+    ("horizontal_blocks", "002", &[2, 3, 4, 5, 6, 8, 9, 10, 11]),
+    ("horizontal_blocks_ltr", "002", &[2, 3, 4, 5, 6, 8, 9, 10, 11]),
+    ("pictures_more", "000", &[1, 2, 3]),
+    ("pictures_more", "001", &[0]),
+    ("pictures_side_by_side_766", "000", &[2, 4, 6, 8, 10, 14, 16]),
+    ("vertical_pictures_761", "000", &[2, 4, 6, 8, 10, 12, 14, 16]),
 ];
 
 /// The walk's parts as the dump writes `segments`: (text, frozenset) tuples, the tables left
@@ -128,6 +145,7 @@ fn runs_match_the_dump_for_every_paragraph() {
     let mut failures = Vec::new();
     let (mut files_compared, mut calls, mut skipped, mut pictures) = (0, 0, 0, 0);
     let mut jumps = Vec::new();
+    let mut picture_calls: Vec<(String, String, usize)> = Vec::new();
     for name in &names {
         let book = read_book(&fixtures::kfxgen(&format!("sources/{name}.epub")))
             .unwrap_or_else(|e| panic!("{name}: {e}"));
@@ -150,7 +168,7 @@ fn runs_match_the_dump_for_every_paragraph() {
                 let budget = TextBudget::new();
                 let resolver = Resolver::new(file, &DEFAULT_PROFILE, &budget);
                 let mut walk = Walk::new(file, &resolver, &mut serials);
-                for record in &records {
+                for (index, record) in records.iter().enumerate() {
                     let [path, segs, normalized] = record.as_list().unwrap() else {
                         panic!("{name} {nnn}: a record of other than three items");
                     };
@@ -183,9 +201,10 @@ fn runs_match_the_dump_for_every_paragraph() {
                         Ok(parts) => segments(&parts),
                         Err(ItemError::Error(Error::Unsupported {
                             feature: PICTURES, ..
-                        })) if PICTURE_SOURCES.contains(&name.as_str()) => {
+                        })) => {
                             calls -= 1;
                             pictures += 1;
+                            picture_calls.push((name.clone(), format!("{nnn}{pass}"), index));
                             continue;
                         }
                         Err(e) => {
@@ -219,7 +238,15 @@ fn runs_match_the_dump_for_every_paragraph() {
         failures.len()
     );
     assert_eq!(files_compared, 188);
-    assert_eq!(pictures, 84, "the calls Task 10 makes pass");
+    let expected: Vec<(String, String, usize)> = PICTURE_CALLS
+        .iter()
+        .flat_map(|(s, f, ix)| ix.iter().map(|&i| (s.to_string(), f.to_string(), i)))
+        .collect();
+    assert_eq!(
+        picture_calls, expected,
+        "the calls that reach a picture (Task 10)"
+    );
+    assert_eq!(pictures, 84);
     assert_eq!(calls + skipped + pictures, 1862);
 }
 
