@@ -19,6 +19,7 @@ use std::collections::{HashMap, HashSet};
 use deckle_limits::MAX_DEPTH;
 
 use super::lists::{Item, Lists, Native};
+use super::rules::css_border;
 use super::spacing::Noted;
 use super::{Block, BlockId, ExtractOptions, Field, dedupe, dict_set, s, strs, unsupported};
 use crate::convert::block_bidi::{BlockBidi, start_end_align};
@@ -29,8 +30,7 @@ use crate::convert::inline::{
     subtree_anchor_ids, text_of,
 };
 use crate::convert::inline_style::{
-    FLAG_PRE, Flag, Flags, Segment, css_rgb, is_transparent, make_anchor_mark,
-    normalize_runs_with_anchors, parse_css_length,
+    FLAG_PRE, Flag, Flags, Segment, make_anchor_mark, normalize_runs_with_anchors, parse_css_length,
 };
 use crate::convert::pictures::{css_background_image, displays_as_block, float_side};
 use crate::convert::resolver::{Resolved, Resolver};
@@ -126,7 +126,7 @@ pub(super) fn has_words(s: &str) -> bool {
 pub(super) struct Walked {
     pub(super) blocks: Vec<Block>,
     pub(super) pending_ids: Vec<String>,
-    /// `rule_ids`: an `<hr>`'s own ids (Task 14 fills it).
+    /// `rule_ids`: an `<hr>`'s own ids.
     pub(super) rule_ids: HashSet<String>,
     pub(super) listing_ids: HashSet<String>,
     pub(super) nav_listing_at: Vec<(usize, Vec<String>)>,
@@ -203,7 +203,9 @@ pub(super) struct Walker<'o, 'w, 'a, 's> {
     opts: &'o ExtractOptions<'o>,
     pub(super) blocks: Vec<Block>,
     next_id: usize,
-    pending_ids: Vec<String>,
+    pub(super) pending_ids: Vec<String>,
+    /// `rule_ids`: an `<hr>`'s own ids, which name the rule.
+    pub(super) rule_ids: HashSet<String>,
     listing_ids: HashSet<String>,
     /// How many of `pending_ids`, from the front, are in `listing_ids` already: kfxgen adds
     /// all of them after each listing, which is quadratic over many listings in a row.
@@ -238,6 +240,7 @@ pub(super) fn walk(w: &mut Walk, opts: &ExtractOptions) -> Result<Walked, ItemEr
         blocks: Vec::new(),
         next_id: 0,
         pending_ids: Vec::new(),
+        rule_ids: HashSet::new(),
         listing_ids: HashSet::new(),
         listed: 0,
         nav_listing_at: Vec::new(),
@@ -267,7 +270,7 @@ pub(super) fn walk(w: &mut Walk, opts: &ExtractOptions) -> Result<Walked, ItemEr
     Ok(Walked {
         blocks: walker.blocks,
         pending_ids: walker.pending_ids,
-        rule_ids: HashSet::new(),
+        rule_ids: walker.rule_ids,
         listing_ids: walker.listing_ids,
         nav_listing_at: walker.nav_listing_at,
         body,
@@ -489,7 +492,7 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         drop(css);
         let local = dom.tag(elem);
         if local == "hr" {
-            return Err(self.unsupported("rules (Task 14)"));
+            return self.emit_rule(elem);
         }
         if local == "table" {
             return Err(self.unsupported(if self.opts.native_tables {
@@ -1261,81 +1264,6 @@ fn anchors_follow_rows(dom: &Dom, elem: NodeId) -> bool {
         })
         .collect();
     kinds.starts_with('R') && kinds.ends_with('A') && kinds.trim_end_matches('A').contains('A')
-}
-
-/// `_BORDER_SIDES`.
-pub(super) const BORDER_SIDES: [&str; 4] = ["top", "right", "bottom", "left"];
-/// `_PREVIEWER_PT_PER_CALIBRE_PT`: Previewer writes a border at 0.45pt a pixel, calibre
-/// computes it at 0.72pt.
-const PREVIEWER_PT_PER_CALIBRE_PT: f64 = 0.625;
-
-/// One drawn side of `_css_border`'s dict: `(style, width in Previewer's points, ARGB colour
-/// or None)`, keyed by its side.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct BorderSide {
-    pub(super) side: &'static str,
-    pub(super) kind: String,
-    pub(super) pt: f64,
-    pub(super) colour: Option<i64>,
-}
-
-/// `_css_border(css)`: the drawn sides of the element's computed border, in `_BORDER_SIDES`
-/// order, or None when no side is drawn. A colour is read as `_border_colour` reads it, which
-/// can raise.
-pub(super) fn css_border(css: Option<&Resolved>) -> Result<Option<Vec<BorderSide>>, ItemError> {
-    let Some(css) = css else {
-        return Ok(None);
-    };
-    let Some(PyValue::Tuple(sides)) = css.get("border-sides")? else {
-        return Ok(None);
-    };
-    let mut out = Vec::new();
-    for (side, value) in BORDER_SIDES.into_iter().zip(sides.iter()) {
-        let PyValue::Tuple(parts) = value else {
-            continue;
-        };
-        let get = |i: usize| parts.get(i).unwrap_or(&PyValue::None);
-        let kind = text_of(Some(get(0)));
-        let kind = if kind.is_empty() {
-            "none".to_owned()
-        } else {
-            kind.to_lowercase()
-        };
-        let colour = text_of(Some(get(2)));
-        if matches!(kind.as_str(), "none" | "hidden") || is_transparent(&colour)? {
-            continue;
-        }
-        let pt = match get(1) {
-            PyValue::Float(f) => Some(*f),
-            PyValue::Int(i) => Some(*i as f64),
-            PyValue::Str(v) => py::py_float(v),
-            _ => None,
-        };
-        let pt = match pt {
-            Some(pt) => pt,
-            None => match text_of(Some(get(1))).to_lowercase().as_str() {
-                "thin" => 0.72,
-                "medium" => 3.0 * 0.72,
-                "thick" => 5.0 * 0.72,
-                _ => continue,
-            },
-        };
-        // False for NaN, as Python's: such a side is drawn.
-        if pt <= 0.0 {
-            continue;
-        }
-        // `_border_colour`: the ARGB integer, None for black or unreadable.
-        let colour = css_rgb(&colour)?
-            .filter(|rgb| *rgb != 0)
-            .map(|rgb| 0xFF00_0000 | rgb);
-        out.push(BorderSide {
-            side,
-            kind,
-            pt: py::round(pt * PREVIEWER_PT_PER_CALIBRE_PT, 4),
-            colour,
-        });
-    }
-    Ok((!out.is_empty()).then_some(out))
 }
 
 /// `_unit_percent(unit)`.

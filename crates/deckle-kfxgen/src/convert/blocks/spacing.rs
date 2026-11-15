@@ -21,7 +21,8 @@
 
 use std::collections::HashMap;
 
-use super::walk::{BORDER_SIDES, Walker, css_border, has_words, text_field, unit_percent};
+use super::rules::{BORDER_SIDES, css_border};
+use super::walk::{Walker, has_words, text_field, unit_percent};
 use super::{Block, BlockId, Field, dict_set, s, unsupported};
 use crate::convert::block_style::compute_block_style;
 use crate::convert::inline::{keyword, text_of};
@@ -241,7 +242,7 @@ pub(super) fn font_ratio(css: Option<&Resolved>) -> f64 {
 
 /// `_margin_em(css, side, share)`: the element's margin-top or -bottom in the 16px root's
 /// ems, a percentage of `share` of the page, negative as the book sets it, 0 when unset.
-fn margin_em(css: Option<&Resolved>, side: &str, share: f64) -> Result<f64, ItemError> {
+pub(super) fn margin_em(css: Option<&Resolved>, side: &str, share: f64) -> Result<f64, ItemError> {
     let key = if side == "top" {
         "margin-top"
     } else {
@@ -265,7 +266,7 @@ fn margin_em(css: Option<&Resolved>, side: &str, share: f64) -> Result<f64, Item
 
 /// `_hidden_rule_em(css)` from the values it reads: (margin-top, height, margin-bottom) of an
 /// `<hr>` that draws nothing, in the 16px root's ems, 0.6 of each; with no height its margins
-/// collapse into one. Task 14's invisible rule calls it too.
+/// collapse into one. `emit_rule`'s invisible rule calls it too.
 pub(super) fn hidden_rule_em(
     margin_top: &str,
     margin_bottom: &str,
@@ -471,7 +472,7 @@ fn mine(blocks: &[Block], start: usize) -> Option<(usize, usize)> {
 
 impl Walker<'_, '_, '_, '_> {
     /// `_emit_space(margin, line, height, margin_after)`: space for the next block to take.
-    fn emit_space(&mut self, margin: f64, line: f64, height: f64, margin_after: f64) {
+    pub(super) fn emit_space(&mut self, margin: f64, line: f64, height: f64, margin_after: f64) {
         let f = |x: f64| Field::Py(PyValue::Float(x));
         let block = self.new_block(vec![
             ("text", Field::Py(s(""))),
@@ -1545,7 +1546,9 @@ fn place_margin(prev: Option<&mut Block>, b: &mut Block, p: Placing) {
     };
     let (up, own) = (above, top);
     if spaces_itself(b) {
-        // The waiting margin meets the rule's own, in its `space_above` (Task 14's rule).
+        // The waiting margin meets the rule's own, in its `space_above`. Every rule block is
+        // `emit_rule`'s, which always writes `rule` with a float `space_above`, so kfxgen's
+        // `b["rule"]["space_above"]` cannot miss (its KeyError is unreachable).
         if let Some(PyValue::Dict(rule)) = b.get_mut("rule") {
             let current = number(
                 rule.iter()
@@ -1792,6 +1795,8 @@ mod tests {
         enum B {
             Para(&'static str, Vec<(&'static str, PyValue)>),
             Space(f64, f64, f64, f64),
+            /// A rule with this `space_above` (`space_below` 0.5).
+            Rule(f64),
             Table,
             /// A box of 16px holding these blocks, with this `box` dict.
             Box(Vec<B>, PyValue),
@@ -1835,6 +1840,16 @@ mod tests {
                     ("line", PyValue::Float(line)),
                     ("height", PyValue::Float(height)),
                     ("margin_after", PyValue::Float(after)),
+                ]),
+                B::Rule(above) => block(vec![
+                    ("type", s("rule")),
+                    (
+                        "rule",
+                        style(vec![
+                            ("space_above", PyValue::Float(above)),
+                            ("space_below", PyValue::Float(0.5)),
+                        ]),
+                    ),
                 ]),
                 B::Table => block(vec![("type", s("table"))]),
                 B::Box(kids, look) => {
@@ -1885,6 +1900,12 @@ mod tests {
                         })
                         .collect::<Vec<_>>()
                         .join(",");
+                    if let Some(rule) = b.get("rule") {
+                        if !part.is_empty() {
+                            part.push(',');
+                        }
+                        part += &format!("rule={}", repr(rule));
+                    }
                     if let Some(kids) = b.blocks() {
                         let look = b.get("box").map_or_else(String::new, repr);
                         part += &format!(",box={look},[{}]", keys(kids));
@@ -2018,6 +2039,75 @@ mod tests {
                  margin_above=0.0,margin_below=0.0,padding_below=0.0"
             );
             assert_eq!(got.1.get(&BlockId(0)), Some(&[0.0, 0.5]));
+        }
+
+        /// A rule's space above, each branch of `_place_margin`'s rule part, and the space after
+        /// a closing rule: against the pinned `_space_between` run under Python 3 on the same
+        /// blocks, as above. No dump reaches these.
+        #[test]
+        fn a_rule_takes_the_space_above_it_as_kfxgen_does() {
+            let rule =
+                |above: f64| format!("rule={{'space_above': {above:?}, 'space_below': 0.5}}");
+            // A padding below the paragraph before: its margin outside meets the rule's own,
+            // the rest is added.
+            let got = run(
+                vec![para("a"), B::Rule(0.5), para("b")],
+                &[(0, [0.0, 1.0]), (2, [0.8, 0.0])],
+                &[(0, [0.0, 0.5, 0.0, 0.25])],
+            );
+            assert_eq!(
+                got,
+                format!(
+                    "margin_above=0.0|{}|margin_above=0.8,margin_below=0.0,padding_below=0.0",
+                    rule(2.0)
+                )
+            );
+            // Past a spacer with a height: its space does not collapse.
+            let got = run(
+                vec![
+                    para("a"),
+                    B::Space(0.6, 0.0, 0.7125, 0.3),
+                    B::Rule(0.5),
+                    para("b"),
+                ],
+                &[(0, [0.0, 1.0])],
+                &[],
+            );
+            assert_eq!(
+                got,
+                format!(
+                    "margin_above=0.0|{}|margin_above=0.0,margin_below=0.0,padding_below=0.0",
+                    rule(2.2125)
+                )
+            );
+            // First in the file: it keeps its own.
+            let got = run(vec![B::Rule(0.5), para("a")], &[(1, [0.8, 0.0])], &[]);
+            assert_eq!(
+                got,
+                format!(
+                    "{}|margin_above=0.8,margin_below=0.0,padding_below=0.0",
+                    rule(0.5)
+                )
+            );
+            // Last, with a spacer after it: the spacer's space is its trailing space.
+            let got = run(
+                vec![para("a"), B::Rule(0.5), B::Space(0.0, 1.2, 0.0, 0.0)],
+                &[(0, [0.0, 1.0])],
+                &[],
+            );
+            assert_eq!(
+                got,
+                format!("margin_above=0.0|trailing_space=1.2,{}", rule(1.0))
+            );
+            // The paragraph after a rule takes only its own margin.
+            let got = run(vec![B::Rule(1.0), para("b")], &[(1, [0.5, 0.0])], &[]);
+            assert_eq!(
+                got,
+                format!(
+                    "{}|margin_above=0.5,margin_below=0.0,padding_below=0.0",
+                    rule(1.0)
+                )
+            );
         }
 
         #[test]

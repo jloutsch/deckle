@@ -14,12 +14,14 @@
 //! (Task 11); margins, padding, carried side margins, spacers and the space between blocks
 //! (Task 12, `spacing.rs`); lists, typed markers and native list boxes (Task 13, `lists.rs`),
 //! with what any box takes part in: its margins, the space inside it and what leaves it, its
-//! blocks' anchor keys and the ids at the file's end.
+//! blocks' anchor keys and the ids at the file's end; rules (Task 14, `rules.rs`), with the
+//! border reading boxes share.
 //! Each branch a later task ports stops the file with [`Error::Unsupported`] naming that task
 //! (`walk.rs`), so a book that needs one cannot be converted by accident.
 
 mod anchors;
 mod lists;
+mod rules;
 mod spacing;
 mod walk;
 
