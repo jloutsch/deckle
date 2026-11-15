@@ -855,6 +855,13 @@ fn a_comment_is_a_child_as_in_lxml() {
         assert_eq!(dom.ancestors(*c).last(), Some(dom.root()));
         assert_eq!(dom.ancestors(dom.root()).next(), None);
     }
+
+    // Comments whose tails hold text, before and after an element.
+    let dom = dom::parse(chapter("a<!--c-->b<i>d</i><!--e-->f").as_bytes()).unwrap();
+    let p = dom.children(body(&dom).unwrap())[0];
+    assert_eq!(dom.itertext(p), "abdf");
+    assert_eq!(dom.text(p), "a");
+    assert_eq!(dom.children(p).len(), 3);
 }
 
 #[test]

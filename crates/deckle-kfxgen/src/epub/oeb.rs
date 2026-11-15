@@ -394,8 +394,8 @@ struct Book<'z> {
     zip: &'z mut EpubReader,
     names: BTreeSet<String>,
     docs: BTreeMap<String, Option<DocInfo>>,
-    /// The elements and attributes of every document read so far, counted against
-    /// [`MAX_BOOK_DOM_NODES`].
+    /// The nodes (elements and comments) and attributes of every document read so far, counted
+    /// against [`MAX_BOOK_DOM_NODES`].
     nodes: usize,
     /// The bytes of the nav, the NCX and every document read so far, counted against
     /// [`MAX_BOOK_CONTENT_BYTES`].
@@ -491,7 +491,7 @@ impl Book<'_> {
         });
         if self.nodes > MAX_BOOK_DOM_NODES {
             return Err(Error::TooLarge(format!(
-                "this book's files hold more than {MAX_BOOK_DOM_NODES} elements and attributes"
+                "this book's files hold more than {MAX_BOOK_DOM_NODES} nodes and attributes"
             )));
         }
         self.docs.insert(name, info.clone());

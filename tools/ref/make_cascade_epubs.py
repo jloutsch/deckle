@@ -27,7 +27,8 @@ Writes, into OUT_DIR (fixtures/kfxgen/sources):
   between the head's children (its whitespace reset), a rule inside a comment in a <style>
   (the Stylizer reads a child's text), a left-floated drop cap holding a comment beside one
   without (flatcss is_drop_cap counts children), and a comment before the first child of a
-  <div> whose children :first-child and :nth-child(2) pick (css_selectors counts it).
+  <div> whose children :first-child and :nth-child(2) pick (css_selectors counts it); and
+  comments whose tails hold text, before and after an element.
 
 tools/ref/kfxgen_models.sh --cascade runs it. Fixed zip dates: the same script makes the same
 bytes. The dumps are the reference; nothing here says what Calibre does with them.
@@ -327,6 +328,7 @@ def comments_in_tree(out):
     body = (
         '<p id="b1">Before <b><!--c--></b>after a bold holding only a comment.</p>\n'
         '<p id="b2">Before <b></b>after a bold holding nothing.</p>\n'
+        '<p id="tails">a<!--c-->b<i>d</i><!--e-->f</p>\n'
         '<p id="br1">A break holding a comment<br><!--c--></br>after it.</p>\n'
         '<p class="ruled">Coloured by the rule inside the comment in the style element.</p>\n'
         '<p id="cap1"><span class="cap">T<!--c--></span>he drop cap holds a comment.</p>\n'

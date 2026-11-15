@@ -478,9 +478,9 @@ impl Dom {
 
     /// Takes each of `nodes` and everything under it out of the tree. A removed node's tail
     /// stays where it was: it joins the tail of the nearest earlier sibling (a comment or an
-    /// element) not removed, or the parent's text (`parse_utils.py` `parse_html`'s `remove_elem`, applied in document order).
-    /// The root, an element already removed and a repeat are passed over. Each parent's
-    /// children are compacted once, however many go.
+    /// element) not removed, or the parent's text (`parse_utils.py` `parse_html`'s
+    /// `remove_elem`, applied in document order). The root, an element already removed and a
+    /// repeat are passed over. Each parent's children are compacted once, however many go.
     pub fn remove_many(&mut self, nodes: &[NodeId]) {
         // One: shift the siblings after it, not rebuild them all.
         if let [n] = nodes {

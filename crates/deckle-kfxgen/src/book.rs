@@ -192,7 +192,7 @@ pub fn read_book(path: &Path) -> Result<Book, Error> {
         if nodes > MAX_BOOK_DOM_NODES {
             return Err(Error::TooLarge {
                 what: format!(
-                    "this book's files hold more than {MAX_BOOK_DOM_NODES} elements and attributes"
+                    "this book's files hold more than {MAX_BOOK_DOM_NODES} nodes and attributes"
                 ),
             });
         }
