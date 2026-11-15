@@ -140,3 +140,25 @@ fn an_unknown_table_cell_key_is_refused_by_name() {
         item(entry(item(entry(table, "rows"), 0), "cells"), 0)
     });
 }
+
+#[test]
+fn an_unknown_cell_paragraph_key_is_refused_by_name() {
+    refuses_surprise("table_paragraph_cells", |args| {
+        let table = entry(
+            item(entry(item(entry(args, "chapters"), 0), "blocks"), 1),
+            "table",
+        );
+        let cell = item(entry(item(entry(table, "rows"), 0), "cells"), 0);
+        item(entry(cell, "paragraphs"), 0)
+    });
+}
+
+#[test]
+fn an_unknown_box_key_is_refused_by_name() {
+    refuses_surprise("boxes", |args| {
+        entry(
+            item(entry(item(entry(args, "chapters"), 0), "blocks"), 2),
+            "box",
+        )
+    });
+}

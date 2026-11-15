@@ -103,8 +103,8 @@ const BLOCK_KEYS: [&str; 30] = [
     "label_texts",
 ];
 
-/// `d`'s first key outside `read` and [`IGNORED_KEYS`] is a [`GenerateError::Model`],
-/// named with where it is.
+/// `d`'s first key outside `read` and [`IGNORED_KEYS`] is a [`GenerateError::Model`]:
+/// "a model key the port does not know: " and the key's place in the model.
 pub(crate) fn known_keys(d: &PyValue, read: &[&str], at: &str) -> Result<(), GenerateError> {
     let PyValue::Dict(pairs) = d else {
         return Ok(());

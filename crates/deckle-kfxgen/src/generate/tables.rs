@@ -196,6 +196,22 @@ const CELL_KEYS: [&str; 16] = [
     "anchor_keys",
     "anchor_offsets",
 ];
+/// A cell paragraph's: those `read_paragraph` reads, and `heading_level` and `preformatted`,
+/// which kfxgen reads only on a paragraph holding a picture, which the port refuses.
+const PARAGRAPH_KEYS: [&str; 12] = [
+    "type",
+    "text",
+    "spans",
+    "block_style",
+    "margin_above",
+    "space_above",
+    "margin_below",
+    "heading",
+    "anchor_keys",
+    "anchor_offsets",
+    "heading_level",
+    "preformatted",
+];
 
 /// A block of type "table".
 pub(crate) fn read_table_block(b: &PyValue, at: &str) -> Result<Block, GenerateError> {
@@ -387,6 +403,7 @@ fn read_cell_spans(v: Option<&PyValue>, text: &str, at: &str) -> Result<Vec<Span
 }
 
 fn read_paragraph(p: &PyValue, at: &str) -> Result<Paragraph, GenerateError> {
+    known_keys(p, &PARAGRAPH_KEYS, at)?;
     if p.get("type").and_then(PyValue::as_str) == Some("box") {
         return Err(Unsupported("boxes"));
     }
