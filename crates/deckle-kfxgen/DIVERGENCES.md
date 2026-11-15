@@ -171,6 +171,22 @@ spacings it can't unpack. A run carrying two values of one kind is
 initial is so large that its line count passes 2^63 is a model error, where kfxgen writes
 Python's unbounded int.
 
+## Turned text, lists and picture places of another shape
+
+The converter writes text set the other way from its line as `("turn", (serial, mode, text,
+spans))`, an int, `"horizontal"` or `"vertical"`, a string and runs (`make_turn_flag`,
+`inline_style.py:407` at ad38ec8); a list's `list` as a `type` that is one of KFX's own
+symbols, a `start` int or None and an `inside` flag (`converter.py:6580`), an item's
+`list_item` or `item` as `n` and `value` ints or None and an `empty` flag (:6627); and a block's
+`picture_boxes` as `(left, right)` pairs, each a block style's `(magnitude, unit)` length or
+None (:7400). The port reads exactly those; anything else is a `GenerateError::Model` naming the
+key or the runs, where kfxgen raises on a mode it has no style for and on most shapes it can't
+unpack, writes a list type of another name as a symbol (which can be one the book already has,
+as for units), and writes a start or value of another type as that Ion type. A run carrying two
+turned texts is `GenerateError::Unsupported`: kfxgen would take the first in set order. An item
+numbered 2^63 − 1, whose next number passes an i64, is a model error, where kfxgen counts on in
+Python's unbounded int.
+
 ## Contents nested more than 32 levels deep
 
 kfxgen nests contents entries by level (`_nest_nav_entries`, `native_generator.py:2119`) and
