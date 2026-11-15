@@ -629,3 +629,14 @@ height"): where Calibre reads `1_0` as 10 pixels, the port gives the text back. 
 property by its CSS name only. Calibre's `Style[name]` first turns the name into a Python
 attribute name (`_toDOMname`), so `fontSize` or `font-Size` also reach the font size; kfxgen asks
 by CSS names.
+
+## The nav and NCX kfxgen reads beside Calibre's OPF
+
+kfxgen opens the nav and the NCX that Calibre's rewritten OPF names with lxml's XML parser
+(`converter.py` `_container_parser`, entities left unresolved). The port reads them only when
+they are UTF-8 (a file in another encoding counts as missing, as elsewhere in phase 2), refuses an
+entity holding markup and a file past `deckle_limits`' node or attribute limits by treating it as
+missing, as kfxgen treats a file lxml cannot parse, and expands an entity of plain text, where
+lxml's `itertext` gives the reference as written (`&e;`, checked with lxml 6.0.2). An NCX item written with the misspelt
+`mediatype` attribute counts as an NCX; kfxgen's XPath asks for `media-type` only. kfxgen logs
+each href it rejects to its security log; the port has no such log.

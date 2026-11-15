@@ -856,7 +856,7 @@ pub(crate) fn parse_date(raw: &str, only_date_fix: bool) -> Option<Date> {
 /// `resources/localization/iso639.calibre_msgpack`, built from the iso-codes package): all
 /// 184 two-letter codes. Sorted for binary search.
 #[rustfmt::skip]
-const ISO639_2TO3: [(&str, &str); 184] = [
+pub(crate) const ISO639_2TO3: [(&str, &str); 184] = [
     ("aa", "aar"), ("ab", "abk"), ("ae", "ave"), ("af", "afr"), ("ak", "aka"), ("am", "amh"),
     ("an", "arg"), ("ar", "ara"), ("as", "asm"), ("av", "ava"), ("ay", "aym"), ("az", "aze"),
     ("ba", "bak"), ("be", "bel"), ("bg", "bul"), ("bi", "bis"), ("bm", "bam"), ("bn", "ben"),

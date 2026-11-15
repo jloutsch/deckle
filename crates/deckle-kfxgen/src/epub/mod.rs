@@ -13,7 +13,7 @@
 
 mod oeb;
 pub(crate) mod package;
-mod toc;
+pub(crate) mod toc;
 
 pub use oeb::oeb_view;
 pub(crate) use oeb::{OEB_STYLES, is_stylesheet};
@@ -111,6 +111,27 @@ pub struct Oeb {
     pub guide: Vec<GuideRef>,
     pub metadata: Metadata,
     pub page_progression_direction: Option<String>,
+    /// The OPF Calibre writes for the book, which kfxgen reads.
+    pub(crate) rewritten: RewrittenOpf,
+}
+
+/// The OPF `epub_input.py` `convert` writes at the root of the folder Calibre unpacks the book
+/// into (`content.opf`), and the two files beside it kfxgen reads (`converter.py`
+/// `_book_files`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct RewrittenOpf {
+    /// The manifest, hrefs from the root and decoded once (`OPF.unquote_urls`), with the NCX
+    /// `convert_epub3_nav` makes from the nav last.
+    pub manifest: Vec<package::OpfItem>,
+    /// The spine's idrefs, the cover page and repeats taken out.
+    pub spine: Vec<String>,
+    pub guide: Vec<package::OpfRef>,
+    /// The nav points of the NCX `convert_epub3_nav` makes, when it makes one.
+    pub nav_ncx: Option<Vec<toc::NavPoint>>,
+    /// The text of the file at kfxgen's nav path, when it is in the book and UTF-8.
+    pub nav_text: Option<String>,
+    /// The text of the file at kfxgen's NCX path, likewise (none for the NCX Calibre makes).
+    pub ncx_text: Option<String>,
 }
 
 /// Why the package could not be read.

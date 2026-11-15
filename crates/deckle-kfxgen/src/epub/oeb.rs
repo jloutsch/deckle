@@ -21,12 +21,15 @@ use super::package::{
     posix_join, read_text, splitext, unquote, urldefrag, urlnormalize, urlquote,
 };
 use super::toc::{self, NavPoint};
-use super::{Error, GuideRef, Item, Metadata, Oeb, Package, SpineRef, TocNode};
+use super::{Error, GuideRef, Item, Metadata, Oeb, Package, RewrittenOpf, SpineRef, TocNode};
 use crate::dom::{self, Dom, NodeId, XHTML_NS};
 
 const XHTML_MIME: &str = "application/xhtml+xml";
 const CSS_MIME: &str = "text/css";
 const BINARY_MIME: &str = "application/octet-stream";
+/// The name `convert_epub3_nav` gives the NCX it makes, a `NamedTemporaryFile`, as the dumps
+/// write it in place of its random part.
+const GENERATED_NCX: &str = "tmpXXXXXXXX.ncx";
 /// `base.py` `OEB_DOCS`.
 const OEB_DOCS: [&str; 4] = [
     XHTML_MIME,
@@ -890,6 +893,65 @@ impl Input {
         }))
     }
 
+    /// The OPF `convert` writes once it is done, and the texts of the files kfxgen reads beside
+    /// it ([`kfxgen_paths`](crate::convert::kfxgen_paths)): the book's own nav and NCX
+    /// texts when the paths are theirs, else read from the book and charged to it.
+    fn rewritten(
+        &self,
+        pkg: &Package,
+        nav: Option<&NavToc>,
+        book: &mut Book,
+    ) -> Result<RewrittenOpf, Error> {
+        let mut manifest = self.manifest.clone();
+        // `convert_epub3_nav` writes its NCX beside the nav under a random name, and appends it.
+        let generated = match (nav, &pkg.files.nav_path) {
+            (Some(_), Some(nav_path)) => {
+                let href = posix_join(dirname(nav_path), GENERATED_NCX);
+                manifest.push(OpfItem {
+                    id: None,
+                    href: Some(href.clone()),
+                    media_type: Some(NCX_MIME.to_owned()),
+                    properties: String::new(),
+                });
+                Some(crate::convert::item_path(&href))
+            }
+            _ => None,
+        };
+        let (nav_path, ncx_path) = crate::convert::kfxgen_paths(&manifest);
+        // `own` is the file `read_package` already read: (its path, its text).
+        let mut text = |path: Option<String>, own: (&Option<String>, &Option<String>)| {
+            let Some(path) = path else {
+                return Ok(None);
+            };
+            if own.0.as_deref() == Some(path.as_str()) {
+                return Ok(own.1.clone());
+            }
+            if path.starts_with('/') || path.starts_with("..") {
+                return Ok(None);
+            }
+            let found = book.read(&path)?;
+            if let Some(t) = &found {
+                super::check_size(&path, t.len())?;
+                book.charge_bytes(t.len())?;
+            }
+            Ok::<_, Error>(found)
+        };
+        let nav_text = text(nav_path, (&pkg.files.nav_path, &pkg.nav_text))?;
+        let ncx_text = if ncx_path.is_some() && ncx_path == generated {
+            None
+        } else {
+            text(ncx_path, (&pkg.files.ncx_href, &pkg.ncx_text))?
+        };
+        Ok(RewrittenOpf {
+            manifest,
+            spine: self.spine.iter().filter_map(|r| r.idref.clone()).collect(),
+            guide: self.guide.iter().cloned().collect(),
+            nav_ncx: nav.map(|n| n.points.clone()),
+            nav_text,
+            ncx_text,
+        })
+    }
+
     /// The rest of `convert`: DTBook refused, page templates and mislabelled fonts out of the
     /// spine, and each spine item once.
     fn clean_spine(&mut self) -> Result<(), Error> {
@@ -1640,7 +1702,7 @@ impl State {
         Ok(())
     }
 
-    fn into_oeb(self) -> Oeb {
+    fn into_oeb(self, rewritten: RewrittenOpf) -> Oeb {
         let spine = self
             .spine
             .iter()
@@ -1676,6 +1738,7 @@ impl State {
             guide,
             metadata: self.meta,
             page_progression_direction: self.ppd,
+            rewritten,
         }
     }
 }
@@ -1711,6 +1774,7 @@ pub fn oeb_view(pkg: &Package, zip: &mut EpubReader) -> Result<Oeb, Error> {
         _ => None,
     };
     input.clean_spine()?;
+    let rewritten = input.rewritten(pkg, nav.as_ref(), &mut book)?;
 
     // `reader.py` `OEBReader._all_from_opf`.
     let mut st = State::default();
@@ -1729,5 +1793,5 @@ pub fn oeb_view(pkg: &Package, zip: &mut EpubReader) -> Result<Oeb, Error> {
     let css_urls = st.flattened_css_urls(&mut book, &docs)?;
     let sheets = st.replace_css();
     st.trim(&mut book, sheets, &css_urls)?;
-    Ok(st.into_oeb())
+    Ok(st.into_oeb(rewritten))
 }

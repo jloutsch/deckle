@@ -2,6 +2,7 @@
 //! All integration tests in one binary: one link instead of one per file.
 
 mod book;
+mod convert_args;
 mod convert_support;
 mod corpus;
 mod corpus_cascade;
