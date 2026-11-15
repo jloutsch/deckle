@@ -56,7 +56,7 @@ fn book_arguments_match_every_model() {
         let model = load_model(&fixtures::kfxgen(&format!("models/{name}")))
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         let want = dict(&model.args);
-        let opf = CalibreOpf::new(&book);
+        let opf = CalibreOpf::new(&book).unwrap();
         let ours = book_args(&book, &opf, &ConvertOptions::default());
         assert_eq!(ours.len(), 13);
         for (arg, value) in &ours {
@@ -80,7 +80,7 @@ fn book_arguments_match_every_model() {
 #[test]
 fn options_change_their_arguments() {
     let book = read_book(&fixtures::kfxgen("sources/page_list.epub")).unwrap();
-    let opf = CalibreOpf::new(&book);
+    let opf = CalibreOpf::new(&book).unwrap();
     let opts = ConvertOptions {
         open_at_cover: true,
         disable_approximate_pages: true,
@@ -255,7 +255,7 @@ fn calibre_opf_facts_match_what_calibre_wrote() {
             // The nav's links are not in the dumps; the models check them (landmarks, page
             // list).
             nav: None,
-            ..CalibreOpf::new(&book)
+            ..CalibreOpf::new(&book).unwrap()
         };
         let want = calibre_facts(&name);
         if ours != want {
