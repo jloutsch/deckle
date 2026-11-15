@@ -3,7 +3,7 @@
 //! from. What kfxgen does with a chapter or block key not ported yet is
 //! [`GenerateError::Unsupported`], so a book needing it fails rather than coming out different.
 
-use super::block_styles::{BlockStyle, number, read_block_style};
+use super::block_styles::{BlockStyle, Length, number, read_block_style, read_length};
 use super::boxes::{BoxBlock, RuleStyle, read_box, read_rule};
 use super::images;
 use super::inline::{Anchors, Span, TocLink, read_spans};
@@ -118,6 +118,9 @@ pub(crate) struct Block {
     pub picture_block: bool,
     /// Pictures set `display: block`: kept apart, an entry each (#762, bd68f30).
     pub pictures_apart: bool,
+    /// The (left, right) margins of the boxes a picture's block is in, outermost first
+    /// (#769, f605dd6).
+    pub picture_boxes: Vec<[Option<Length>; 2]>,
     /// Its file's writing mode (#247), on a chapter's own blocks: what
     /// `_chapter_writing_mode` (:942) looks for.
     pub writing_mode: Option<String>,
@@ -144,6 +147,7 @@ impl Block {
             picture_align: None,
             picture_block: false,
             pictures_apart: false,
+            picture_boxes: Vec::new(),
             writing_mode: None,
         }
     }
@@ -259,6 +263,30 @@ pub(crate) fn first_writing_mode(blocks: &[Block]) -> Option<String> {
     blocks.iter().find_map(|b| b.writing_mode.clone())
 }
 
+/// A block's `picture_boxes` (f605dd6): `((left, right), ...)`, each a length or None.
+fn read_picture_boxes(
+    v: Option<&PyValue>,
+    at: &str,
+) -> Result<Vec<[Option<Length>; 2]>, GenerateError> {
+    let Some(boxes) = v.filter(|v| v.is_truthy()) else {
+        return Ok(Vec::new());
+    };
+    let err = || model_err(format!("{at}.picture_boxes: (left, right) lengths or None"));
+    let side = |v: &PyValue| match v {
+        PyValue::None => Ok(None),
+        v => read_length(v).map(Some).ok_or_else(err),
+    };
+    boxes
+        .as_list()
+        .ok_or_else(err)?
+        .iter()
+        .map(|b| match b.as_list() {
+            Some([left, right]) => Ok([side(left)?, side(right)?]),
+            _ => Err(err()),
+        })
+        .collect()
+}
+
 /// A number or None, as `block.get(key) or 0.0` reads it.
 fn ems(b: &PyValue, key: &str, at: &str) -> Result<Option<f64>, GenerateError> {
     match b.get(key) {
@@ -356,6 +384,7 @@ pub(crate) fn read_block(
         },
         picture_block: truthy(b.get("picture_block")),
         pictures_apart: truthy(b.get("pictures_apart")),
+        picture_boxes: read_picture_boxes(b.get("picture_boxes"), at)?,
         ..Block::plain(text)
     })
 }

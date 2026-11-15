@@ -81,6 +81,7 @@ pub(crate) fn build_chapter_content(
             start: start_idx,
             vertical: chapter.vertical(vertical_book),
             vertical_book,
+            cover: chapter.is_cover,
         };
         // Ids of blocks this chapter drops, put on its first chunk below (#62, #436).
         let mut carried = chapter.anchor_keys.clone();
@@ -494,7 +495,13 @@ pub(crate) fn build_chapter_content(
         toc_link_style_names.push(link_name);
     }
     let pictures: Vec<&Picture> = chunks.iter().filter_map(|c| c.picture.as_ref()).collect();
-    let image_styles = ImageStyles::allocate(g, &pictures, images, &mut extra_style_names)?;
+    let image_styles = ImageStyles::allocate(
+        g,
+        &pictures,
+        images,
+        sizes.main_px(),
+        &mut extra_style_names,
+    )?;
     let mut inline_styles = InlineStyles::new(images);
 
     // $259: a storyline per chapter (:7359).

@@ -12,7 +12,7 @@ use regex::Captures;
 
 use super::chapters::Block;
 use super::chunks::{ASCII_SPACE, ChapterNow, Chunk, LinkOpen, Marker, Node, space_to_write};
-use super::images::{self, IMG_TOKEN, Images, Picture};
+use super::images::{self, IMG_TOKEN, Images, Picture, Place};
 use super::inline::{Anchors, Flag, Span};
 use super::inline_picture_entries::InlinePicture;
 use super::py;
@@ -298,7 +298,7 @@ fn inline_pictures(
 /// token starts, in characters.
 enum Piece {
     Text(String),
-    Picture(Picture, i64),
+    Picture(Box<Picture>, i64),
 }
 
 /// `_emit_text_chunks` (:5454): `para` cut at its pictures, each piece of words trimmed of
@@ -316,7 +316,10 @@ fn emit_text_chunks(para: &str, trailing: &str, images: &Images) -> Vec<Piece> {
             out.push(Piece::Text(seg));
         }
         if let Some(p) = images::picture_of(&m, images) {
-            out.push(Piece::Picture(p, py::len(&para[..whole.start()]) as i64));
+            out.push(Piece::Picture(
+                Box::new(p),
+                py::len(&para[..whole.start()]) as i64,
+            ));
         }
         last = whole.end();
     }
@@ -453,6 +456,28 @@ pub(crate) fn emit_entries(
                 {
                     picture.box_align = align.clone();
                 }
+                // As its block places text (#769, probes PBI, PBJ, PBR; f605dd6): its block's
+                // text-align, its side margins and its boxes', and on a block's first line its
+                // indent.
+                let style = block.style.as_deref();
+                let place = Place {
+                    align: align.clone(),
+                    indent: style
+                        .and_then(|s| s.indent.clone())
+                        .filter(|_| chunks.len() == first),
+                    left: style.and_then(|s| s.margin_left.clone()),
+                    right: style.and_then(|s| s.margin_right.clone()),
+                    boxes: block.picture_boxes.clone(),
+                    font_px: style.and_then(|s| s.font_size),
+                };
+                if !picture.plain && link.is_some() {
+                    // Inline in its link's container, which takes the block's place (PBI B07):
+                    // the picture none.
+                    picture.place = Some(Box::default());
+                } else if !picture.plain && !now.cover {
+                    // kfxgen's own cover page stays centred, as books' cover pages are.
+                    picture.place = Some(Box::new(place.clone()));
+                }
                 let contained = link.is_some() || boxed;
                 if contained {
                     // A container whose link covers the picture (#355). The Voyage drops a
@@ -466,6 +491,9 @@ pub(crate) fn emit_entries(
                             .then(|| block.style.as_ref().and_then(|s| s.indent.clone()))
                             .flatten(),
                         align: if boxed { align } else { None },
+                        // Its container takes the block's alignment, first-line indent and
+                        // side margins (#769, PBI B07, PBK K05, K08).
+                        place: (!picture.plain).then(|| Box::new(place)),
                     };
                     chunks.push(Chunk {
                         spans: link
@@ -486,7 +514,7 @@ pub(crate) fn emit_entries(
                         keys: at_start,
                         offsets: BTreeMap::new(),
                     },
-                    picture: Some(picture),
+                    picture: Some(*picture),
                     ..Chunk::text(String::new())
                 });
                 if contained {

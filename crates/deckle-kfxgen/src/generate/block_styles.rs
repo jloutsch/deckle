@@ -9,8 +9,9 @@ use std::collections::hash_map::Entry;
 
 use super::boxes::BoxStyle;
 use super::chunks::{Chunk, InCell, Marker, Mode, Node};
+use super::images;
 use super::inline::run_font_size;
-use super::styles::{Rotation, Style157, StyleArgs, Styles};
+use super::styles::{LINE_EM, Rotation, Style157, StyleArgs, Styles};
 use super::table_styles::{self, CellStyle};
 use super::typography::Typography;
 use super::writing::{Bidi, bidi_diff};
@@ -231,6 +232,11 @@ impl Sizes {
             main_px: most(&px),
             main_line: most(&lines),
         }
+    }
+
+    /// The book's main text size, in CSS px.
+    pub(crate) fn main_px(&self) -> Option<f64> {
+        self.main_px
     }
 
     /// `main_px or 16.0` (:7666).
@@ -505,13 +511,40 @@ impl Containers {
                 });
                 (None, name)
             }
-            // A linked picture's container centres it, as `$580` does a picture alone (:7505).
-            Node::Link(_) => {
-                let centred = Style157 {
+            // A linked picture's container: its block's alignment, first-line indent and side
+            // margins, as Previewer writes it (#769, PBI B07, PBK K04, K05, K08, PBL;
+            // f605dd6); centred when they weren't read.
+            Node::Link(open) => {
+                let mut style = Style157 {
                     align: Some("center".to_owned()),
                     ..Style157::body(chapter_fs)
                 };
-                (None, Some(styles.allocate(g, "", centred)))
+                if let Some(place) = &open.place {
+                    style.align = place.align.clone();
+                    style.no_align = place.align.as_deref().is_none_or(str::is_empty);
+                    style.text_indent = place.indent.clone();
+                    // The line above it main writes, kept with an indent too: Previewer's
+                    // spacing here isn't matched (none in pg1260).
+                    style.space_above = Some(LINE_EM);
+                    let scale = images::place_scale(place.font_px, sizes.main_px());
+                    let sides = images::sides(
+                        &place.boxes,
+                        scale,
+                        (place.left.as_ref(), place.right.as_ref()),
+                        None,
+                        [None, None],
+                    );
+                    for (margin, pct) in [&mut style.margin_left, &mut style.margin_right]
+                        .into_iter()
+                        .zip(sides)
+                    {
+                        let pct = images::up(pct)?;
+                        if pct > 0.0 {
+                            *margin = Some((py::format_g(pct, 6), "$314".to_owned()));
+                        }
+                    }
+                }
+                (None, Some(styles.allocate(g, "", style)))
             }
             Node::Box(b) => {
                 let style = BoxStyle::of(b, sizes.rem(b.spec.font_px));

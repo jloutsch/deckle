@@ -5,7 +5,7 @@
 use super::block_styles::{BlockStyle, HeadingStyle, Length, keep_space};
 use super::boxes::{BoxOpen, RuleStyle};
 use super::chapters::Block;
-use super::images::{Images, Picture};
+use super::images::{Images, Picture, Place};
 use super::inline::{self, Anchors, Span};
 use super::inline_picture_entries::InlinePicture;
 use super::inline_pictures;
@@ -98,6 +98,9 @@ pub(crate) struct LinkOpen {
     pub plain: bool,
     pub align: Option<String>,
     pub indent: Option<Length>,
+    /// A block picture's container: its block's alignment, first-line indent and side
+    /// margins and its boxes' (#769, f605dd6).
+    pub place: Option<Box<Place>>,
 }
 
 /// The chapter being written (0bc705d :5489): where its chunks start, whether it is
@@ -107,6 +110,8 @@ pub(crate) struct ChapterNow {
     pub start: usize,
     pub vertical: bool,
     pub vertical_book: bool,
+    /// kfxgen's own cover page (f605dd6): its picture stays centred.
+    pub cover: bool,
 }
 
 impl ChapterNow {

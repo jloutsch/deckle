@@ -14,10 +14,11 @@ use deckle_kfx::fragment::{Fragment, FragmentList};
 use deckle_kfx::ion::Value;
 use regex::Regex;
 
+use super::block_styles::Length;
 use super::chapters::{Block, Chapter, first_writing_mode};
 use super::chunks::Chunk;
 use super::inline::{Anchors, Flag, Span};
-use super::page_scale::{column_px, page_pt};
+use super::page_scale::{column_px, em_percent, page_pt};
 use super::table_styles::align_symbol;
 use super::{GenerateError, Generator, measure, model_err, py, st, sym};
 use crate::pyvalue::PyValue;
@@ -425,6 +426,27 @@ pub(crate) struct Picture {
     pub height: Option<String>,
     /// Directly in vertical-rl text: sized by its height (#247, a1ba662).
     pub upright: bool,
+    /// Its own side margins, the token's `ml` and `mr`, and `c` when auto margins centre
+    /// it (`r`: the left one alone, setting it right) (#769, f605dd6).
+    pub own_margins: [Option<String>; 2],
+    pub own_centre: Option<String>,
+    /// A block picture's place as its block gives it (#769, f605dd6); None for one placed
+    /// as before, centred.
+    pub place: Option<Box<Place>>,
+}
+
+/// `_emit_paragraph`'s `place` of a block picture (f605dd6): its block's text-align, its
+/// first-line indent when the picture opens the block, its side margins, the side margins
+/// of the boxes it is in (outermost first), and its block's font size in CSS px. A linked
+/// picture's is all None: its container is placed instead.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Place {
+    pub align: Option<String>,
+    pub indent: Option<Length>,
+    pub left: Option<Length>,
+    pub right: Option<Length>,
+    pub boxes: Vec<[Option<Length>; 2]>,
+    pub font_px: Option<f64>,
 }
 
 /// Whether `text` holds pictures and nothing else but spaces: `IMG_TOKEN_RE.sub("", text)`
@@ -467,7 +489,153 @@ pub(crate) fn picture_of(m: &regex::Captures, images: &Images) -> Option<Picture
         // a1ba662).
         height: extra("h").map(str::to_owned),
         upright: false,
+        own_margins: [
+            extra("ml").map(str::to_owned),
+            extra("mr").map(str::to_owned),
+        ],
+        own_centre: extra("c").map(str::to_owned),
+        place: None,
     })
+}
+
+/// `inline_style.parse_css_length(value, negative=True)` (ad38ec8): a CSS length as
+/// (magnitude, KFX unit), a negative one too; None for none, a zero, or another unit. `in`,
+/// `cm` and `ex` are read as pt, mm and em.
+fn parse_css_length(value: &str) -> Option<Length> {
+    static CSS_LENGTH: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\A([+-]?[0-9]*\.?[0-9]+)((?i:em|rem|%|pt|px|mm|in|cm|ex))\z").unwrap()
+    });
+    let m = CSS_LENGTH.captures(value.trim_matches(py::is_space))?;
+    let number: f64 = m[1].parse().ok()?;
+    if number == 0.0 {
+        return None;
+    }
+    let (mut mag, mut unit) = (m[1].to_owned(), m[2].to_lowercase());
+    let factor = match unit.as_str() {
+        "in" => Some((72.0, "pt")),
+        "cm" => Some((10.0, "mm")),
+        "ex" => Some((0.44, "em")),
+        _ => None,
+    };
+    if let Some((factor, to)) = factor {
+        mag = format!("{:.4}", number * factor);
+        unit = to.to_owned();
+    }
+    if mag.contains('.') {
+        mag = mag.trim_end_matches('0').trim_end_matches('.').to_owned();
+    }
+    let symbol = match unit.as_str() {
+        "em" => "$308",
+        "rem" => "$505",
+        "%" => "$314",
+        "pt" => "$318",
+        "px" => "$319",
+        _ => "$316",
+    };
+    Some((mag, symbol.to_owned()))
+}
+
+/// A length's magnitude, as `float()` reads it.
+fn magnitude((mag, _): &Length) -> f64 {
+    mag.parse().unwrap_or(0.0)
+}
+
+/// `_share` (f605dd6): a length as a % of the page, at Previewer's rates (1em 12pt, 1px
+/// 0.45pt); an em at `scale`, its block's font size against the main text's.
+fn share(length: Option<&Length>, scale: f64) -> f64 {
+    let Some(length) = length else {
+        return 0.0;
+    };
+    let em = em_percent();
+    let per = match length.1.as_str() {
+        "$308" => em * scale,
+        "$505" => em,
+        "$319" => em * 0.45 / 12.0,
+        "$318" => em / 12.0,
+        "$316" => em * 72.0 / 25.4 / 12.0,
+        "$314" => 1.0,
+        _ => 0.0,
+    };
+    magnitude(length) * per
+}
+
+/// `_sides` (f605dd6): a picture's or its link container's (`$48`, `$50`) in % of the page,
+/// as Kindle Previewer 4.0.3 adds them (#769; QA's Q770, Q770E, Q770G): its containers' side
+/// margins, outermost first, then its block's, its block's first-line indent and its own.
+///
+/// A % margin is of the width left when a box outside it has a margin on that side, else of
+/// the page; every margin, em ones too, takes its share off the width left. An indent in %
+/// is of the width left; one in em or pt is divided by the width the containers leave, not
+/// the block's own margins. An em of its block at `scale`.
+pub(crate) fn sides(
+    boxes: &[[Option<Length>; 2]],
+    scale: f64,
+    (left, right): (Option<&Length>, Option<&Length>),
+    indent: Option<&Length>,
+    own: [Option<&Length>; 2],
+) -> [f64; 2] {
+    let mut width = 100.0;
+    let mut out = [0.0, 0.0];
+    let mut held = [false, false];
+    // (its share of the page, its share off the width left).
+    let part = |i: usize, length: &Length, s: f64, width: f64, held: &[bool; 2]| {
+        if length.1 == "$314" {
+            let frac = magnitude(length) / 100.0;
+            (frac * if held[i] { width } else { 100.0 }, frac * width)
+        } else {
+            let pct = share(Some(length), s);
+            (pct, pct)
+        }
+    };
+    let add = |sides: [Option<&Length>; 2],
+               at: f64,
+               width: &mut f64,
+               out: &mut [f64; 2],
+               held: &mut [bool; 2]| {
+        let mut taken = 0.0;
+        for (i, length) in sides.into_iter().enumerate() {
+            let Some(length) = length.filter(|l| magnitude(l) != 0.0) else {
+                continue;
+            };
+            let (pct, off) = part(i, length, at, *width, held);
+            out[i] += pct;
+            taken += off;
+            held[i] = true;
+        }
+        *width = f64::max(*width - taken, 1.0);
+    };
+    for b in boxes.iter().rev() {
+        add(
+            [b[0].as_ref(), b[1].as_ref()],
+            1.0,
+            &mut width,
+            &mut out,
+            &mut held,
+        );
+    }
+    let left_by_containers = width;
+    add([left, right], scale, &mut width, &mut out, &mut held);
+    if let Some(indent) = indent {
+        if indent.1 == "$314" {
+            out[0] += part(0, indent, 1.0, width, &held).0;
+        } else {
+            out[0] += share(Some(indent), scale) * 100.0 / left_by_containers;
+        }
+    }
+    for (i, length) in own.into_iter().enumerate() {
+        if let Some(length) = length {
+            out[i] += part(i, length, scale, width, &held).0;
+        }
+    }
+    out
+}
+
+/// A block's font size against the main text's: `font_px / main_px` when both are set.
+pub(crate) fn place_scale(font_px: Option<f64>, main_px: Option<f64>) -> f64 {
+    match (font_px, main_px) {
+        (Some(f), Some(m)) if f != 0.0 && m != 0.0 => f / m,
+        _ => 1.0,
+    }
 }
 
 /// `_picture_link` (0bc705d :1835): the link of the first run covering the token at `at`, in
@@ -629,6 +797,17 @@ fn parse_size_hint(hint: &str) -> Result<Option<(char, f64)>, GenerateError> {
 /// A picture style's size: `_image_size_key` (:7029).
 type SizeKey = (char, f64);
 
+/// `_place_key` (f605dd6): a block picture's `$580` or None, and its `$48` and `$50` in %.
+type PlaceKey = (Option<&'static str>, f64, f64);
+
+/// `_place_order` (f605dd6): a picture placed as before sorts first.
+fn place_order(place: &Option<PlaceKey>) -> (bool, &'static str, f64, f64) {
+    match place {
+        None => (false, "", 0.0, 0.0),
+        Some((align, left, right)) => (true, align.unwrap_or(""), *left, *right),
+    }
+}
+
 /// `_plain_key` (a1ba662): a plain picture's size, whether the markup set it, a block
 /// picture's alignment (#247), and whether a height in em gives it `$64` (QA's Q761 E04).
 /// Its clear is never one: the port refuses a clear.
@@ -715,8 +894,9 @@ fn upright_lengths(p: &Picture) -> Result<[Option<(f64, String)>; 2], GenerateEr
 #[derive(Default)]
 pub(crate) struct ImageStyles {
     resource_dims: BTreeMap<String, Dims>,
-    widths: Vec<(f64, String)>,
-    heights: Vec<(f64, String)>,
+    main_px: Option<f64>,
+    widths: Vec<((f64, Option<PlaceKey>), String)>,
+    heights: Vec<((f64, Option<PlaceKey>), String)>,
     floats: Vec<(SizeKey, String, String)>,
     plains: Vec<(PlainKey, String)>,
 }
@@ -726,9 +906,13 @@ impl ImageStyles {
         g: &mut Generator,
         pictures: &[&Picture],
         images: &Images,
+        main_px: Option<f64>,
         extra_style_names: &mut Vec<String>,
     ) -> Result<Self, GenerateError> {
-        let mut styles = ImageStyles::default();
+        let mut styles = ImageStyles {
+            main_px,
+            ..ImageStyles::default()
+        };
         if pictures.is_empty() {
             return Ok(styles);
         }
@@ -747,8 +931,8 @@ impl ImageStyles {
             let key = styles.size_key(p)?;
             match (&p.float, key.0) {
                 (Some(side), _) => floats.push((key, side.clone())),
-                (None, 'w') => widths.push(key.1),
-                (None, _) => heights.push(key.1),
+                (None, 'w') => widths.push((key.1, styles.place_key(p)?)),
+                (None, _) => heights.push((key.1, styles.place_key(p)?)),
             }
         }
         // By (axis, size, sized, alignment or "", clear or "", `$64`), as kfxgen sorts them
@@ -759,8 +943,13 @@ impl ImageStyles {
                 .unwrap()
         });
         plains.dedup();
+        // By (size, a place's order), as kfxgen sorts them (f605dd6).
         for v in [&mut widths, &mut heights] {
-            v.sort_by(f64::total_cmp);
+            v.sort_by(|a, b| {
+                (a.0, place_order(&a.1))
+                    .partial_cmp(&(b.0, place_order(&b.1)))
+                    .unwrap()
+            });
             v.dedup();
         }
         floats.sort_by(|a, b| {
@@ -769,23 +958,23 @@ impl ImageStyles {
                 .unwrap()
         });
         floats.dedup();
-        for (idx, pct) in widths.into_iter().enumerate() {
+        for (idx, key) in widths.into_iter().enumerate() {
             let name = format!("s_img_w{idx}");
-            let f = build_fragment_157_image(g, &name, ('w', pct), None);
+            let f = build_fragment_157_image(g, &name, ('w', key.0), None, key.1.as_ref());
             g.push(f);
             extra_style_names.push(name.clone());
-            styles.widths.push((pct, name));
+            styles.widths.push((key, name));
         }
-        for (idx, pct) in heights.into_iter().enumerate() {
+        for (idx, key) in heights.into_iter().enumerate() {
             let name = format!("s_img_h{idx}");
-            let f = build_fragment_157_image(g, &name, ('h', pct), None);
+            let f = build_fragment_157_image(g, &name, ('h', key.0), None, key.1.as_ref());
             g.push(f);
             extra_style_names.push(name.clone());
-            styles.heights.push((pct, name));
+            styles.heights.push((key, name));
         }
         for (idx, (key, side)) in floats.into_iter().enumerate() {
             let name = format!("s_img_f{idx}");
-            let f = build_fragment_157_image(g, &name, key, Some(&side));
+            let f = build_fragment_157_image(g, &name, key, Some(&side), None);
             g.push(f);
             extra_style_names.push(name.clone());
             styles.floats.push((key, side, name));
@@ -799,6 +988,39 @@ impl ImageStyles {
             styles.plains.push((key, name));
         }
         Ok(styles)
+    }
+
+    /// `_place_key` (f605dd6): a block picture's place, (`$580` or None, `$48` %, `$50` %), or
+    /// None for a picture placed as before, centred.
+    fn place_key(&self, p: &Picture) -> Result<Option<PlaceKey>, GenerateError> {
+        let Some(place) = &p.place else {
+            return Ok(None);
+        };
+        let align = match p.own_centre.as_deref() {
+            // display: block with auto margins: both centre it (PBJ J04), the left one alone
+            // sets it right (QA's Q770 Y17).
+            Some("r") => Some("right"),
+            Some(_) => Some("center"),
+            None => place.align.as_deref(),
+        };
+        let symbol = match align {
+            Some("left") => Some("$59"),
+            Some("center") => Some("$320"),
+            Some("right") => Some("$61"),
+            _ => None,
+        };
+        let own = p
+            .own_margins
+            .each_ref()
+            .map(|m| m.as_deref().and_then(parse_css_length));
+        let [left, right] = sides(
+            &place.boxes,
+            place_scale(place.font_px, self.main_px),
+            (place.left.as_ref(), place.right.as_ref()),
+            place.indent.as_ref(),
+            [own[0].as_ref(), own[1].as_ref()],
+        );
+        Ok(Some((symbol, up(left)?, up(right)?)))
     }
 
     /// `_plain_key` (a1ba662).
@@ -880,25 +1102,29 @@ impl ImageStyles {
                 .iter()
                 .find(|(k, s, _)| *k == key && s == side)
                 .map(|(_, _, n)| n),
-            None => if key.0 == 'h' {
-                &self.heights
-            } else {
-                &self.widths
+            None => {
+                let place = self.place_key(p)?;
+                if key.0 == 'h' {
+                    &self.heights
+                } else {
+                    &self.widths
+                }
+                .iter()
+                .find(|((pct, at), _)| *pct == key.1 && *at == place)
+                .map(|(_, n)| n)
             }
-            .iter()
-            .find(|(pct, _)| *pct == key.1)
-            .map(|(_, n)| n),
         };
         Ok(name.cloned())
     }
 }
 
-/// `build_fragment_157_image` (:4096).
+/// `build_fragment_157_image` (f605dd6).
 fn build_fragment_157_image(
     g: &mut Generator,
     name: &str,
     (axis, pct): SizeKey,
     float_side: Option<&str>,
+    place: Option<&PlaceKey>,
 ) -> Fragment {
     g.local(name);
     let Value::Struct(mut v) = st([
@@ -922,6 +1148,20 @@ fn build_fragment_157_image(
         // Floated: not centred, the text after it wraps beside it (#243).
         v.remove("$580");
         v.insert("$140", sym(if side == "left" { "$59" } else { "$61" }));
+    } else if let Some((align, left, right)) = place {
+        // Placed as its block places it (#769): aligned only when the block is, and its
+        // margins as `$48`/`$50`, in % of the page, a negative one too (QA's Q770 Y12).
+        match align {
+            Some(align) => v.insert("$580", sym(align)),
+            None => {
+                v.remove("$580");
+            }
+        }
+        for (key, pct) in [("$48", left), ("$50", right)] {
+            if *pct != 0.0 {
+                v.insert(key, measure(py::decimal(&py::format_g(*pct, 6)), "$314"));
+            }
+        }
     }
     Fragment::new("$157", Some(name), Value::Struct(v))
 }
