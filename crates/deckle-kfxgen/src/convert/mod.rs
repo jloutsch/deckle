@@ -6,6 +6,7 @@
 //! re-exported here, as `css` and `dom` do.
 
 mod args;
+mod block_style;
 mod font_table;
 mod href;
 // Tasks 8 to 10 call what the tests do not.
@@ -14,8 +15,10 @@ mod inline_style;
 pub(crate) mod marks;
 mod options;
 mod package;
+mod resolver;
 
 pub use args::book_args;
+pub use block_style::compute_block_style;
 pub use font_table::{parse_style, parse_weight};
 pub use href::{
     external_target, is_unsafe, key_doc, normalize, resolve_doc_path, resolve_link_target, unquote,
@@ -27,3 +30,4 @@ pub use inline_style::{
 pub use options::ConvertOptions;
 pub use package::{CalibreOpf, Nav, NavLink, Ncx};
 pub(crate) use package::{item_path, kfxgen_paths};
+pub use resolver::{Resolved, Resolver};

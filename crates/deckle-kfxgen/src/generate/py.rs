@@ -512,6 +512,32 @@ pub(crate) fn round(x: f64, digits: usize) -> f64 {
     format!("{x:.digits$}").parse().unwrap_or(x)
 }
 
+/// `repr(x)`, which is `str(x)`, of a float: the shortest digits that read back, written out
+/// from 1e-4 to below 1e16 (with `.0` when whole), else with an exponent of two digits or more.
+pub(crate) fn repr_float(x: f64) -> String {
+    if x.is_nan() {
+        return "nan".into();
+    }
+    if x.is_infinite() {
+        return if x > 0.0 { "inf" } else { "-inf" }.into();
+    }
+    // Rust's `{:e}` and `{}` print the same shortest digits as `repr`.
+    let sci = format!("{x:e}");
+    let (mantissa, exp) = sci.split_once('e').unwrap_or((&sci, "0"));
+    let exp: i32 = exp.parse().unwrap_or(0);
+    if (-4..16).contains(&exp) {
+        let fixed = format!("{x}");
+        if fixed.contains('.') {
+            fixed
+        } else {
+            format!("{fixed}.0")
+        }
+    } else {
+        let sign = if exp < 0 { '-' } else { '+' };
+        format!("{mantissa}e{sign}{:02}", exp.abs())
+    }
+}
+
 /// `Decimal(text)` for the decimal text kfxgen writes: `"0.5"`, `"2.0"`, `"1e-05"`.
 pub(crate) fn decimal(text: &str) -> Decimal {
     let (mantissa, exponent) = match text.split_once(['e', 'E']) {
@@ -736,6 +762,35 @@ mod tests {
         assert_eq!(py_int(&format!("-{}", "9".repeat(4300))), Some(i64::MIN));
         assert_eq!(py_int(&"0".repeat(4301)), None);
         assert_eq!(py_int(&format!("{}_1", "0".repeat(4299))), Some(1));
+    }
+
+    /// `repr(float)`: expected values from Python 3.14.
+    #[test]
+    fn float_repr_is_pythons() {
+        use super::repr_float;
+        let cases = [
+            (0.0, "0.0"),
+            (-0.0, "-0.0"),
+            (9.0, "9.0"),
+            (0.72, "0.72"),
+            (1e16, "1e+16"),
+            (1e15, "1000000000000000.0"),
+            (123456789012345.6, "123456789012345.6"),
+            (1e-4, "0.0001"),
+            (1e-5, "1e-05"),
+            (1.5e-7, "1.5e-07"),
+            (-2.5e300, "-2.5e+300"),
+            (1.0 / 3.0, "0.3333333333333333"),
+            (5e-324, "5e-324"),
+            (f64::MAX, "1.7976931348623157e+308"),
+            (0.1 + 0.2, "0.30000000000000004"),
+            (f64::INFINITY, "inf"),
+            (f64::NEG_INFINITY, "-inf"),
+            (f64::NAN, "nan"),
+        ];
+        for (x, want) in cases {
+            assert_eq!(repr_float(x), want, "{x:e}");
+        }
     }
 
     /// `float()`: expected values from Python 3.14.

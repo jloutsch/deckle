@@ -4,6 +4,7 @@
 mod book;
 mod convert_args;
 mod convert_inline_style;
+mod convert_resolver;
 mod convert_support;
 mod corpus;
 mod corpus_cascade;
