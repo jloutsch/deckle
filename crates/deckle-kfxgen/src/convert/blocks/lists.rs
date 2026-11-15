@@ -56,7 +56,7 @@ const ROMAN: [(i128, &str); 13] = [
     (1, "i"),
 ];
 /// The name a list number too large to write stops the file with.
-pub(super) const TOO_BIG: &str = "list numbers past 64 bits";
+const TOO_BIG: &str = "list numbers too large";
 
 /// `_LIST_TYPE_ATTR`: an `<ol type>` or `<li type>` value as its list-style-type. Case matters.
 fn list_type_attr(v: &str) -> Option<&'static str> {
@@ -136,7 +136,7 @@ impl Int {
 
 /// `_parse_int(value)`: `int(str(value).strip())`, None where that raises (`str(None)` is
 /// `"None"`).
-pub(super) fn parse_int(value: Option<&str>) -> Option<Int> {
+fn parse_int(value: Option<&str>) -> Option<Int> {
     let v = py::strip(value?);
     py::py_int_wide(v).map(|r| r.map_or(Int::Big, Int::Exact))
 }
@@ -182,7 +182,7 @@ const LOWER: [char; 26] = [
 
 /// `_format_ordinal(n, style)`: `n` as the counter text of `style`, decimal outside a style's
 /// range and for a style it does not know. None for a number past an i128.
-pub(super) fn format_ordinal(n: Int, style: &str) -> Option<String> {
+fn format_ordinal(n: Int, style: &str) -> Option<String> {
     let Int::Exact(n) = n else {
         return None;
     };
@@ -226,8 +226,8 @@ fn unbracket(head: &str) -> &str {
 /// hand, in decimal (with leading zeros, then `.`, `)`, `:`, `]`, white space or the end of
 /// the head), or as its letter or roman numeral followed by `.`, `)` or `]`.
 fn numbered_head(head: &str, n: Int) -> bool {
-    // A number past an i128 has at least 39 digits and 27 letters: none fits in 16
-    // characters (lowering can lengthen a head, but adds no ASCII letter).
+    // A number past an i128 has at least 39 digits and 28 letters: none fits in a head of
+    // 16 characters.
     let Int::Exact(n) = n else {
         return false;
     };
@@ -263,7 +263,7 @@ fn numbered_head(head: &str, n: Int) -> bool {
 }
 
 /// `_already_numbered(text, n)`.
-pub(super) fn already_numbered(text: &str, n: Int) -> bool {
+fn already_numbered(text: &str, n: Int) -> bool {
     numbered_head(head(text), n)
 }
 
@@ -281,7 +281,7 @@ fn typed_bullet_head(head: &str) -> bool {
 }
 
 /// `_TYPED_BULLET_RE.match(text)`.
-pub(super) fn typed_bullet(text: &str) -> bool {
+fn typed_bullet(text: &str) -> bool {
     typed_bullet_head(head(text))
 }
 
@@ -312,8 +312,8 @@ fn list_style_type(dom: &Dom, li: NodeId, css: Option<&Resolved>) -> Result<Stri
             },
         );
     }
+    // A comment has no children, and its tag is empty.
     if let Some(parent) = dom.parent(li)
-        && !dom.is_comment(parent)
         && dom.tag(parent) == "ol"
     {
         let t = py::strip(dom.attr(parent, "type").unwrap_or(""));
@@ -476,16 +476,15 @@ impl Walker<'_, '_, '_, '_> {
         if self.native_list(parent)?.is_some() {
             return Ok(Item::Native { list: parent });
         }
-        if !self.lists.ordinals.contains_key(&parent) {
-            let ordinals = self.list_ordinals(parent)?;
-            self.lists.ordinals.insert(parent, ordinals);
-        }
-        let css = self.resolve(li)?;
-        let ordinals = self.lists.ordinals.get(&parent);
-        let entry = match ordinals {
-            Some(ordinals) => list_marker(dom, li, css.as_ref(), ordinals)?,
-            None => None,
+        // Worked out once per list (kfxgen's memo), taken out of the map while in use.
+        let ordinals = match self.lists.ordinals.remove(&parent) {
+            Some(ordinals) => ordinals,
+            None => self.list_ordinals(parent)?,
         };
+        let css = self.resolve(li)?;
+        let entry = list_marker(dom, li, css.as_ref(), &ordinals)?;
+        drop(css);
+        self.lists.ordinals.insert(parent, ordinals);
         let Some(entry) = entry else {
             return Ok(Item::Unmarked);
         };
@@ -561,8 +560,8 @@ impl Walker<'_, '_, '_, '_> {
     fn list_settings(&mut self, list: NodeId) -> Result<Option<Native>, ItemError> {
         let dom = self.dom;
         // `style_resolver is None` cannot be: a file always has a resolver here.
+        // A comment's tag is empty, so the tag test leaves it out.
         if self.lists.cell_depth > 0
-            || dom.is_comment(list)
             || !matches!(dom.tag(list), "ul" | "ol")
             || dom.attr(list, "reversed").is_some()
         {

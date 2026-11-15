@@ -918,7 +918,7 @@ fn nested_lists_of_textless_items_are_refused_after_bounded_work() {
 fn list_numbers_past_what_the_port_holds() {
     let refused = |body: &str| match extract(&page(body, "")) {
         Err(ItemError::Error(Error::Unsupported { feature, .. })) => {
-            assert_eq!(feature, "list numbers past 64 bits", "{body}")
+            assert_eq!(feature, "list numbers too large", "{body}")
         }
         other => panic!("{body}: {:?}", other.map(|b| b.blocks.len())),
     };

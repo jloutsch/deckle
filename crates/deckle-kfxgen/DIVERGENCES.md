@@ -743,7 +743,7 @@ kfxgen's list code (`src/convert/blocks/lists.rs`, at ad38ec8):
 - Python's int has no bound, so an `<ol start>` or `<li value>` of any length up to 4,300 digits
   is a number to kfxgen. The port reads it exactly within an i128. A typed marker past that, or
   a native list's `start`, an item's `value` or its number past an i64 (the model's integers),
-  stops the file (`Error::Unsupported`, "list numbers past 64 bits"), where kfxgen writes the
+  stops the file (`Error::Unsupported`, "list numbers too large"), where kfxgen writes the
   number. A number that is only read, never written (an item that spells out its own marker, a
   marker no text takes), changes nothing.
 - To tell whether a list's items type their own markers, kfxgen joins each item's whole text,
