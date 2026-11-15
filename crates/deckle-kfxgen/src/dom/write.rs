@@ -27,6 +27,11 @@ pub fn to_xhtml(dom: &Dom) -> String {
     // (element, entering)
     let mut stack: Vec<(NodeId, bool)> = vec![(root, true)];
     while let Some((n, entering)) = stack.pop() {
+        // A comment is not written, its tail is.
+        if dom.is_comment(n) {
+            escape(&mut out, dom.tail(n), false);
+            continue;
+        }
         if !entering {
             out.push_str("</");
             out.push_str(dom.tag(n));
@@ -60,7 +65,7 @@ pub fn to_xhtml(dom: &Dom) -> String {
             }
             attr(&mut out, name, value);
         }
-        if dom.children(n).is_empty() && dom.text(n).is_empty() {
+        if dom.is_empty(n) {
             out.push_str("/>");
             if n != root {
                 escape(&mut out, dom.tail(n), false);

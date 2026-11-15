@@ -7,10 +7,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use deckle_kfx::epub_zip::{EpubReader, percent_decode};
 use deckle_kfx::fixtures;
+use deckle_kfxgen::book::read_book;
 use deckle_kfxgen::dom::{self, Dom, Error, NodeId};
 use deckle_limits::MAX_DEPTH;
 use deckle_limits::roxmltree::{Node, ParsingOptions};
 use serde_json::Value;
+
+use crate::support::Dump;
 
 /// Every book under `fixtures/kfxgen/cascade/`.
 const BOOKS: [&str; 13] = [
@@ -126,12 +129,11 @@ fn compared(tag: &str, name: &str) -> bool {
         || (tag == "img" && (name == "width" || name == "height")))
 }
 
-/// The text of the text nodes from `first` on, up to the next element: lxml's text or tail with
-/// the comments, which the port does not keep, left out.
+/// The text of the text nodes from `first` on, up to the next element or comment: lxml's text
+/// or tail.
 fn text_run(first: Option<Node>) -> String {
     std::iter::successors(first, |n| n.next_sibling())
-        .take_while(|n| !n.is_element())
-        .filter(|n| n.is_text())
+        .take_while(|n| n.is_text())
         .filter_map(|n| n.text())
         .collect()
 }
@@ -217,7 +219,7 @@ fn body(dom: &Dom) -> Option<NodeId> {
         .find(|&c| dom.tag(c) == "body")
 }
 
-/// `<body>` and every element under it.
+/// `<body>` and every element under it, comments left out.
 fn parsed_body(dom: &Dom) -> Vec<El> {
     let Some(b) = body(dom) else {
         return Vec::new();
@@ -239,18 +241,26 @@ fn parsed_body(dom: &Dom) -> Vec<El> {
             tag,
             attrs,
         });
-        stack.extend(dom.children(n).iter().rev());
+        stack.extend(
+            dom.children(n)
+                .iter()
+                .rev()
+                .filter(|&&c| !dom.is_comment(c)),
+        );
     }
     out
 }
 
-/// The text of `n` and everything under it, in document order (lxml's `itertext`).
+/// The text of `n` and everything under it, in document order (lxml's `itertext`: a comment's
+/// own text left out, its tail kept).
 fn all_text(dom: &Dom, n: NodeId) -> String {
     let mut out = String::new();
     // (node, entering): on entering, its text then its children; on leaving, its tail.
     let mut stack = vec![(n, true)];
     while let Some((m, entering)) = stack.pop() {
-        if entering {
+        if entering && dom.is_comment(m) {
+            out.push_str(dom.tail(m));
+        } else if entering {
             out.push_str(dom.text(m));
             if m != n {
                 stack.push((m, false));
@@ -782,4 +792,130 @@ fn a_trailing_comment_hides_lang_from_the_lower_casing() {
     assert!(tags(page("")).contains(&"p".to_owned()));
     let kept = tags(page("<!-- c -->"));
     assert!(kept.contains(&"P".to_owned()), "{kept:?}");
+}
+
+/// The element of `dom` whose `id` is `id`.
+fn by_id(dom: &Dom, id: &str) -> NodeId {
+    dom.descendants()
+        .find(|&n| dom.attr(n, "id") == Some(id))
+        .unwrap_or_else(|| panic!("no element with id {id}"))
+}
+
+#[test]
+fn a_comment_is_a_child_as_in_lxml() {
+    let src = chapter("one<a id=\"x\"><!--c--></a>two<!--d-->three<?pi data?>four<b>b</b>");
+    // Read as XML, then as HTML (a stray `</i>` makes it not well-formed).
+    for src in [src.clone(), src.replace("four", "four</i>")] {
+        let dom = dom::parse(src.as_bytes()).unwrap();
+        let a = by_id(&dom, "x");
+        // lxml's `len(a)`: the comment is a child.
+        let [c] = dom.children(a) else {
+            panic!("{:?}", dom.children(a))
+        };
+        assert!(dom.is_comment(*c));
+        assert!(!dom.is_comment(a));
+        assert_eq!(dom.parent(*c), Some(a));
+        assert_eq!(dom.text(*c), "c");
+        assert_eq!(dom.text(a), "");
+        assert_eq!(dom.itertext(a), "");
+
+        // Around a comment the text reads as before: lxml's `text` stops at it, its tail
+        // goes on, and `itertext` leaves out its own text.
+        let p = dom.parent(a).unwrap();
+        let kids = dom.children(p).to_vec();
+        assert_eq!(
+            kids.len(),
+            4,
+            "a, the comment, the PI (a comment as HTML), b"
+        );
+        let (d, b) = (kids[1], kids[3]);
+        assert_eq!(dom.prev_sibling(d), Some(a));
+        assert_eq!(dom.next_sibling(a), Some(d));
+        assert_eq!(dom.prev_sibling(b), Some(kids[2]));
+        assert_eq!(dom.text(p), "one");
+        assert_eq!(dom.tail(a), "two");
+        assert_eq!(dom.text(d), "d");
+        assert_eq!(dom.tail(d), "three");
+        assert_eq!(dom.tail(kids[2]), "four");
+        assert_eq!(dom.itertext(p), "onetwothreefourb");
+        assert_eq!(all_text(&dom, p), "onetwothreefourb");
+
+        // Paths, `index_in_parent` and `descendants` count elements only.
+        assert_eq!(dom.index_in_parent(b), 1);
+        assert_eq!(dom.path(b).last(), Some(&1));
+        assert!(dom.descendants().all(|n| !dom.is_comment(n)));
+        // `subtree` is lxml's `iter()`: comments and processing instructions included.
+        assert_eq!(
+            dom.subtree(p).collect::<Vec<_>>(),
+            [p, a, *c, d, kids[2], b]
+        );
+        assert_eq!(dom.subtree(d).collect::<Vec<_>>(), [d]);
+        assert_eq!(dom.ancestors(*c).next(), Some(a));
+        assert_eq!(dom.ancestors(*c).last(), Some(dom.root()));
+        assert_eq!(dom.ancestors(dom.root()).next(), None);
+    }
+}
+
+#[test]
+fn attr_by_namespace_ignores_the_prefix() {
+    let src = "<html xmlns=\"http://www.w3.org/1999/xhtml\" \
+        xmlns:e=\"http://www.idpf.org/2007/ops\"><head><title>T</title></head>\
+        <body><aside id=\"n\" e:type=\"footnote\" xml:lang=\"fr\" type=\"plain\">x</aside>\
+        </body></html>";
+    let dom = dom::parse(src.as_bytes()).unwrap();
+    let n = by_id(&dom, "n");
+    let ops = "http://www.idpf.org/2007/ops";
+    assert_eq!(dom.attr_ns(n, ops, "type"), Some("footnote"));
+    assert_eq!(dom.attr(n, "epub:type"), None);
+    assert_eq!(dom.attr(n, "e:type"), Some("footnote"));
+    assert_eq!(
+        dom.attr_ns(n, "http://www.w3.org/XML/1998/namespace", "lang"),
+        Some("fr")
+    );
+    // No namespace: the attribute with no prefix.
+    assert_eq!(dom.attr_ns(n, "", "type"), Some("plain"));
+    assert_eq!(dom.attr_ns(n, ops, "lang"), None);
+    assert_eq!(dom.attr_ns(n, "http://example.com/", "type"), None);
+    assert_eq!(
+        dom.qualified(n),
+        (Some("http://www.w3.org/1999/xhtml"), "aside")
+    );
+}
+
+/// The text of every text node under the `<body>` of a `dom/` dump, in document order: lxml's
+/// `itertext()`, which leaves out the text of comments and processing instructions.
+fn dump_body_text(xhtml: &str) -> String {
+    let doc = deckle_limits::parse_xml(xhtml, ParsingOptions::default()).unwrap();
+    let body = doc
+        .root_element()
+        .children()
+        .find(|c| c.tag_name().name() == "body")
+        .unwrap();
+    body.descendants()
+        .filter(Node::is_text)
+        .filter_map(|n| n.text())
+        .collect()
+}
+
+#[test]
+fn itertext_matches_the_dump() {
+    // The tree as kfxgen gets it, which the dump recorded: flattened, chapter marks in.
+    let mut files = 0;
+    for book in BOOKS {
+        let read = read_book(&fixtures::kfxgen(&format!("sources/{book}.epub")))
+            .unwrap_or_else(|e| panic!("{book}: {e}"));
+        let dump = Dump::fixture(book);
+        for f in &read.files {
+            // `<body>`: the dump's `<head>` still holds Calibre's stylesheet links and their
+            // tails, which kfxgen's tree has dropped.
+            assert_eq!(
+                f.dom.itertext(body(&f.dom).unwrap()),
+                dump_body_text(&dump.xhtml(&f.href)),
+                "{book} {}",
+                f.href
+            );
+            files += 1;
+        }
+    }
+    assert_eq!(files, 49, "the 13 books have 49 spine files");
 }

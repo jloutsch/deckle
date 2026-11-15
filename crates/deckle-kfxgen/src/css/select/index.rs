@@ -85,7 +85,7 @@ impl DocIndex {
         let child_index = nodes.iter().map(|&e| at(dom.index_in_parent(e))).collect();
         let siblings = nodes
             .iter()
-            .map(|&e| dom.parent(e).map_or(1, |p| at(dom.children(p).len())))
+            .map(|&e| dom.parent(e).map_or(1, |p| at(dom.element_count(p))))
             .collect();
         let root_ns = dom.namespace(dom.root()).is_some();
 
@@ -174,19 +174,19 @@ impl DocIndex {
     fn of_type(&mut self, dom: &Dom) {
         let mut seen = vec![0u32; self.type_names.len()];
         for &e in &self.nodes {
-            let kids = dom.children(e);
-            for &c in kids {
+            let kids: Vec<NodeId> = dom.child_elements(e).collect();
+            for &c in &kids {
                 let c = self.pos[c.index()] as usize;
                 let t = self.type_id[c] as usize;
                 self.type_before[c] = seen[t];
                 seen[t] += 1;
             }
-            for &c in kids {
+            for &c in &kids {
                 let c = self.pos[c.index()] as usize;
                 let t = self.type_id[c] as usize;
                 self.type_after[c] = seen[t] - self.type_before[c] - 1;
             }
-            for &c in kids {
+            for &c in &kids {
                 seen[self.type_id[self.pos[c.index()] as usize] as usize] = 0;
             }
         }

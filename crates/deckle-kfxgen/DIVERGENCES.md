@@ -384,13 +384,14 @@ records the cost; the outcome note's "Before phase 4" lists the options.
 
 ## Calibre steps the element tree leaves out
 
-- Comments and processing instructions are dropped and the text around them joined. Calibre
-  keeps them in the tree; no path or style counts them. The two rules that read one are told
-  what they need: the lower-casing check on the root's last child, whether that child was a
-  comment; `DetectStructure`'s `at_start` (`dom::mark_chapters`), where one whose text is not
-  blank stood (in an element's text or tail). Where a later clean-up step moves text from one
-  element to another, that record stays with the element; and a comment made only of dashes
-  counts as text, where Calibre's HTML 4 fallback parser strips the dashes first.
+- Comments and processing instructions are kept as child nodes, as lxml keeps them, but both
+  are one kind of node: the tree does not say which, and a processing instruction keeps its
+  value, not its target. A comment made only of dashes keeps them, where Calibre's HTML 4
+  fallback parser strips the dashes first.
+- Paths, `:nth-child`, `:first-child`, `:last-child` and `:nth-last-child` count elements only.
+  Calibre's `css_selectors` counts comments there too (`sibling_count` uses lxml's `index` and
+  `len`), so in a parent with a comment among its children those selectors can match other
+  elements.
 - `HTMLPreProcessor`'s rule sets for Baen books, Book Designer and calibre's own pdftohtml
   output, and the user's search and replace, are not run.
 - A document whose root is `<ncx>` is kept as parsed; Calibre parses it again as XML
@@ -607,8 +608,7 @@ sign of the value as written (a number, or a length `unit_convert` reads), takin
 as positive and finite: where an element's font size is 0, infinite or NaN (`font-size: 0`,
 `1e999pt`), Calibre leaves the line height and the port sets it. The port reads numbers as
 Python's `float()` does but for `_` between digits and digits outside ASCII, which it does not
-read; and it counts an element's children without the comments lxml counts when it tests a drop
-cap.
+read.
 
 ## Values the flattener writes back
 

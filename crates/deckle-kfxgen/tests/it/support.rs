@@ -98,11 +98,22 @@ pub fn path_of(v: &Value) -> Vec<u32> {
         .collect()
 }
 
-/// The element at `path` (element-child indexes from the root), if there is one.
+/// The element at `path` (element-child indexes from the root, comments not counted), if there
+/// is one.
 pub fn find(dom: &Dom, path: &[u32]) -> Option<NodeId> {
     let mut n = dom.root();
     for &i in path {
-        n = *dom.children(n).get(i as usize)?;
+        let i = i as usize;
+        let kids = dom.children(n);
+        n = match kids.get(i) {
+            // No comment before it.
+            Some(&c) if !dom.is_comment(c) && dom.index_in_parent(c) == i => c,
+            _ => kids
+                .iter()
+                .copied()
+                .filter(|&c| !dom.is_comment(c))
+                .nth(i)?,
+        };
     }
     Some(n)
 }

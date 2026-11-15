@@ -80,11 +80,7 @@ fn strings(v: &Value) -> Vec<(String, String)> {
 }
 
 fn find(dom: &Dom, path: &[u32]) -> NodeId {
-    let mut n = dom.root();
-    for &i in path {
-        n = dom.children(n)[i as usize];
-    }
-    n
+    crate::support::find(dom, path).unwrap()
 }
 
 fn body(dom: &Dom) -> NodeId {

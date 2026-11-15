@@ -42,10 +42,10 @@ pub fn remove_fake_margins(namer: &mut ClassNamer, docs: &mut [(&Dom, &mut Flat)
         // Body's descendants in document order, with their depth below it.
         let mut order: Vec<(NodeId, usize)> = Vec::new();
         let mut stack: Vec<(NodeId, usize)> =
-            dom.children(body).iter().rev().map(|&c| (c, 1)).collect();
+            dom.child_elements(body).rev().map(|c| (c, 1)).collect();
         while let Some((e, depth)) = stack.pop() {
             order.push((e, depth));
-            stack.extend(dom.children(e).iter().rev().map(|&c| (c, depth + 1)));
+            stack.extend(dom.child_elements(e).rev().map(|c| (c, depth + 1)));
         }
         let mut below: HashMap<NodeId, u32> = HashMap::new();
         for &(e, _) in order.iter().rev() {

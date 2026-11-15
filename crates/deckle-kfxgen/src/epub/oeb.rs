@@ -218,25 +218,6 @@ fn dom_is_html(dom: &Dom, n: NodeId, name: &str) -> bool {
     dom.tag(n) == name && matches!(dom.namespace(n), None | Some(XHTML_NS))
 }
 
-/// lxml's `string()` of `n`: its text and that of everything under it, in document order.
-fn dom_string_value(dom: &Dom, n: NodeId) -> String {
-    let mut out = String::new();
-    // (element, entering): its text and children on entering, its tail on leaving.
-    let mut stack = vec![(n, true)];
-    while let Some((m, entering)) = stack.pop() {
-        if entering {
-            out.push_str(dom.text(m));
-            if m != n {
-                stack.push((m, false));
-            }
-            stack.extend(dom.children(m).iter().rev().map(|&c| (c, true)));
-        } else {
-            out.push_str(dom.tail(m));
-        }
-    }
-    out
-}
-
 fn doc_info(dom: &Dom) -> DocInfo {
     let root = dom.root();
     let mut info = DocInfo {
@@ -309,7 +290,8 @@ fn doc_info(dom: &Dom) -> DocInfo {
             info.sheets.push(h.to_owned());
         }
         if dom_is_html(dom, el, "style") {
-            info.styles.push(dom_string_value(dom, el));
+            // lxml's `string()`: `itertext()` joined.
+            info.styles.push(dom.itertext(el));
         }
     }
     info
@@ -390,7 +372,8 @@ fn html_toc(dom: &Dom, base: &str, frag: &str, hrefs: &BTreeMap<String, usize>) 
         if !hrefs.contains_key(urldefrag(&href).0) {
             continue;
         }
-        let title = collapse(&dom_string_value(dom, a));
+        // lxml's `string()`: `itertext()` joined.
+        let title = collapse(&dom.itertext(a));
         if !titles.contains_key(&href) {
             order.push(href.clone());
         }

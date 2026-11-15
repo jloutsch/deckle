@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 
 use super::parse::{calibre_isspace, py_space};
-use super::{Dom, IN_TAIL, IN_TEXT, NodeId, XHTML_NS};
+use super::{Dom, NodeId, XHTML_NS};
 use crate::epub::TocNode;
 use crate::epub::package::{abshref, urlnormalize};
 
@@ -363,22 +363,20 @@ fn at_start(dom: &Dom, elem: NodeId) -> bool {
     let Some(body) = body else {
         return true;
     };
-    let notes = |n: NodeId| dom.el(n).notes;
-    let mut stack = vec![body];
-    while let Some(x) = stack.pop() {
+    // `body.iter()`: comments too, whose text is their own.
+    for x in dom.subtree(body) {
         if x == elem {
             return true;
         }
-        // `x.tag.rpartition('}')[-1] in {'img', 'svg'}`: any namespace.
+        // `x.tag.rpartition('}')[-1] in {'img', 'svg'}`: any namespace (a comment has no tag).
         if matches!(dom.tag(x), "img" | "svg") {
             return false;
         }
-        let text_blank = calibre_isspace(dom.text(x)) && notes(x) & IN_TEXT == 0;
-        let tail_blank = calibre_isspace(dom.tail(x)) && notes(x) & IN_TAIL == 0;
-        if !(text_blank && (ancestors.contains(&x) || tail_blank)) {
+        if !(calibre_isspace(dom.text(x))
+            && (ancestors.contains(&x) || calibre_isspace(dom.tail(x))))
+        {
             return false;
         }
-        stack.extend(dom.children(x).iter().rev());
     }
     false
 }
@@ -399,7 +397,10 @@ impl Texts {
         let root = dom.root();
         let mut stack = vec![(root, true)];
         while let Some((n, entering)) = stack.pop() {
-            if entering {
+            if entering && dom.is_comment(n) {
+                // XPath's string value leaves out a comment's text, not its tail.
+                text.push_str(dom.tail(n));
+            } else if entering {
                 range[n.index()].0 = text.len();
                 text.push_str(dom.text(n));
                 stack.push((n, false));
