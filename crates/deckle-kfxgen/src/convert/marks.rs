@@ -232,7 +232,8 @@ fn mark_vertical_margins(dom: &mut Dom, first: &mut Cascaded) -> Result<(), Erro
         let Parsed::Ok { selector, .. } = parse_selector(&r.selector) else {
             // kfxgen's oddness: `select()` is a generator, so `Select` raises on the selector
             // while the loop outside the `try` reads it. The exception leaves the function, and
-            // the plugin's `try` around it logs it: the file gets none of these marks.
+            // the plugin's `try` around it logs it: the file gets none of these marks (recorded:
+            // `refused_selector`'s `refused.xhtml`, against `plain.xhtml`).
             first.spent.work = index.work();
             return Ok(());
         };
@@ -257,6 +258,9 @@ fn mark_vertical_margins(dom: &mut Dom, first: &mut Cascaded) -> Result<(), Erro
     // A horizontal one and all inside it are left unmarked but for the first.
     let mut horizontal = vec![false; n];
     let elements: Vec<NodeId> = dom.subtree(body).filter(|&e| !dom.is_comment(e)).collect();
+    // Not charged: their words are fixed, the 8 names of `BOX_PROPS` and values only from
+    // html.css (none longer than 6 bytes, `ua_box_values_are_short`), so at most 262 bytes of
+    // text per element, linear in the elements `MAX_DOM_NODES` already bounds.
     let mut marks: Vec<(NodeId, &str, String)> = Vec::new();
     for e in elements {
         if e != body {
@@ -495,7 +499,8 @@ mod tests {
     }
 
     /// A selector `Select` refuses is skipped for link colours, inside kfxgen's `try`, but
-    /// ends the vertical marks of the file, outside it.
+    /// ends the vertical marks of the file, outside it (as recorded in the `refused_selector`
+    /// cascade dump).
     #[test]
     fn a_refused_selector_skips_a_link_rule_and_ends_the_vertical_marks() {
         let page = r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>t</title></head><body style="writing-mode: vertical-rl"><p><a href="b.xhtml">b</a></p></body></html>"#;
@@ -507,6 +512,21 @@ mod tests {
         let dom = marked(page, "p { margin-top: 1em } p::marker { margin-left: 0 }");
         assert_eq!(first_of(&dom, "p", V_AUTHOR), None);
         assert_eq!(first_of(&dom, "html", SOURCE), Some("1"));
+    }
+
+    /// The bound `mark_vertical_margins` states for the user agent's values it copies.
+    #[test]
+    fn ua_box_values_are_short() {
+        let (_, first) = cascaded("<html><body/></html>", "");
+        let longest = first
+            .rules
+            .iter()
+            .filter(|r| r.origin == Origin::UserAgent)
+            .flat_map(|r| r.decls.iter())
+            .filter(|(k, _)| BOX_PROPS.contains(&k.as_str()))
+            .map(|(_, d)| d.value.len())
+            .max();
+        assert_eq!(longest, Some(6));
     }
 
     #[test]

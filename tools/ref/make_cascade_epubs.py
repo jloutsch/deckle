@@ -30,6 +30,11 @@ Writes, into OUT_DIR (fixtures/kfxgen/sources):
   <div> whose children :first-child and :nth-child(2) pick (css_selectors counts it), and the
   same before an only element child (:only-child) and before a :first-of-type; and comments
   whose tails hold text, before and after an element.
+- refused_selector.epub: two vertical-rl files with the same margin, padding and a:link rules,
+  refused.xhtml's stylesheet also holding a margin rule and a colour rule whose selectors
+  (::marker) Calibre's Select refuses, plain.xhtml's not: whether kfxgen's data-kfxgen-v-*
+  marks and link colours survive a refused selector. Both hold an align=" Center " paragraph
+  of class "TOC Dedication".
 
 tools/ref/kfxgen_models.sh --cascade runs it. Fixed zip dates: the same script makes the same
 bytes. The dumps are the reference; nothing here says what Calibre does with them.
@@ -381,6 +386,46 @@ def comments_in_tree(out):
     )
 
 
+def refused_selector(out):
+    """Two vertical-rl files, each with its own stylesheet, the same margin rules in both."""
+    margins = (
+        "html { writing-mode: vertical-rl; -webkit-writing-mode: vertical-rl }\n"
+        "p { margin-top: 1em }\n"
+        "p.pad { padding-left: 2em }\n"
+        "a:link { color: red }\n"
+    )
+    files = {
+        # A margin rule and a colour rule whose selectors Calibre's Select refuses.
+        "refused": margins + "p::marker { margin-left: 0 }\na::marker { color: blue }\n",
+        "plain": margins,
+    }
+    body = (
+        '<p>A paragraph with <a href="plain.xhtml">a link</a>.</p>\n'
+        '<p class="pad">A padded paragraph.</p>\n'
+        '<p align=" Center " class="TOC Dedication">Aligned, in classes of other case.</p>'
+    )
+    chapters = {name: page(name.title(), body, css=f"{name}.css") for name in files}
+    manifest = "\n".join(
+        [f'<item id="{n}-css" href="{n}.css" media-type="text/css"/>' for n in files]
+        + [
+            f'<item id="{n}" href="{n}.xhtml" media-type="application/xhtml+xml"/>'
+            for n in chapters
+        ]
+    )
+    spine = "".join(f'<itemref idref="{n}"/>' for n in chapters)
+    write_epub(
+        out / "refused_selector.epub",
+        [
+            (
+                "content.opf",
+                opf2("Refused Selector", "<dc:language>en</dc:language>", manifest, spine, toc=False),
+            ),
+        ]
+        + [(f"{n}.css", css) for n, css in files.items()]
+        + [(f"{n}.xhtml", text) for n, text in chapters.items()],
+    )
+
+
 def main(out):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
@@ -389,6 +434,7 @@ def main(out):
     fake_margins(out)
     malformed(out)
     comments_in_tree(out)
+    refused_selector(out)
 
 
 if __name__ == "__main__":

@@ -19,7 +19,7 @@ use serde_json::Value;
 pub const COST_LIMIT: std::time::Duration =
     std::time::Duration::from_secs(if cfg!(debug_assertions) { 30 } else { 5 });
 
-pub const BOOKS: [&str; 19] = [
+pub const BOOKS: [&str; 20] = [
     "comments_in_tree",
     "css_quirks",
     "directions",
@@ -37,6 +37,7 @@ pub const BOOKS: [&str; 19] = [
     "notes",
     "package_more",
     "package_quirks",
+    "refused_selector",
     "rtl",
     "vertical",
 ];

@@ -159,6 +159,7 @@ the macOS app's).
 | `fake_margins` | synthetic, the same script | margins Calibre's RemoveFakeMargins removes and keeps |
 | `malformed` | synthetic, the same script | files Calibre reads with its HTML parser, entities, HTML 4, windows-1252 |
 | `comments_in_tree` | synthetic, the same script | comments where Calibre's steps count lxml's children: an empty `<b>` and a `<br>` holding one, one between the head's children, a rule inside one in `<style>`, a drop cap holding one, one before the children `:first-child` and `:nth-child(2)` pick, one beside an only element child (`:only-child`) and one before a `:first-of-type`, comments whose tails hold text |
+| `refused_selector` | synthetic, the same script | two vertical-rl files with the same margin rules, one also holding `::marker` rules Calibre refuses (no `data-kfxgen-v-*` marks there); an `align=" Center "` paragraph of class `TOC Dedication` |
 | `text_edges` | synthetic (`tools/ref/make_convert_epubs.py`) | paragraphs of only no-break spaces, U+001C in text (Calibre drops it), a tab in `<pre>`, a literal U+2028, astral characters before a link; shifts in shifts, a not-bold span in bold and in a heading, `<sub>`, line-through by `<s>`, `<del>` and CSS |
 | `block_edges` | synthetic, the same script | `<pre>` with spaces, tabs and blank lines; hidden elements; an `<epub:switch>`; page breaks before and after; `clear` after a float; comments in and between paragraphs |
 | `tables_more` | synthetic, the same script | a rows-path table (a hidden row, loose text), a notes table, a row holding a table, a caption, colspan and rowspan, cells of paragraphs |
@@ -286,8 +287,9 @@ The manifest is Calibre's after its transforms: the book's stylesheets are gone,
 | `horizontal_blocks` | 4 | 67 KB | `data-kfxgen-horizontal` and `-vertical`: horizontal blocks in a vertical book |
 | `marks` | 2 | 22 KB | link colours by `a:link`, `a:visited` and a link's own style, in a vertical book |
 | `package_more` | 4 | 30 KB | `data-kfxgen-toc` and `-front`: a `class="toc"` listing and a dedication |
+| `refused_selector` | 2 | 18 KB | made by `tools/ref/make_cascade_epubs.py`: two vertical-rl files with the same margin rules, one also holding `::marker` rules Calibre's `Select` refuses, which leaves that file no `data-kfxgen-v-*` marks but its link colour; `align=" Center "` and `class="TOC Dedication"` |
 
-856 KB in all, with `ua_rules.json` (19 KB).
+874 KB in all, with `ua_rules.json` (19 KB).
 
 ## convert/
 

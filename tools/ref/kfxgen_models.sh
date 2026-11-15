@@ -211,6 +211,7 @@ calibre_book() {
 # before the flattener (link colours, horizontal blocks, toc and front matter classes).
 # Kept under 1.5 MB.
 CASCADE_BUILT="css_quirks package_quirks no_toc fake_margins malformed comments_in_tree"
+CASCADE_BUILT="$CASCADE_BUILT refused_selector"
 CASCADE_SOURCES="$CASCADE_BUILT lists notes vertical rtl fonts directions frames navigation"
 CASCADE_SOURCES="$CASCADE_SOURCES link_colours link_greys horizontal_blocks marks package_more"
 
