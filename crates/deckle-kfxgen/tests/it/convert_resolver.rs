@@ -523,6 +523,43 @@ fn a_long_value_read_for_every_element_is_too_large() {
     }
 }
 
+/// A shared style of 100,000 declarations over 2,000 spans: each value is looked up by name,
+/// not by reading the style's declarations one by one (3.4 ms an element in a release build
+/// before, about 130 lookups each).
+#[test]
+fn a_style_of_many_declarations_is_looked_up_by_name() {
+    const SPANS: usize = 2_000;
+    let (mut dom, body) = empty_page();
+    for _ in 0..SPANS {
+        let s = dom.append_child(body, "span");
+        dom.set_text(s, "x");
+    }
+    let mut css = String::from("span {");
+    for i in 0..100_000 {
+        css.push_str(&format!("x{i}:1;"));
+    }
+    css.push_str("color: red }");
+    let file = file_of(dom, &css);
+    let start = Instant::now();
+    let budget = TextBudget::new();
+    let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+    let mut last = None;
+    for n in file.dom.descendants() {
+        let r = resolver.resolve(n).unwrap().unwrap();
+        compute_block_style(&r).unwrap();
+        // Fails as soon as the limit passes, not after the whole page.
+        assert!(start.elapsed() < COST_LIMIT, "took {:?}", start.elapsed());
+        last = Some(n);
+    }
+    eprintln!(
+        "100,000 declarations: {} elements, {:?}",
+        SPANS,
+        start.elapsed()
+    );
+    let r = resolver.resolve(last.unwrap()).unwrap().unwrap();
+    assert_eq!(r.get("color").unwrap(), Some(&s("red")));
+}
+
 /// A `::first-letter` rule of 1,000 declarations on 100 paragraphs (the cascade already
 /// counts each paragraph's pseudo-class declarations, so it refuses many more), each paragraph
 /// resolved again and again, as the walks do: every resolution copies the rule, a unit a

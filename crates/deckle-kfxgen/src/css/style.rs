@@ -10,11 +10,14 @@
 //! Hostile input: no answer recurses per tree level. Calibre asks the parent's `Style`, which
 //! asks its parent; the port walks up in a loop to the nearest element already answered, then
 //! fills each element on the way down, so a tree tens of thousands deep costs one pass per
-//! property. Every answer is kept per element: the font size, width, height and line height in
+//! property. An element's declaration list of more than 32 is indexed by name the first time
+//! it is asked of (the elements styled alike share it), so a lookup does not cost the list's
+//! length. Every answer is kept per element: the font size, width, height and line height in
 //! one slot each, an inherited value as the element that declares it.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::defaults::default_value;
 use super::flatten::Flat;
@@ -103,7 +106,14 @@ pub struct Styles<'a> {
     line_height: Box<[Cell<Option<Num<'a>>>]>,
     /// Property → where each element's `_get` value is.
     found: RefCell<HashMap<Box<str>, Sources>>,
+    /// For each declaration list of more than [`INDEXED`] declarations asked of, by its
+    /// address (the elements styled alike share one): name → value.
+    by_name: RefCell<HashMap<*const Decls, HashMap<&'a str, &'a str>>>,
 }
+
+/// The most declarations an element's own value is looked for among one by one; a longer list
+/// is indexed by name once, so a lookup does not cost its length.
+const INDEXED: usize = 32;
 
 fn slots<T: Copy>(n: usize) -> Box<[Cell<Option<T>>]> {
     (0..n).map(|_| Cell::new(None)).collect()
@@ -124,12 +134,34 @@ impl<'a> Styles<'a> {
             height: slots(n),
             line_height: slots(n),
             found: RefCell::new(HashMap::new()),
+            by_name: RefCell::new(HashMap::new()),
         }
+    }
+
+    /// Element `i`'s own declared value of `prop`: the first declaration of that name (each
+    /// name is declared once in a list).
+    fn own(&self, i: usize, prop: &str) -> Option<&'a str> {
+        let decls: &'a Arc<Decls> = self.flat.specified.get(i)?;
+        if decls.len() <= INDEXED {
+            return decls
+                .iter()
+                .find(|(k, _)| k == prop)
+                .map(|(_, d)| d.value.as_str());
+        }
+        let mut by_name = self.by_name.borrow_mut();
+        let index = by_name.entry(Arc::as_ptr(decls)).or_insert_with(|| {
+            let mut index = HashMap::with_capacity(decls.len());
+            for (k, d) in decls.iter() {
+                index.entry(k.as_str()).or_insert(d.value.as_str());
+            }
+            index
+        });
+        index.get(prop).copied()
     }
 
     /// `Style.get(prop)`: the element's own declared value.
     pub fn get(&self, n: NodeId, prop: &str) -> Option<&'a str> {
-        own(self.flat, n.index(), prop)
+        self.own(n.index(), prop)
     }
 
     /// `Style._get(prop)`: the element's value, `inherit` and an inherited property it does not
@@ -140,7 +172,7 @@ impl<'a> Styles<'a> {
             DEFAULT => default_value(prop).ok_or_else(|| Error::NoDefault {
                 prop: prop.to_owned(),
             }),
-            at => Ok(own(self.flat, at as usize, prop).unwrap_or_default()),
+            at => Ok(self.own(at as usize, prop).unwrap_or_default()),
         }
     }
 
@@ -200,7 +232,7 @@ impl<'a> Styles<'a> {
     fn source(&self, n: NodeId, prop: &str) -> u32 {
         let inherited = INHERITED.contains(&prop);
         if !inherited {
-            match own(self.flat, n.index(), prop) {
+            match self.own(n.index(), prop) {
                 None => return DEFAULT,
                 Some(v) if v != "inherit" => return n.index() as u32,
                 Some(_) => {}
@@ -225,7 +257,7 @@ impl<'a> Styles<'a> {
             if known != UNKNOWN {
                 break known;
             }
-            let value = own(self.flat, cur.index(), prop);
+            let value = self.own(cur.index(), prop);
             if value.is_some_and(|v| v != "inherit") {
                 break cur.index() as u32;
             }
@@ -452,15 +484,6 @@ impl<'a> Styles<'a> {
             .into_iter()
             .find(|c| is_color(c))
     }
-}
-
-/// Element `i`'s own declared value of `prop`.
-fn own<'f>(flat: &'f Flat, i: usize, prop: &str) -> Option<&'f str> {
-    flat.specified
-        .get(i)?
-        .iter()
-        .find(|(k, _)| k == prop)
-        .map(|(_, d)| d.value.as_str())
 }
 
 /// `unit_convert(value, base, font, dpi, body_font_size)`: `value` in points. A number is
