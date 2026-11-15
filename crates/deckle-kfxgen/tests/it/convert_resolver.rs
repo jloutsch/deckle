@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use deckle_kfx::fixtures;
 use deckle_kfxgen::book::{File, read_book};
-use deckle_kfxgen::convert::{Resolver, StyleError, compute_block_style};
+use deckle_kfxgen::convert::{Resolver, StyleError, TextBudget, compute_block_style};
 use deckle_kfxgen::css::{
     self, ClassNamer, DEFAULT_PROFILE, Origin, cascade, flatten, parse_sheet, prepare_body,
 };
@@ -65,7 +65,8 @@ fn resolver_matches_the_dump_for_every_element() {
             let PyValue::List(rows) = dump(name, &format!("resolver/{nnn}.json.gz")) else {
                 panic!("{name} {nnn}: no list");
             };
-            let resolver = Resolver::new(file, &DEFAULT_PROFILE);
+            let budget = TextBudget::new();
+            let resolver = Resolver::new(file, &DEFAULT_PROFILE, &budget);
             let head = find(&file.dom, &[0]).unwrap();
             let head_kids = file
                 .dom
@@ -103,13 +104,13 @@ fn resolver_matches_the_dump_for_every_element() {
                     }
                 };
                 let got = resolver.resolve(n).unwrap();
-                let ours = got.as_ref().map_or(PyValue::None, |r| r.to_py());
+                let ours = got.as_ref().map_or(PyValue::None, |r| r.to_py().unwrap());
                 for line in model_diff(&ours, css) {
                     failures.push(format!("{name} {nnn} {path:?} resolve{line}"));
                 }
                 let ours = match &got {
                     None => Ok(PyValue::None),
-                    Some(r) => compute_block_style(&resolver, r),
+                    Some(r) => compute_block_style(r),
                 };
                 match ours {
                     Ok(ours) => {
@@ -126,8 +127,8 @@ fn resolver_matches_the_dump_for_every_element() {
                 "{name} {nnn}: a row per element"
             );
             assert_eq!(links, 2, "{name} {nnn}: the flattener's two links");
-            if resolver.charged() > most.0 {
-                most = (resolver.charged(), format!("{name} {nnn}"));
+            if budget.charged() > most.0 {
+                most = (budget.charged(), format!("{name} {nnn}"));
             }
             files_compared += 1;
             elements += seen;
@@ -183,14 +184,14 @@ fn empty_page() -> (dom::Dom, NodeId) {
 }
 
 /// Resolves every element, deepest first (so no memo is warm), within `COST_LIMIT`.
-fn resolve_all<'a>(what: &str, file: &'a File) -> Resolver<'a> {
+fn resolve_all<'a>(what: &str, file: &'a File, budget: &'a TextBudget) -> Resolver<'a> {
     let mut all: Vec<NodeId> = file.dom.descendants().collect();
     all.reverse();
     let start = Instant::now();
-    let resolver = Resolver::new(file, &DEFAULT_PROFILE);
+    let resolver = Resolver::new(file, &DEFAULT_PROFILE, budget);
     for &n in &all {
         let r = resolver.resolve(n).unwrap().unwrap();
-        assert!(compute_block_style(&resolver, &r).is_ok());
+        assert!(compute_block_style(&r).is_ok());
     }
     let took = start.elapsed();
     eprintln!("{what}: {} elements, {took:?}", all.len());
@@ -199,7 +200,13 @@ fn resolve_all<'a>(what: &str, file: &'a File) -> Resolver<'a> {
 }
 
 fn get(r: &Resolver, n: NodeId, key: &str) -> PyValue {
-    r.resolve(n).unwrap().unwrap().get(key).unwrap().clone()
+    r.resolve(n)
+        .unwrap()
+        .unwrap()
+        .get(key)
+        .unwrap()
+        .unwrap()
+        .clone()
 }
 
 #[test]
@@ -222,7 +229,8 @@ fn a_deep_tree_resolves_in_one_pass() {
          .big { font-size: 101% } \
          span { text-decoration: line-through }",
     );
-    let resolver = resolve_all("20,000 nested spans", &file);
+    let budget = TextBudget::new();
+    let resolver = resolve_all("20,000 nested spans", &file, &budget);
     // Twenty sizes of 101% of the one above, from 16px.
     let mut want = 16.0_f64;
     for _ in 0..DEEP / 1000 {
@@ -268,7 +276,8 @@ fn siblings_do_not_rewalk_their_ancestors() {
          text-decoration: underline; background-color: #eee; line-height: 2 } \
          div { font-size: 1.01em; background-color: #ddd }",
     );
-    let resolver = resolve_all("50,000 siblings 2,000 deep", &file);
+    let budget = TextBudget::new();
+    let resolver = resolve_all("50,000 siblings 2,000 deep", &file, &budget);
     assert_eq!(
         get(&resolver, last, "font-weight"),
         PyValue::Str("bold".into())
@@ -325,7 +334,8 @@ fn values_no_dump_row_reaches_are_kfxgens() {
             "9".repeat(400)
         ),
     );
-    let r = Resolver::new(&f, &DEFAULT_PROFILE);
+    let b = TextBudget::new();
+    let r = Resolver::new(&f, &DEFAULT_PROFILE, &b);
     assert!(r.resolve(nth(&f, "div", 0)).unwrap().is_none());
     assert!(r.resolve(nth(&f, "span", 0)).unwrap().is_none());
     assert_eq!(
@@ -345,7 +355,8 @@ fn values_no_dump_row_reaches_are_kfxgens() {
         ".quotes { quotes: \"\u{ab}\" \"\u{bb}\" } .marks::before { content: \"[\" } \
          .marks::after { content: \"]\" } .tall { height: 2px } .thin { height: 1px }",
     );
-    let r = Resolver::new(&f, &DEFAULT_PROFILE);
+    let b = TextBudget::new();
+    let r = Resolver::new(&f, &DEFAULT_PROFILE, &b);
     let q = |quotes: PyValue, before: PyValue, after: PyValue| {
         dict(&[("quotes", quotes), ("before", before), ("after", after)])
     };
@@ -372,7 +383,8 @@ fn values_no_dump_row_reaches_are_kfxgens() {
         "html { font-size: 62.5% } p { font-size: 1.1rem } .k { font-size: small } \
          .lh { line-height: 2em } .big { font-size: 2em }",
     );
-    let r = Resolver::new(&f, &DEFAULT_PROFILE);
+    let b = TextBudget::new();
+    let r = Resolver::new(&f, &DEFAULT_PROFILE, &b);
     let size = |n| get(&r, n, "font-size");
     assert_eq!(size(f.dom.root()), PyValue::Float(10.0));
     assert_eq!(size(nth(&f, "p", 0)), PyValue::Float(11.0));
@@ -393,7 +405,8 @@ fn values_no_dump_row_reaches_are_kfxgens() {
          p::first-letter { font-size: x-large; float: left } .u { text-decoration: underline } \
          .n { text-decoration: none line-through }",
     );
-    let r = Resolver::new(&f, &DEFAULT_PROFILE);
+    let b = TextBudget::new();
+    let r = Resolver::new(&f, &DEFAULT_PROFILE, &b);
     assert_eq!(
         get(&r, nth(&f, "span", 0), "font-size"),
         PyValue::Float(13.0)
@@ -425,7 +438,8 @@ fn values_no_dump_row_reaches_are_kfxgens() {
          <div class=\"box\" data-kfxgen-vertical=\"\" data-kfxgen-v-author=\"margin-right\">h</div>",
         ".red { color: red } .box { margin-right: 5px; padding-top: 6px; margin-top: 7px }",
     );
-    let r = Resolver::new(&f, &DEFAULT_PROFILE);
+    let b = TextBudget::new();
+    let r = Resolver::new(&f, &DEFAULT_PROFILE, &b);
     assert_eq!(get(&r, nth(&f, "a", 0), "color"), s("red"));
     assert_eq!(get(&r, nth(&f, "a", 1), "color"), s(" #ABC "));
     assert_eq!(get(&r, nth(&f, "a", 2), "color"), s(""));
@@ -473,13 +487,14 @@ fn a_long_value_read_for_every_element_is_too_large() {
         }
         let file = file_of(dom, &css);
         let start = Instant::now();
-        let resolver = Resolver::new(&file, &DEFAULT_PROFILE);
+        let budget = TextBudget::new();
+        let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
         let mut resolved = 0;
         let stopped = file
             .dom
             .descendants()
             .find_map(|n| match resolver.resolve(n) {
-                Ok(Some(r)) => match compute_block_style(&resolver, &r) {
+                Ok(Some(r)) => match compute_block_style(&r) {
                     Ok(_) => {
                         resolved += 1;
                         None
@@ -499,7 +514,60 @@ fn a_long_value_read_for_every_element_is_too_large() {
         // 1 MiB is 16,384 units: the budget lasts about 30 reads of it.
         assert!(resolved < 40, "{what}: {resolved}");
         // Past the limit by at most one value's charge.
-        assert!(resolver.charged() <= MAX_CASCADE_DECLS + (1 << 20) / 64 * 2);
+        assert!(budget.charged() <= MAX_CASCADE_DECLS + (1 << 20) / 64 * 2);
         assert!(took < COST_LIMIT, "{what} took {took:?}");
+        // Another resolver for the same file shares its budget: no new allowance.
+        let again = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+        let last = file.dom.descendants().last().unwrap();
+        assert!(again.resolve(last).is_err(), "{what}: a second resolver");
     }
+}
+
+/// A `::first-letter` rule of 1,000 declarations on 100 paragraphs (the cascade already
+/// counts each paragraph's pseudo-class declarations, so it refuses many more), each paragraph
+/// resolved again and again, as the walks do: every resolution copies the rule, a unit a
+/// declaration, so the budget ends it after about 500.
+#[test]
+fn a_long_first_letter_rule_is_too_large() {
+    const PARAS: usize = 100;
+    let (mut dom, body) = empty_page();
+    for _ in 0..PARAS {
+        let p = dom.append_child(body, "p");
+        dom.set_text(p, "x");
+    }
+    let mut css = String::from("p::first-letter {");
+    for i in 0..1_000 {
+        css.push_str(&format!("x{i}:1;"));
+    }
+    css.push('}');
+    let file = file_of(dom, &css);
+    let paras: Vec<NodeId> = file
+        .dom
+        .descendants()
+        .filter(|&n| file.dom.tag(n) == "p")
+        .collect();
+    let start = Instant::now();
+    let budget = TextBudget::new();
+    let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+    let mut resolved = 0;
+    let stopped = paras
+        .iter()
+        .cycle()
+        .take(100_000)
+        .find_map(|&n| match resolver.resolve(n) {
+            Ok(r) => {
+                assert!(r.is_some());
+                resolved += 1;
+                None
+            }
+            Err(e) => Some(e),
+        });
+    let took = start.elapsed();
+    eprintln!("first-letter of 1,000: TooLarge after {resolved} resolutions, {took:?}");
+    assert!(
+        matches!(stopped, Some(css::Error::Cascade(MAX_CASCADE_DECLS))),
+        "{stopped:?}"
+    );
+    assert!((450..=501).contains(&resolved), "{resolved}");
+    assert!(took < COST_LIMIT, "took {took:?}");
 }

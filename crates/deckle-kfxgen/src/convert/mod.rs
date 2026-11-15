@@ -30,4 +30,4 @@ pub use inline_style::{
 pub use options::ConvertOptions;
 pub use package::{CalibreOpf, Nav, NavLink, Ncx};
 pub(crate) use package::{item_path, kfxgen_paths};
-pub use resolver::{Resolved, Resolver};
+pub use resolver::{Resolved, Resolver, TextBudget};

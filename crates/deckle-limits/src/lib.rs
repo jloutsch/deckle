@@ -121,10 +121,11 @@ pub const MAX_BOOK_SELECTOR_WORK: u64 = 1_000_000_000;
 /// each styled its own way (25,000 of one declaration each; fewer with more), and an element's
 /// pseudo-class declarations are counted for it in both cascades. The files of nine Gutenberg
 /// books use at most 1,495 in the first; the 49 cascade fixture files at most 1,049 in both.
-/// Apart from the cascades, the converter's style resolver for a file counts the style text it
-/// copies or reads per element against the same limit, a unit for each 64 bytes (a value under
-/// 64 bytes costs nothing), so a long value read for every element is refused after bounded
-/// work; the 184 fixture files' resolvers use at most 4.
+/// Apart from the cascades, the converter's resolvers for a file count the style text they copy
+/// or read per element against the same limit, together: a unit for each 64 bytes (a value
+/// under 64 bytes costs nothing) and one for each pseudo-class declaration copied, so a long
+/// value read for every element is refused after bounded work; the 184 fixture files use at
+/// most 173.
 pub const MAX_CASCADE_DECLS: usize = 500_000;
 
 /// EPUB to KFX: the units of [`MAX_CASCADE_DECLS`] all a book's files use together, each

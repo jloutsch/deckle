@@ -18,44 +18,152 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use super::inline_style::{Raised, css_rgb, is_transparent};
+use super::block_style::StyleError;
+use super::inline_style::{
+    Raised, Typography, css_font_size, css_rgb, css_typography, is_transparent,
+};
 use crate::book::File;
 use crate::css::{self, Profile, Styles, TEXT_UNIT, Units, Value};
 use crate::dom::{Dom, NodeId};
 use crate::generate::py;
 use crate::pyvalue::PyValue;
 
-/// An element's resolved CSS: `resolve(elem)`'s dict, its keys in kfxgen's order.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Resolved(Vec<(&'static str, PyValue)>);
+/// The style text one book file's conversion may copy or read per element, in
+/// [`MAX_CASCADE_DECLS`](deckle_limits::MAX_CASCADE_DECLS) units: one for every [`TEXT_UNIT`]
+/// bytes, as the cascade charges a declaration's text. Made once for the file and handed to
+/// every [`Resolver`] built for it (kfxgen builds one per pass and one in `_footnote_keys`), so
+/// building another does not add to the allowance. Past the limit, [`css::Error::Cascade`], as
+/// a cascade past it gives: the file is refused.
+pub struct TextBudget(RefCell<Units>);
 
-impl Resolved {
-    /// `css.get(key)`: `Some(&PyValue::None)` for a key holding None, None for a key the dict
-    /// does not have.
-    pub fn get(&self, key: &str) -> Option<&PyValue> {
-        self.0.iter().find(|(k, _)| *k == key).map(|(_, v)| v)
+impl Default for TextBudget {
+    fn default() -> Self {
+        TextBudget(RefCell::new(Units(0)))
+    }
+}
+
+impl TextBudget {
+    pub fn new() -> TextBudget {
+        TextBudget::default()
     }
 
-    /// The dict as Python had it.
-    pub fn to_py(&self) -> PyValue {
-        PyValue::Dict(
-            self.0
-                .iter()
-                .map(|(k, v)| (PyValue::Str((*k).to_owned()), v.clone()))
-                .collect(),
-        )
+    /// The units charged so far.
+    pub fn charged(&self) -> usize {
+        self.0.borrow().0
+    }
+
+    /// Charges `bytes` of book text about to be copied or read through. A value under
+    /// [`TEXT_UNIT`] bytes costs nothing, so the free work of each read is a constant.
+    pub(crate) fn charge(&self, bytes: usize) -> Result<(), css::Error> {
+        self.0.borrow_mut().charge(bytes / TEXT_UNIT)
+    }
+}
+
+/// The bytes a value read out of a [`Resolved`] is charged as: its strings, and a
+/// [`TEXT_UNIT`] for each entry of a dict (a `::first-letter` rule can hold any number).
+fn cost(v: &PyValue) -> usize {
+    match v {
+        PyValue::Str(s) => s.len(),
+        PyValue::List(items) | PyValue::Tuple(items) | PyValue::Set(items) => {
+            items.iter().map(cost).fold(0, usize::saturating_add)
+        }
+        PyValue::Dict(pairs) => pairs
+            .iter()
+            .map(|(k, v)| TEXT_UNIT.saturating_add(cost(k)).saturating_add(cost(v)))
+            .fold(0, usize::saturating_add),
+        PyValue::Obj { state, .. } => cost(state),
+        _ => 0,
+    }
+}
+
+/// An element's resolved CSS: `resolve(elem)`'s dict, its keys in kfxgen's order. Every value
+/// read out of it is charged to the file's [`TextBudget`] first ([`Resolved::get`],
+/// [`Resolved::to_py`], [`Resolved::typography`]), so a caller cannot hand a long value to a
+/// parser for every element without paying for it. It cannot be cloned.
+pub struct Resolved<'b> {
+    /// Each key, its value and the value's [`cost`].
+    values: Vec<(&'static str, PyValue, usize)>,
+    budget: &'b TextBudget,
+}
+
+impl<'b> Resolved<'b> {
+    fn new(budget: &'b TextBudget) -> Resolved<'b> {
+        Resolved {
+            values: Vec::with_capacity(48),
+            budget,
+        }
+    }
+
+    fn push(&mut self, key: &'static str, value: PyValue) {
+        let c = cost(&value);
+        self.values.push((key, value, c));
+    }
+
+    fn set(&mut self, key: &str, value: PyValue) {
+        let c = cost(&value);
+        if let Some(slot) = self.values.iter_mut().find(|(k, _, _)| *k == key) {
+            slot.1 = value;
+            slot.2 = c;
+        }
+    }
+
+    /// The value of `key`, uncharged: only for what charges it first.
+    fn raw(&self, key: &str) -> Option<&PyValue> {
+        self.values
+            .iter()
+            .find(|(k, _, _)| *k == key)
+            .map(|(_, v, _)| v)
+    }
+
+    /// `css.get(key)`, its value charged: `Some(&PyValue::None)` for a key holding None, None
+    /// for a key the dict does not have.
+    pub fn get(&self, key: &str) -> Result<Option<&PyValue>, css::Error> {
+        let Some((_, v, c)) = self.values.iter().find(|(k, _, _)| *k == key) else {
+            return Ok(None);
+        };
+        self.budget.charge(*c)?;
+        Ok(Some(v))
+    }
+
+    /// The dict as Python had it, every value charged.
+    pub fn to_py(&self) -> Result<PyValue, css::Error> {
+        let mut pairs = Vec::with_capacity(self.values.len());
+        for (k, v, c) in &self.values {
+            self.budget.charge(*c)?;
+            pairs.push((PyValue::Str((*k).to_owned()), v.clone()));
+        }
+        Ok(PyValue::Dict(pairs))
+    }
+
+    /// `css_typography(css)`, the values it reads charged first.
+    pub(crate) fn typography(&self) -> Result<Typography, StyleError> {
+        for key in [
+            "font-variant",
+            "text-transform",
+            "letter-spacing",
+            "color",
+            "text-orientation",
+            "text-emphasis-style",
+            "background-behind",
+        ] {
+            self.get(key)?;
+        }
+        Ok(css_typography(|k| self.raw(k))?)
+    }
+
+    /// `css_font_size(css)`: a number, nothing to charge.
+    pub(crate) fn font_size(&self) -> Option<&PyValue> {
+        css_font_size(|k| self.raw(k))
     }
 
     /// A dict of the given keys only, as kfxgen's tests hand `compute_block_style`.
     #[cfg(test)]
-    pub(super) fn of(pairs: Vec<(&'static str, PyValue)>) -> Resolved {
-        Resolved(pairs)
-    }
-
-    fn set(&mut self, key: &str, value: PyValue) {
-        if let Some(slot) = self.0.iter_mut().find(|(k, _)| *k == key) {
-            slot.1 = value;
+    pub(super) fn of(pairs: Vec<(&'static str, PyValue)>, budget: &'b TextBudget) -> Self {
+        let mut r = Resolved::new(budget);
+        for (k, v) in pairs {
+            r.push(k, v);
         }
+        r
     }
 }
 
@@ -160,8 +268,8 @@ pub struct Resolver<'a> {
     /// `_calibre_keyword_table`: the rem value Calibre writes for a keyword, and Kindle
     /// Previewer's px for it.
     keyword_px: Vec<(String, f64)>,
-    /// The book text copied or read so far, in [`MAX_CASCADE_DECLS`](deckle_limits::MAX_CASCADE_DECLS) units ([`Self::charge`]).
-    units: RefCell<Units>,
+    /// The file's budget for the text copied or read ([`TextBudget`]).
+    budget: &'a TextBudget,
     /// `sizes`: each element's font size in CSS px.
     sizes: Box<[Cell<Option<f64>>]>,
     /// Each [`INHERITED`] property's nearest element declaring it.
@@ -184,13 +292,14 @@ impl<'a> Resolver<'a> {
     /// `_build_style_resolver(oeb_book, item, log)` for `file`. `profile` is what Calibre's
     /// `Stylizer` measures with and the input profile Calibre rewrote font-size keywords with
     /// (both are Calibre's `default` in a kfxgen conversion: [`crate::css::DEFAULT_PROFILE`]).
-    pub fn new(file: &'a File, profile: &'a Profile) -> Resolver<'a> {
+    /// `budget` is the file's, shared by every resolver built for it.
+    pub fn new(file: &'a File, profile: &'a Profile, budget: &'a TextBudget) -> Resolver<'a> {
         let n = file.dom.node_count();
         Resolver {
             dom: &file.dom,
             styles: file.styles(profile),
             keyword_px: keyword_table(profile),
-            units: RefCell::new(Units(0)),
+            budget,
             sizes: memos(n, None),
             inherited: std::array::from_fn(|_| memos(n, Memo::Unknown)),
             line_height: memos(n, Memo::Unknown),
@@ -202,19 +311,9 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Charges `bytes` of the book's text about to be copied or read through: a unit of
-    /// [`MAX_CASCADE_DECLS`](deckle_limits::MAX_CASCADE_DECLS) for every [`TEXT_UNIT`] bytes, as the cascade charges a
-    /// declaration's text, counted for this resolver alone. Past the limit,
-    /// [`css::Error::Cascade`], as a cascade past it gives: the file is refused. Called before
-    /// every copy, parse or case-fold of a value, so a value of length L costs O(L) only while
-    /// the budget lasts; a value under [`TEXT_UNIT`] bytes costs nothing.
-    pub(crate) fn charge(&self, bytes: usize) -> Result<(), css::Error> {
-        self.units.borrow_mut().charge(bytes / TEXT_UNIT)
-    }
-
-    /// The units charged so far.
-    pub fn charged(&self) -> usize {
-        self.units.borrow().0
+    /// [`TextBudget::charge`]: called before every copy, parse or case-fold of a value.
+    fn charge(&self, bytes: usize) -> Result<(), css::Error> {
+        self.budget.charge(bytes)
     }
 
     /// `resolve(elem)`: the element's resolved CSS, or None where kfxgen's `resolve` catches an
@@ -222,7 +321,7 @@ impl<'a> Resolver<'a> {
     /// `int()` refuses). A new value on every call, as kfxgen's; a caller that needs it again
     /// keeps it. [`css::Error::Cascade`] once the text copied and read passes the budget
     /// ([`Self::charge`]).
-    pub fn resolve(&self, n: NodeId) -> Result<Option<Resolved>, css::Error> {
+    pub fn resolve(&self, n: NodeId) -> Result<Option<Resolved<'a>>, css::Error> {
         // The only part of `resolve`'s body that can raise; every value is worked out without
         // side effects, so the order does not matter.
         let Ok(behind) = self.behind(n)? else {
@@ -232,8 +331,8 @@ impl<'a> Resolver<'a> {
         let own = |prop: &str| self.text(self.styles.get(n, prop));
         let inherited = |i: usize| self.text(self.specified_inherited(n, i)?);
         let computed = |prop: &str| self.computed(n, prop);
-        let mut css = Resolved(Vec::with_capacity(48));
-        let mut put = |k: &'static str, v: PyValue| css.0.push((k, v));
+        let mut css = Resolved::new(self.budget);
+        let mut put = |k: &'static str, v: PyValue| css.push(k, v);
         put(
             "font-size",
             PyValue::Float(py::round(self.font_size_px(n)?, 3)),
@@ -609,6 +708,8 @@ impl<'a> Resolver<'a> {
         else {
             return Ok(PyValue::None);
         };
+        // A unit for each declaration copied, however short.
+        self.charge(TEXT_UNIT.saturating_mul(rule.len()))?;
         let mut pairs = Vec::with_capacity(rule.len());
         for (k, d) in rule {
             self.charge(k.len())?;
@@ -672,6 +773,8 @@ impl<'a> Resolver<'a> {
         let quotes = self.text(at.map(|a| py::strip(declared(a))))?;
         let content = |name: &str| {
             let decls = self.styles.pseudo(n, name);
+            // A unit for each declaration looked through.
+            self.charge(TEXT_UNIT.saturating_mul(decls.map_or(0, Vec::len)))?;
             self.text(decls.and_then(|d| {
                 d.iter()
                     .find(|(k, _)| k == "content")
@@ -760,7 +863,7 @@ impl<'a> Resolver<'a> {
     /// `_vertical_box`: in a vertical-rl file, the margins and paddings put in kfxgen's slots,
     /// each from the book's value of the physical side it stands for, else the user agent's
     /// own for that slot (`data-kfxgen-v-author`, `-v-ua`).
-    fn vertical_box(&self, css: &mut Resolved, n: NodeId) -> Result<(), css::Error> {
+    fn vertical_box(&self, css: &mut Resolved<'_>, n: NodeId) -> Result<(), css::Error> {
         let Some(authored) = self.dom.attr(n, V_AUTHOR) else {
             return Ok(());
         };
