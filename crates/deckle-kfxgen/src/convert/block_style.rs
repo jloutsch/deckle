@@ -58,13 +58,7 @@ pub fn compute_block_style(css: &Resolved) -> Result<PyValue, StyleError> {
         Some(v) if v.is_truthy() => return Err(ALIGN_NUMBER.into()),
         _ => String::new(),
     };
-    let raw_align = match raw_align.as_str() {
-        "start" => "left",
-        "end" => "right",
-        "-webkit-center" => "center",
-        a => a,
-    };
-    let align = ALIGN.contains(&raw_align).then(|| raw_align.to_owned());
+    let align = align_keyword(&raw_align).map(str::to_owned);
     let text_indent = text(css.get("text-indent")?);
     let mut indent = parse_css_length(text_indent, false)?;
     let margin_left = parse_css_length(text(css.get("margin-left")?), false)?;
@@ -140,6 +134,19 @@ pub fn compute_block_style(css: &Resolved) -> Result<PyValue, StyleError> {
         }
     }
     Ok(PyValue::Dict(out))
+}
+
+/// `ALIGN_MAP` of a text-align already stripped and lowered: `start` is left, `end` right,
+/// `-webkit-center` centre, the four keywords themselves, anything else None. What
+/// `compute_block_style({"text-align": raw})["align"]` gives.
+pub(super) fn align_keyword(raw: &str) -> Option<&'static str> {
+    let raw = match raw {
+        "start" => "left",
+        "end" => "right",
+        "-webkit-center" => "center",
+        a => a,
+    };
+    ALIGN.into_iter().find(|&a| a == raw)
 }
 
 /// `css.get(key) or ""` for a value the resolver gives as a str or None.

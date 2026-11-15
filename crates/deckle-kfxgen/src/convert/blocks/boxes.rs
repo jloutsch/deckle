@@ -50,7 +50,7 @@ pub(super) struct Seen {
 }
 
 /// `_BOX_TAGS`: containers drawn as a box when they have a border or a fill.
-fn is_box_tag(local: &str) -> bool {
+pub(super) fn is_box_tag(local: &str) -> bool {
     matches!(
         local,
         "div" | "aside" | "section" | "blockquote" | "article" | "p" | "pre"
@@ -138,7 +138,7 @@ fn box_padding(css: Option<&Resolved>) -> Result<PyValue, ItemError> {
 }
 
 /// `_css_border`'s dict as the model holds it: `{side: (style, pt, colour)}`, or None.
-fn border_py(border: &Option<Vec<BorderSide>>) -> PyValue {
+pub(super) fn border_py(border: &Option<Vec<BorderSide>>) -> PyValue {
     match border {
         Some(sides) => PyValue::Dict(
             sides

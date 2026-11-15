@@ -4,7 +4,8 @@
 //! `_is_block_at_body`, `_discard_listing`, `_emit_image_block`, `_inline_picture_parts`, and
 //! the module helpers they call (`_is_nav_listing`, `_is_front_matter`, `_page_breaks`,
 //! `_clear_side`, `_pictures_among_words`, `_lone_block_picture`, `_is_spacer`,
-//! `_anchors_follow_rows`, `_dedupe_keep_order`), at kfxgen `ad38ec8`. Lists are `lists.rs`.
+//! `_anchors_follow_rows`, `_dedupe_keep_order`), at kfxgen `ad38ec8`. Lists are `lists.rs`,
+//! tables `tables.rs`.
 //!
 //! kfxgen recurses once per nested element (`_walk` → `_walk_flow` → `_walk_element` →
 //! `_walk_container` → `_walk`, and `_discard_listing`); here each open call is a [`Frame`] on
@@ -19,8 +20,10 @@ use std::collections::{HashMap, HashSet};
 use deckle_limits::MAX_DEPTH;
 
 use super::boxes::Seen;
+use super::lists::Marker;
 use super::lists::{Item, Lists, Native};
 use super::spacing::Noted;
+use super::tables::{CellEnd, TableJob, Tables};
 use super::{Block, BlockId, ExtractOptions, Field, dedupe, dict_set, s, strs, unsupported};
 use crate::convert::block_bidi::{BlockBidi, start_end_align};
 use crate::convert::block_style::compute_block_style;
@@ -41,6 +44,10 @@ use crate::generate::py;
 use crate::pyvalue::PyValue;
 
 const MATHML_NS: &str = "http://www.w3.org/1998/Math/MathML";
+/// A table written as a paragraph per row (`_walk_container` on the table): a table that is
+/// not native, a notes table, one a contents entry names past its start, or any table without
+/// `native_tables`.
+pub(super) const ROWS: &str = "tables written as rows (Task 17)";
 /// `_SOURCE_MARKED`, `_SOURCE_TOC`, `_SOURCE_FRONT`: kfxgen's marks of the book's own classes.
 const SOURCE_MARKED: &str = "data-kfxgen-source";
 const SOURCE_TOC: &str = "data-kfxgen-toc";
@@ -81,7 +88,7 @@ fn is_block_name(local: &str) -> bool {
 }
 
 /// `elem.tag in block_tags`: the qualified tag, so an element of another namespace is not one.
-fn is_block_tag(dom: &Dom, n: NodeId) -> bool {
+pub(super) fn is_block_tag(dom: &Dom, n: NodeId) -> bool {
     !dom.is_comment(n)
         && matches!(dom.namespace(n), None | Some(XHTML_NS))
         && is_block_name(dom.tag(n))
@@ -124,10 +131,24 @@ pub(super) struct Walked {
     pub(super) body: NodeId,
     pub(super) margins: HashMap<BlockId, [f64; 2]>,
     pub(super) paddings: HashMap<BlockId, [f64; 4]>,
+    /// `tables_seen` and `notes_seen`: the first block of each table written otherwise than
+    /// as one table block.
+    pub(super) tables_seen: Vec<BlockId>,
+    pub(super) notes_seen: Vec<BlockId>,
+}
+
+/// What `_walk_cell` sets aside before walking a cell and puts back after: the pending ids
+/// (with how many of them are listed already), list markers, page break and clear.
+pub(super) struct Aside {
+    ids: Vec<String>,
+    listed: usize,
+    markers: Vec<Marker>,
+    break_at: Option<usize>,
+    clear_at: Option<(usize, &'static str)>,
 }
 
 /// `_walk_container(elem)` part-way through its children.
-struct Container {
+pub(super) struct Container {
     elem: NodeId,
     /// `is_block=_is_block_at_body`: the `<body>` holding loose text.
     at_body: bool,
@@ -145,7 +166,7 @@ struct Container {
 }
 
 /// One call of kfxgen's walk still open: what it does once the call it made returns.
-enum Frame {
+pub(super) enum Frame {
     /// `_walk(elem)` after `_walk_flow(elem)`: front matter, a page break after it, and the
     /// break and clear noted, placed.
     WalkEnd {
@@ -177,6 +198,16 @@ enum Frame {
     },
     /// `_walk_element`'s listing branch after `_discard_listing`.
     ListingEnd,
+    /// The non-`li` branch of `_walk_flow` after `_walk_element(table)`: a table that made
+    /// blocks but no table block is counted in `tables_seen` or `notes_seen`.
+    TableSeen {
+        elem: NodeId,
+        start: usize,
+    },
+    /// A native table's block, after the fostered block or caption just walked.
+    Table(Box<TableJob>),
+    /// `_walk_cell(cell)` after its `_walk_element(cell)`, then the table it is building.
+    CellEnd(Box<CellEnd>),
 }
 
 /// Memo slots per node.
@@ -201,7 +232,7 @@ pub(super) struct Walker<'o, 'w, 'a, 's> {
     /// How many of `pending_ids`, from the front, are in `listing_ids` already: kfxgen adds
     /// all of them after each listing, which is quadratic over many listings in a row.
     listed: usize,
-    nav_listing_at: Vec<(usize, Vec<String>)>,
+    pub(super) nav_listing_at: Vec<(usize, Vec<String>)>,
     /// `break_at` and `clear_at`: indexes into `blocks`, kept as Python's plain integers (a
     /// later splice of `blocks` leaves them as they are, as kfxgen's does). Each holds at
     /// most one entry in kfxgen (it appends only to an empty list).
@@ -210,13 +241,16 @@ pub(super) struct Walker<'o, 'w, 'a, 's> {
     pub(super) bidi: BlockBidi,
     /// Whether a node's subtree, itself included, holds an element of `block_tags`.
     holds_block_tag: Vec<Bit>,
-    stack: Vec<Frame>,
+    pub(super) stack: Vec<Frame>,
     /// `margins` and `paddings`, and what working them out reads more than once.
     pub(super) noted: Noted,
     /// `pending_markers`, `list_ordinals`, `native_lists`, `cell_depth`.
     pub(super) lists: Lists,
     /// What `_make_box` has read in each block's text.
     pub(super) seen: HashMap<BlockId, Seen>,
+    /// `leaf_cells`, `native_made`, `notes_tables`, `tables_seen`, `notes_seen`, and what the
+    /// table code reads more than once.
+    pub(super) tables: Tables,
 }
 
 /// The walk of one file: everything `extract_blocks_from_html` does before `_space_between`.
@@ -245,6 +279,7 @@ pub(super) fn walk(w: &mut Walk, opts: &ExtractOptions) -> Result<Walked, ItemEr
         noted: Noted::new(dom),
         lists: Lists::default(),
         seen: HashMap::new(),
+        tables: Tables::default(),
     };
     walker.walk_body(body)?;
     // Each listing's index counts the space blocks before it, which `_space_between` takes
@@ -270,6 +305,8 @@ pub(super) fn walk(w: &mut Walk, opts: &ExtractOptions) -> Result<Walked, ItemEr
         body,
         margins: walker.noted.margins,
         paddings: walker.noted.paddings,
+        tables_seen: walker.tables.seen,
+        notes_seen: walker.tables.notes_seen,
     })
 }
 
@@ -285,7 +322,7 @@ fn find_body(dom: &Dom) -> NodeId {
 }
 
 impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
-    fn too_deep(&self) -> ItemError {
+    pub(super) fn too_deep(&self) -> ItemError {
         ItemError::Error(Error::TooLarge {
             what: format!(
                 "{}: an element nested more than {MAX_DEPTH} levels below the body",
@@ -294,7 +331,7 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         })
     }
 
-    fn unsupported(&self, feature: &'static str) -> ItemError {
+    pub(super) fn unsupported(&self, feature: &'static str) -> ItemError {
         unsupported(self.w, feature)
     }
 
@@ -305,9 +342,30 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
     }
 
     /// `ids = pending_ids[:]; pending_ids.clear()`.
-    fn take_pending(&mut self) -> Vec<String> {
+    pub(super) fn take_pending(&mut self) -> Vec<String> {
         self.listed = 0;
         std::mem::take(&mut self.pending_ids)
+    }
+
+    /// `_walk_cell`'s `saved_ids, saved_markers = pending_ids[:], pending_markers[:]`,
+    /// `saved_break, saved_clear = break_at[:], clear_at[:]`, then each cleared.
+    pub(super) fn set_aside(&mut self) -> Aside {
+        Aside {
+            listed: std::mem::take(&mut self.listed),
+            ids: std::mem::take(&mut self.pending_ids),
+            markers: std::mem::take(&mut self.lists.pending),
+            break_at: self.break_at.take(),
+            clear_at: self.clear_at.take(),
+        }
+    }
+
+    /// `_walk_cell`'s `pending_ids[:] = saved_ids` and the rest put back.
+    pub(super) fn put_back(&mut self, aside: Aside) {
+        self.pending_ids = aside.ids;
+        self.listed = aside.listed;
+        self.lists.pending = aside.markers;
+        self.break_at = aside.break_at;
+        self.clear_at = aside.clear_at;
     }
 
     pub(super) fn resolve(&self, n: NodeId) -> Result<Option<Resolved<'a>>, ItemError> {
@@ -363,13 +421,16 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
                         .extend(self.pending_ids[from..].iter().cloned());
                     self.listed = self.pending_ids.len();
                 }
+                Frame::TableSeen { elem, start } => self.table_seen(elem, start),
+                Frame::Table(job) => self.table_run(job)?,
+                Frame::CellEnd(end) => self.cell_end(*end)?,
             }
         }
         Ok(())
     }
 
     /// `_walk(elem)` up to its `_walk_flow`; the rest is its [`Frame::WalkEnd`].
-    fn enter(&mut self, elem: NodeId, depth: usize) -> Result<(), ItemError> {
+    pub(super) fn enter(&mut self, elem: NodeId, depth: usize) -> Result<(), ItemError> {
         if depth > MAX_DEPTH {
             return Err(self.too_deep());
         }
@@ -446,13 +507,17 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
             }
             return self.walk_element(elem, depth);
         }
-        // Tables counted in `tables_seen`/`notes_seen` are written as rows (Tasks 16, 17):
-        // every `<table>` stops at `_walk_element` until then.
+        if !self.dom.is_comment(elem) && self.dom.tag(elem) == "table" {
+            self.stack.push(Frame::TableSeen {
+                elem,
+                start: self.blocks.len(),
+            });
+        }
         self.walk_element(elem, depth)
     }
 
     /// `_walk_element(elem)`, up to its container branch's `_walk_container`.
-    fn walk_element(&mut self, elem: NodeId, depth: usize) -> Result<(), ItemError> {
+    pub(super) fn walk_element(&mut self, elem: NodeId, depth: usize) -> Result<(), ItemError> {
         let dom = self.dom;
         if dom.is_comment(elem) {
             // Markup between blocks, not a paragraph (#252).
@@ -489,15 +554,15 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
             return self.emit_rule(elem);
         }
         if local == "table" {
-            return Err(self.unsupported(if self.opts.native_tables {
-                "tables (Task 16)"
-            } else {
-                "tables written as rows (Task 17)"
-            }));
+            if self.opts.native_tables && self.table(elem, depth)? {
+                return Ok(());
+            }
+            return Err(self.unsupported(ROWS));
         }
-        // An equation walked as a block is a paragraph of its own (#235). A cell walked as a
-        // paragraph (`leaf_cells`) is Task 16's.
-        let is_block = is_block_tag(dom, elem) || local == "math";
+        // An equation walked as a block is a paragraph of its own (#235); so is a cell
+        // `_walk_cell` walks that holds no block (#565).
+        let is_block =
+            is_block_tag(dom, elem) || local == "math" || self.tables.leaf_cells.contains(&elem);
         let mut has_block_child = false;
         for &child in dom.children(elem) {
             if self.holds_blocks(child) {
@@ -626,6 +691,10 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         let block = self.new_block(fields);
         self.blocks.push(block);
         let at = self.blocks.len() - 1;
+        if self.tables.leaf_cells.contains(&elem) {
+            // The cell itself: its padding is the cell's, and a cell has no margins (#655).
+            return Ok(());
+        }
         // Text written straight in a bordered or filled block is a box round that one
         // paragraph; the box takes its margins and padding.
         if self.make_box(elem, at, true)? {
@@ -862,7 +931,11 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
 
     /// The end of `_walk_element`'s container branch.
     fn container_end(&mut self, elem: NodeId, start: usize) -> Result<(), ItemError> {
-        // A cell walked as a paragraph (`leaf_cells`) is Task 16's.
+        if self.tables.leaf_cells.contains(&elem) {
+            // The cell itself: its padding is the cell's, written on it, and a cell has no
+            // margins (#655).
+            return Ok(());
+        }
         if matches!(self.dom.tag(elem), "ul" | "ol")
             && let Some(native) = self.native_list(elem)?
         {
@@ -1021,7 +1094,7 @@ pub(super) fn text_field(b: &Block) -> &str {
 }
 
 /// `{aid: mark_offsets.get(aid, 0) for aid in ids}`.
-fn offsets(ids: &[String], marks: &[(String, usize)]) -> PyValue {
+pub(super) fn offsets(ids: &[String], marks: &[(String, usize)]) -> PyValue {
     let at: HashMap<&str, usize> = marks.iter().map(|(k, v)| (k.as_str(), *v)).collect();
     PyValue::Dict(
         ids.iter()
@@ -1078,7 +1151,7 @@ fn role_is(dom: &Dom, n: NodeId, word: &str) -> bool {
 }
 
 /// `_is_nav_listing(elem)`: a contents listing the book printed itself.
-fn is_nav_listing(dom: &Dom, n: NodeId) -> bool {
+pub(super) fn is_nav_listing(dom: &Dom, n: NodeId) -> bool {
     if source_marked(dom) {
         if dom.attr(n, SOURCE_TOC).is_some_and(|v| !v.is_empty()) {
             return true;
@@ -1164,7 +1237,7 @@ fn is_spacer(dom: &Dom, elem: NodeId) -> bool {
 }
 
 /// `_is_empty_anchor(elem)`: an `<a>` that only names a place.
-fn is_empty_anchor(dom: &Dom, n: NodeId) -> bool {
+pub(super) fn is_empty_anchor(dom: &Dom, n: NodeId) -> bool {
     !dom.is_comment(n)
         && dom.tag(n) == "a"
         && own_anchor_ids(dom, n).next().is_some()
@@ -1173,7 +1246,7 @@ fn is_empty_anchor(dom: &Dom, n: NodeId) -> bool {
 }
 
 /// `_anchors_follow_rows(elem)`: a row group whose link targets sit after the row each names.
-fn anchors_follow_rows(dom: &Dom, elem: NodeId) -> bool {
+pub(super) fn anchors_follow_rows(dom: &Dom, elem: NodeId) -> bool {
     if !matches!(dom.tag(elem), "table" | "thead" | "tbody" | "tfoot") {
         return false;
     }

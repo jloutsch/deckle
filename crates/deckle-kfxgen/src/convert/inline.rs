@@ -1368,6 +1368,18 @@ impl<'a, 's> Walk<'a, 's> {
         img: NodeId,
         parent: Option<NodeId>,
     ) -> Result<String, ItemError> {
+        self.token(img, Some(parent))
+    }
+
+    /// The token `_emit_fostered` builds for an `<img>` outside a table's cells: as
+    /// [`Self::picture_token`], but its size hint as the markup gives it and no float
+    /// (`_make_img_token(src, alt, _img_size_hint(...), None, extras)`).
+    pub(super) fn picture_token_unfloated(&self, img: NodeId) -> Result<String, ItemError> {
+        self.token(img, None)
+    }
+
+    /// The token of `img`, floated inside `float_in` when that is given.
+    fn token(&self, img: NodeId, float_in: Option<Option<NodeId>>) -> Result<String, ItemError> {
         let dom = self.dom;
         let src = dom.attr(img, "src").unwrap_or("");
         if is_data_uri(src) {
@@ -1378,7 +1390,10 @@ impl<'a, 's> Walk<'a, 's> {
         let href = resolve_img_src(&self.file.href, src);
         let css = self.resolver.resolve(img)?;
         let size = img_size_hint(dom, img, css.as_ref())?;
-        let (side, size) = img_float(self.resolver, dom, img, css.as_ref(), parent, size)?;
+        let (side, size) = match float_in {
+            Some(parent) => img_float(self.resolver, dom, img, css.as_ref(), parent, size)?,
+            None => (None, size),
+        };
         let extra = img_inline_extras(dom, img, css.as_ref())?;
         Ok(img_token(
             &href,

@@ -417,8 +417,8 @@ pub(super) struct Lists {
     ordinals: HashMap<NodeId, HashMap<NodeId, Int>>,
     /// Per list element, `_list_settings` of it.
     native: HashMap<NodeId, Option<Native>>,
-    /// How many table cells the walk is in: lists in cells keep typed markers. Task 16's
-    /// `_walk_cell` raises it.
+    /// How many table cells the walk is in: lists in cells keep typed markers. `_walk_cell`
+    /// raises it.
     pub(super) cell_depth: usize,
 }
 

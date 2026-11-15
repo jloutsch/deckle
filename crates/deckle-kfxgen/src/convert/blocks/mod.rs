@@ -25,6 +25,7 @@ mod boxes;
 mod lists;
 mod rules;
 mod spacing;
+mod tables;
 mod walk;
 
 use std::collections::{HashMap, HashSet};
