@@ -194,7 +194,7 @@ pub(crate) fn read_link_colour(v: &PyValue, at: &str) -> Result<Flag, GenerateEr
 }
 
 /// `inline_style._luminance` (:735): WCAG relative luminance of channels 0 to 255.
-fn luminance([r, g, b]: [f64; 3]) -> f64 {
+pub(crate) fn luminance([r, g, b]: [f64; 3]) -> f64 {
     let lin = |c: f64| {
         let c = c / 255.0;
         if c <= 0.04045 {

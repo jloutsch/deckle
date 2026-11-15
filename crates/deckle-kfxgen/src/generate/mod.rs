@@ -30,7 +30,7 @@ mod table_styles;
 mod tables;
 mod text;
 mod title;
-mod typography;
+pub(crate) mod typography;
 mod writing;
 
 use deckle_kfx::container::ContainerError;

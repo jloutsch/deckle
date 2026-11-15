@@ -6,7 +6,8 @@ citations are at `4b81651`, an earlier pin, unless a section names another commi
 ## Unicode version of Python's character classes
 
 kfxgen reads characters through Python: `str.isspace`, `isalpha`, `isalnum`, `isdigit`,
-`lower` and `unicodedata.east_asian_width`, for instance when it checks that a chapter's text
+`lower`, `unicodedata.east_asian_width`, `bidirectional` and `decimal` (what `\d`, `int()` and
+`float()` read as a digit), for instance when it checks that a chapter's text
 opens with its title as whole words (`_opens_with_title`). Their answers follow the Unicode
 version of the Python running kfxgen.
 
@@ -640,3 +641,25 @@ missing, as kfxgen treats a file lxml cannot parse, and expands an entity of pla
 lxml's `itertext` gives the reference as written (`&e;`, checked with lxml 6.0.2). An NCX item written with the misspelt
 `mediatype` attribute counts as an NCX; kfxgen's XPath asks for `media-type` only. kfxgen logs
 each href it rejects to its security log; the port has no such log.
+
+## Run flags and numbers in the inline helpers
+
+`inline_style.py`'s helpers read Python values, and the port holds them in Rust ones
+(`src/convert/inline_style.rs`, `src/convert/font_table.rs`, at ad38ec8):
+
+- A font weight past an i64 (`parse_weight`, `int()` of up to 4,300 digits) is `i64::MAX` or
+  `i64::MIN`; Python keeps the whole number. Whether a run is bold comes out the same.
+- A run's flags are a set kept sorted, so two are equal when their members are. Python compares
+  frozensets by `==`, where `-0.0` equals `0.0` and a NaN only itself; the port compares floats
+  by bits. kfxgen puts no zero and no NaN in a flag: sizes are above 0, colours are ints.
+- Of two flags of one kind on a run (`flag_value`), kfxgen takes whichever its set's hash
+  order gives first, which changes from run to run; the port takes the smaller.
+- An anchor mark is read only with a string id; kfxgen reads any value but None, and only
+  ever makes string ones (`make_anchor_mark`).
+- A nested shift whose depth is a digit `isdigit()` takes and `int()` refuses (`"sub@²"`)
+  is no nested shift, where kfxgen raises. kfxgen writes the depth itself, in ASCII.
+
+Where kfxgen raises on a value from the book, the helper returns `Raised` naming the exception:
+a length unit whose "i" is U+0130 or U+0131 (`KeyError`), and a colour function whose number
+`float()` or `int()` refuses (`ValueError`: two points, a channel of more than 4,300 digits, a
+percentage too big for a float).
