@@ -17,7 +17,7 @@ use deckle_kfxgen::pyvalue::PyValue;
 
 use crate::convert_resolver::{empty_page, file_of, page, sources};
 use crate::convert_support::{dump, model_diff};
-use crate::support::{COST_LIMIT, find};
+use crate::support::{COST_LIMIT, allocated_by, find};
 
 /// Calls whose runs cannot match yet, with why: (source, NNN, why). Empty is the goal.
 const SKIP: &[(&str, &str, &str)] = &[];
@@ -601,4 +601,41 @@ fn whether_a_word_is_all_its_link_shows_is_found_once() {
         show(&parts[..1]),
         ["w|italic link=OEBPS/a.xhtml#x link-colour=(4291559424,4291559424)"]
     );
+}
+
+/// 2,000 empty `<q>` under a `lang` of a megabyte: each mark looks the lang up in the quote
+/// table, which kfxgen does on a lowered copy of it (four copies of the lang per `<q>`, 8 GB
+/// here). The port neither copies nor lowers a lang longer than the table's longest: the walk
+/// allocates less than one more copy of it than under a short lang.
+#[test]
+fn a_long_lang_is_not_copied_for_each_quote() {
+    let walk = |lang: &str| {
+        let body = format!(
+            "<div lang=\"{lang}\"><p>{}</p></div>",
+            "<q></q>".repeat(2_000)
+        );
+        let file = page(&body, "");
+        let budget = TextBudget::new();
+        let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+        let mut serials = Serials::default();
+        let (parts, bytes) = allocated_by(|| {
+            Walk::new(&file, &resolver, &mut serials)
+                .inline(first(&file, "p"), false)
+                .unwrap()
+        });
+        (show(&parts), bytes)
+    };
+    let long = "x".repeat(1 << 20);
+    let (short_parts, short_bytes) = walk("xxxxxxxx");
+    let (long_parts, long_bytes) = walk(&long);
+    eprintln!(
+        "2,000 quotes: {short_bytes} bytes allocated under a short lang, {long_bytes} under 1 MiB"
+    );
+    assert!(
+        long_bytes < short_bytes + long.len() as u64,
+        "{long_bytes} vs {short_bytes}"
+    );
+    assert_eq!(long_parts, short_parts);
+    assert_eq!(long_parts.len(), 4_000);
+    assert_eq!(long_parts[..2], ["\"|", "\"|"]);
 }

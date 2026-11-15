@@ -114,12 +114,21 @@ pub(crate) struct QCss {
     pub after: Option<String>,
 }
 
-/// The four marks of a lang, as `_Q_MARKS.get(lang.lower(), _Q_PLAIN)`.
+/// The most characters a lang in [`Q_MARKS`] has.
+const LONGEST_Q_LANG: usize = 7;
+
+/// The four marks of a lang, as `_Q_MARKS.get(lang.lower(), _Q_PLAIN)`. Lowering never makes
+/// a string fewer characters (each character lowers to one or more), so a lang longer than
+/// the table's longest is not in it, and is not lowered: it can be a megabyte long.
 fn marks_of(lang: &str) -> [char; 4] {
-    let lang = lang.to_lowercase();
-    let marks = match Q_MARKS.binary_search_by(|(k, _)| (*k).cmp(lang.as_str())) {
-        Ok(i) => Q_MARKS[i].1,
-        Err(_) => Q_PLAIN,
+    let marks = if lang.chars().nth(LONGEST_Q_LANG).is_some() {
+        Q_PLAIN
+    } else {
+        let lang = lang.to_lowercase();
+        match Q_MARKS.binary_search_by(|(k, _)| (*k).cmp(lang.as_str())) {
+            Ok(i) => Q_MARKS[i].1,
+            Err(_) => Q_PLAIN,
+        }
     };
     let mut c = marks.chars();
     std::array::from_fn(|_| c.next().unwrap_or('"'))
@@ -288,9 +297,9 @@ fn q_content(
 /// depth running on across it in reading order. `css_of(q)` is the `<q>`'s `q-css` and its
 /// nearest `lang` (`_lang_of`), or `Ok(None)` where the resolver gives none. A loop, not
 /// recursion.
-pub(crate) fn document_q_marks<E: From<Raised>>(
+pub(crate) fn document_q_marks<'l, E: From<Raised>>(
     dom: &Dom,
-    mut css_of: impl FnMut(NodeId) -> Result<(Option<QCss>, Option<String>), E>,
+    mut css_of: impl FnMut(NodeId) -> Result<(Option<QCss>, Option<&'l str>), E>,
 ) -> Result<QMarks, E> {
     let mut marks = QMarks::new();
     let mut depth = 0;
@@ -307,11 +316,11 @@ pub(crate) fn document_q_marks<E: From<Raised>>(
         let (css, lang) = css_of(n)?;
         let css = css.unwrap_or_default();
         if entering {
-            let (text, d) = q_content(dom, n, lang.as_deref(), &css, true, depth)?;
+            let (text, d) = q_content(dom, n, lang, &css, true, depth)?;
             depth = d;
             marks.insert(n, (text, String::new()));
         } else {
-            let (text, d) = q_content(dom, n, lang.as_deref(), &css, false, depth)?;
+            let (text, d) = q_content(dom, n, lang, &css, false, depth)?;
             depth = d;
             if let Some(m) = marks.get_mut(&n) {
                 m.1 = text;
@@ -333,6 +342,16 @@ mod tests {
             ['\u{201c}', '\u{201d}', '\u{2018}', '\u{2019}']
         );
         assert_eq!(marks_of("en-US"), ['"', '"', '\'', '\'']);
+        assert_eq!(
+            Q_MARKS.iter().map(|(k, _)| k.chars().count()).max(),
+            Some(LONGEST_Q_LANG)
+        );
+        // A lang as long as the longest is still looked up; one longer is plain.
+        assert_eq!(
+            marks_of("ZH-HANT"),
+            ['\u{300c}', '\u{300d}', '\u{300e}', '\u{300f}']
+        );
+        assert_eq!(marks_of("zh-hantx"), marks_of("en-US"));
     }
 
     /// Values from the pinned `_css_strings`, run under Python 3.14.

@@ -978,7 +978,7 @@ impl<'a, 's> Walk<'a, 's> {
                     },
                     None => None,
                 };
-                Ok((css, resolver.lang_of(e)?.map(str::to_owned)))
+                Ok((css, resolver.lang_of(e)?))
             });
             self.quotes = Some(match marks {
                 Ok(m) => Ok(m),
