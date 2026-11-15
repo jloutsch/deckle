@@ -1,0 +1,108 @@
+{
+ "spine": [
+  {
+   "href": "OEBPS/contents.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/dedication.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/c1.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/c2.xhtml",
+   "linear": true
+  }
+ ],
+ "page_progression_direction": null,
+ "manifest": [
+  {
+   "id": "i3",
+   "href": "OEBPS/c1.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "i4",
+   "href": "OEBPS/c2.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "i1",
+   "href": "OEBPS/contents.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "i2",
+   "href": "OEBPS/dedication.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "page_css",
+   "href": "page_styles.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "css",
+   "href": "stylesheet.css",
+   "media_type": "text/css"
+  }
+ ],
+ "toc": [
+  {
+   "title": "Contents",
+   "href": "OEBPS/contents.xhtml",
+   "children": []
+  },
+  {
+   "title": "Chapter One",
+   "href": "OEBPS/c1.xhtml",
+   "children": []
+  },
+  {
+   "title": "Chapter Two",
+   "href": "OEBPS/c2.xhtml",
+   "children": []
+  }
+ ],
+ "auto_generated_toc": false,
+ "guide": [
+  {
+   "type": "dedication",
+   "href": "OEBPS/dedication.xhtml"
+  },
+  {
+   "type": "text",
+   "href": "OEBPS/c1.xhtml"
+  },
+  {
+   "type": "toc",
+   "href": "OEBPS/contents.xhtml"
+  }
+ ],
+ "metadata": {
+  "title": [
+   "Package More"
+  ],
+  "creator": [
+   "Fixture Author"
+  ],
+  "description": [],
+  "language": [
+   "eng"
+  ],
+  "publisher": [
+   "Fixture Press"
+  ],
+  "date": [
+   "2020-11-15T00:00:00+00:00"
+  ],
+  "cover": []
+ },
+ "raw": {
+  "opfname": "OEBPS/content.opf",
+  "sha256": "6099732fbe14b5e8cf3da72352294cacca26274ecaedd5e25ca1ced2bbf97cfc"
+ }
+}

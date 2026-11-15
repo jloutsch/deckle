@@ -1,0 +1,14 @@
+{
+ "font_face": [],
+ "rules": [
+  [1, "p", {"margin-top": "0", "margin-right": "0", "margin-bottom": "0", "margin-left": "0", "text-indent": "1em"}, [], [1, 0, 0, 0, 1, 83]],
+  [1, "h1", {"text-align": "center"}, [], [1, 0, 0, 0, 1, 84]],
+  [1, ".vrl", {"writing-mode": "vertical-rl", "-webkit-writing-mode": "vertical-rl"}, [], [1, 0, 0, 1, 0, 88]],
+  [1, ".h", {"writing-mode": "horizontal-tb", "margin-top": "1em", "margin-right": "1em", "margin-bottom": "1em", "margin-left": "1em", "-webkit-writing-mode": "horizontal-tb"}, [], [1, 0, 0, 1, 0, 89]],
+  [1, ".v", {"writing-mode": "vertical-rl", "-webkit-writing-mode": "vertical-rl"}, [], [1, 0, 0, 1, 0, 90]],
+  [1, "a:link", {"color": "#a00000"}, [], [1, 0, 0, 1, 1, 85]],
+  [1, "a:visited", {"color": "#00a0a0"}, [], [1, 0, 0, 1, 1, 86]],
+  [1, ".blue a:visited", {"color": "#0000a0"}, [], [1, 0, 0, 2, 1, 87]]
+ ],
+ "ua_rules": 180
+}

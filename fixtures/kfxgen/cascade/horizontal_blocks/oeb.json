@@ -1,0 +1,106 @@
+{
+ "spine": [
+  {
+   "href": "OEBPS/c1.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/c2.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/c3.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/c4.xhtml",
+   "linear": true
+  }
+ ],
+ "page_progression_direction": "rtl",
+ "manifest": [
+  {
+   "id": "c1",
+   "href": "OEBPS/c1.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "c2",
+   "href": "OEBPS/c2.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "c3",
+   "href": "OEBPS/c3.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "c4",
+   "href": "OEBPS/c4.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "x5",
+   "href": "OEBPS/v.png",
+   "media_type": "image/png"
+  },
+  {
+   "id": "x4",
+   "href": "OEBPS/w.png",
+   "media_type": "image/png"
+  },
+  {
+   "id": "page_css",
+   "href": "page_styles.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "css",
+   "href": "stylesheet.css",
+   "media_type": "text/css"
+  }
+ ],
+ "toc": [
+  {
+   "title": "第一章",
+   "href": "OEBPS/c1.xhtml",
+   "children": []
+  },
+  {
+   "title": "第二章",
+   "href": "OEBPS/c2.xhtml",
+   "children": []
+  },
+  {
+   "title": "第三章",
+   "href": "OEBPS/c3.xhtml",
+   "children": []
+  },
+  {
+   "title": "第四章",
+   "href": "OEBPS/c4.xhtml",
+   "children": []
+  }
+ ],
+ "auto_generated_toc": false,
+ "guide": [],
+ "metadata": {
+  "title": [
+   "縦書き"
+  ],
+  "creator": [
+   "Fixture Author"
+  ],
+  "description": [],
+  "language": [
+   "jpn"
+  ],
+  "publisher": [],
+  "date": [],
+  "cover": []
+ },
+ "raw": {
+  "opfname": "OEBPS/content.opf",
+  "sha256": "5f38564e32b02045b48860021c45cbd087cc3e19ce3c80a6ec5acfe522d5c808"
+ }
+}

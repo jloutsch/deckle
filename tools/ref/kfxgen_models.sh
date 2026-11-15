@@ -207,9 +207,12 @@ calibre_book() {
 
 # The cascade fixtures (fixtures/kfxgen/README.md, cascade/): the sources built here, and
 # committed sources that between them hold lists, tables, pictures, notes, vertical and
-# right-to-left text and an embedded font. Kept under 1.5 MB.
+# right-to-left text, an embedded font, and every data-kfxgen-* mark kfxgen's plugin makes
+# before the flattener (link colours, horizontal blocks, toc and front matter classes).
+# Kept under 1.5 MB.
 CASCADE_BUILT="css_quirks package_quirks no_toc fake_margins malformed comments_in_tree"
 CASCADE_SOURCES="$CASCADE_BUILT lists notes vertical rtl fonts directions frames navigation"
+CASCADE_SOURCES="$CASCADE_SOURCES link_colours link_greys horizontal_blocks marks package_more"
 
 if [ "${1:-}" = "--cascade" ] && [ -n "$ONLY" ]; then
   case " $CASCADE_SOURCES " in

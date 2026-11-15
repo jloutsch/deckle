@@ -237,7 +237,8 @@ of the run, so `package_quirks`'s date changes with it). The test harness refuse
 `TOOLS` names another Calibre or no `TZ: UTC` (`tests/it/support.rs` `check_tools`).
 `tests/it/book.rs` `read_book_matches_every_dump` reads each source with `book::read_book` and
 compares the result with its dump at four levels: book view (`oeb.json`), element tree and
-first-pass rules (`dom/`, `rules/`), declared styles and classes (`styles/` `specified`,
+first-pass rules (`dom/`, `rules/`; the tree with its `data-kfxgen-*` marks, which
+`convert::marks` makes as kfxgen's plugin does before the flattener), declared styles and classes (`styles/` `specified`,
 `pseudo`), computed values (`styles/` `computed`).
 
 `ua_rules.json` holds Calibre's user-agent rules (its `html.css`), the same for every file of
@@ -280,8 +281,13 @@ The manifest is Calibre's after its transforms: the book's stylesheets are gone,
 | `directions` | 6 | 68 KB | tables, direction and language |
 | `frames` | 6 | 78 KB | figures, pictures, floats |
 | `navigation` | 4 | 37 KB | an NCX naming places inside chapters |
+| `link_colours` | 1 | 14 KB | grey, red and black links coloured without `:link`, so none is marked |
+| `link_greys` | 2 | 22 KB | `data-kfxgen-link-colour`: `:link` and `:visited` greys, a dropped `.a:visited` |
+| `horizontal_blocks` | 4 | 67 KB | `data-kfxgen-horizontal` and `-vertical`: horizontal blocks in a vertical book |
+| `marks` | 2 | 22 KB | link colours by `a:link`, `a:visited` and a link's own style, in a vertical book |
+| `package_more` | 4 | 30 KB | `data-kfxgen-toc` and `-front`: a `class="toc"` listing and a dedication |
 
-761 KB in all, with `ua_rules.json` (19 KB).
+856 KB in all, with `ua_rules.json` (19 KB).
 
 ## convert/
 

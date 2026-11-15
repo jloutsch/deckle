@@ -1,0 +1,68 @@
+{
+ "spine": [
+  {
+   "href": "OEBPS/links.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/vertical.xhtml",
+   "linear": true
+  }
+ ],
+ "page_progression_direction": "rtl",
+ "manifest": [
+  {
+   "id": "i1",
+   "href": "OEBPS/links.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "i2",
+   "href": "OEBPS/vertical.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "page_css",
+   "href": "page_styles.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "css",
+   "href": "stylesheet.css",
+   "media_type": "text/css"
+  }
+ ],
+ "toc": [
+  {
+   "title": "リンク",
+   "href": "OEBPS/links.xhtml",
+   "children": []
+  },
+  {
+   "title": "縦書き",
+   "href": "OEBPS/vertical.xhtml",
+   "children": []
+  }
+ ],
+ "auto_generated_toc": false,
+ "guide": [],
+ "metadata": {
+  "title": [
+   "Marks"
+  ],
+  "creator": [
+   "Fixture Author"
+  ],
+  "description": [],
+  "language": [
+   "jpn"
+  ],
+  "publisher": [],
+  "date": [],
+  "cover": []
+ },
+ "raw": {
+  "opfname": "OEBPS/content.opf",
+  "sha256": "1faea5817089cb5a7087e3a7e5ded28779eda1c80a4347b64493fb32ca8bcab2"
+ }
+}

@@ -1,0 +1,68 @@
+{
+ "spine": [
+  {
+   "href": "a.xhtml",
+   "linear": true
+  },
+  {
+   "href": "z.xhtml",
+   "linear": true
+  }
+ ],
+ "page_progression_direction": null,
+ "manifest": [
+  {
+   "id": "x0",
+   "href": "a.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "page_css",
+   "href": "page_styles.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "css",
+   "href": "stylesheet.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "x1",
+   "href": "z.xhtml",
+   "media_type": "application/xhtml+xml"
+  }
+ ],
+ "toc": [
+  {
+   "title": "Link greys",
+   "href": "a.xhtml",
+   "children": []
+  },
+  {
+   "title": "End",
+   "href": "z.xhtml",
+   "children": []
+  }
+ ],
+ "auto_generated_toc": false,
+ "guide": [],
+ "metadata": {
+  "title": [
+   "S741 kfxgen - Link greys"
+  ],
+  "creator": [
+   "kfxgen tests"
+  ],
+  "description": [],
+  "language": [
+   "eng"
+  ],
+  "publisher": [],
+  "date": [],
+  "cover": []
+ },
+ "raw": {
+  "opfname": "content.opf",
+  "sha256": null
+ }
+}

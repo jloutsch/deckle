@@ -1,0 +1,8 @@
+{
+ "font_face": [],
+ "rules": [
+  [1, "p", {"margin-top": "0", "margin-right": "0", "margin-bottom": "0", "margin-left": "0", "text-indent": "1em"}, [], [1, 0, 0, 0, 1, 83]],
+  [1, "h1", {"text-align": "center"}, [], [1, 0, 0, 0, 1, 84]]
+ ],
+ "ua_rules": 180
+}
