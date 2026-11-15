@@ -686,3 +686,20 @@ failed"), and the book is still made.
   (`_vertical_box`, a vertical element's margins and paddings) and a second pass walks the same
   tree: the port's resolver and a second pass's new `Walk` still see the marks. The inline walk
   reads no margins or paddings; which later step would see the difference is not checked.
+
+## Pictures in text and initials
+
+The picture tokens and the initial (`src/convert/pictures.rs`, `initial.rs`, at ad38ec8):
+
+- An inline `<svg>` that draws shapes and nothing kfxgen takes from it (no `<image>`, no
+  `<text>`, not hidden by its own style or attributes) is refused (`Error::Unsupported`, "SVG
+  pictures"). kfxgen draws it with Qt as a picture of its own and names it by a hash of lxml's
+  text of it (plan decision 2). An `<svg>` kfxgen leaves out (hidden, or its shapes only inside
+  definitions or a nested `<svg>`) is left out here too.
+- The text a token copies out of the book (an `<img>`'s `src` and `alt`, an SVG `<image>`'s
+  href) is charged to the file's style text budget. A file whose pictures' sources pass it
+  (about 32 MB of `data:` sources) is refused where kfxgen makes the book.
+- kfxgen's SVG helpers and `_leading_float` recurse once per level, and past Python's
+  recursion limit raise `RecursionError`, which leaves the spine item out. The port uses loops.
+  `read_book` refuses a file nested deep enough for either, so only a tree built by hand gets
+  there.
