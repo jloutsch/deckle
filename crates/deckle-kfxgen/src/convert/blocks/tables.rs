@@ -51,6 +51,10 @@ use crate::dom::{Dom, NodeId};
 use crate::generate::py;
 use crate::pyvalue::PyValue;
 
+/// The style text budget units each table cell is charged before the table is read (not in
+/// kfxgen; see `DIVERGENCES.md`).
+const CELL_UNITS: usize = 3;
+
 /// `_MAX_NATIVE_CELL_CHARS`: the longest cell entry a native table of two or more columns takes.
 const MAX_NATIVE_CELL_CHARS: usize = 2000;
 /// `_MAX_NATIVE_COLUMNS`: the widest native table.
@@ -642,6 +646,10 @@ fn is_note_marker(marker: &str) -> bool {
         '\u{130}' | '\u{131}' => 'i',
         _ => c,
     };
+    // A roman numeral is at most 16 letters (`mmmm` and three places of four), so only that
+    // prefix is folded: the match stays linear in the marker's length.
+    let folded: Vec<char> = rest.iter().take(17).map(|&c| fold(c)).collect();
+    let romans = roman_ends(&folded);
     let n = rest.len();
     (n.saturating_sub(2)..=n).any(|l| {
         let (head, tail) = rest.split_at(l);
@@ -652,8 +660,7 @@ fn is_note_marker(marker: &str) -> bool {
         let symbols = head
             .iter()
             .all(|c| matches!(c, '*' | '\u{2020}' | '\u{2021}' | '\u{a7}' | '\u{b6}' | '#'));
-        let folded: Vec<char> = head.iter().map(|&c| fold(c)).collect();
-        digits || symbols || roman_ends(&folded).contains(&l)
+        digits || symbols || romans.contains(&l)
     })
 }
 
@@ -809,6 +816,17 @@ impl Walker<'_, '_, '_, '_> {
     /// the table as rows instead (it is not native, or is a notes table). A contents entry
     /// naming the table past its start is the rows path too, refused once its rows are built.
     pub(super) fn table(&mut self, elem: NodeId, depth: usize) -> Result<bool, ItemError> {
+        // Not in kfxgen: each cell below the table, nested tables' cells too, costs
+        // `CELL_UNITS` of the file's style text budget, counted from the tree before anything
+        // is resolved. A table converts in about four resolves a cell, so one too large for the
+        // budget is refused after this one pass rather than after minutes of resolving.
+        let dom = self.dom;
+        let cells = dom
+            .subtree(elem)
+            .filter(|&c| local(dom, c).is_some_and(is_cell))
+            .count();
+        self.resolver
+            .charge(cells.saturating_mul(CELL_UNITS * crate::css::TEXT_UNIT))?;
         if !self.table_is_native(elem)? {
             return Ok(false);
         }
@@ -2146,6 +2164,74 @@ mod tests {
         for m in no {
             assert!(!is_note_marker(m), "{m:?}");
         }
+    }
+
+    /// A differential set run through the pinned `_NOTE_MARKER_RE.match` under
+    /// `python3 -I`: Python's `IGNORECASE` folds `ı` and `İ` to `i` but not the Kelvin sign
+    /// or the roman numeral signs to a numeral letter, and `\d` is any Unicode decimal digit
+    /// (`Nd`) but not `²` or `①`.
+    #[test]
+    fn note_markers_match_kfxgen_s_on_unicode_and_long_text() {
+        let cases: &[(&str, bool)] = &[
+            ("\u{131}", true),
+            ("\u{130}", true),
+            ("\u{131}v", true),
+            ("x\u{130}", true),
+            ("\u{130}\u{130}\u{130}", true),
+            ("\u{131}\u{131}\u{131}\u{131}", false),
+            ("x\u{130}v", true),
+            ("(\u{130}X).", true),
+            ("[\u{131}]:", true),
+            ("\u{212a}", false),
+            ("\u{212a}i", false),
+            ("\u{17f}", false),
+            ("\u{2160}", false),
+            ("\u{2170}", false),
+            ("\u{216b}", false),
+            ("\u{3b9}", false),
+            ("\u{345}", false),
+            ("\u{df}", false),
+            ("\u{1e9e}", false),
+            ("K", false),
+            ("MCMXCIX", true),
+            ("mmmmcmxcix", true),
+            ("MMMMM", false),
+            ("mmmmcccxxxiii", true),
+            ("xxxx", false),
+            ("lx", true),
+            ("ll", false),
+            ("dd", false),
+            ("vx", false),
+            ("il", false),
+            ("cccd", false),
+            ("\u{661}\u{662}\u{663}\u{664}", true),
+            ("\u{661}\u{662}\u{663}\u{664}\u{665}", false),
+            ("\u{967}\u{968}", true),
+            ("\u{ff11}\u{ff12}", true),
+            ("\u{e51}", true),
+            ("\u{7c0}", true),
+            ("\u{1d7ce}", true),
+            ("\u{b2}", false),
+            ("\u{2460}", false),
+            ("1\u{b2}", false),
+            ("(4]:", true),
+            ("4)).", false),
+            ("4..", false),
+            ("()", false),
+            ("*1", false),
+        ];
+        for &(m, want) in cases {
+            assert_eq!(is_note_marker(m), want, "{m:?}");
+        }
+        assert!(!is_note_marker(&"i".repeat(10_000)));
+        assert!(!is_note_marker(&"1".repeat(10_000)));
+        assert!(is_note_marker(&"*".repeat(100_000)));
+        assert!(is_note_marker(&format!("[{}]:", "*".repeat(50_000))));
+        // Linear: a million-character marker is read in a few passes.
+        let start = std::time::Instant::now();
+        assert!(!is_note_marker(&format!("{}x", "*".repeat(1_000_000))));
+        assert!(!is_note_marker(&"m".repeat(1_000_000)));
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
     }
 
     /// `_table_width` and `_cell_columns` as the pinned functions print them for rows of

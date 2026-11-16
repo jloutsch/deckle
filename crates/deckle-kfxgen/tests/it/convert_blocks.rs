@@ -30,17 +30,24 @@ const FIXTURES: &[&str] = &[
     "chapter_starts_777",
     "colour",
     "comments_in_tree",
+    "css_quirks",
     "dark_boxes",
+    "directions",
     "drop_caps",
     "fake_margins",
     "figures",
     "floats",
     "floats_697",
+    "font_sizes",
     "fonts",
     "fonts_woff",
     "frames",
+    "horizontal_blocks",
+    "horizontal_blocks_749",
+    "horizontal_blocks_ltr",
     "link_colours",
     "link_greys",
+    "links",
     "listing_rerun",
     "lists",
     "lists_768",
@@ -57,8 +64,10 @@ const FIXTURES: &[&str] = &[
     "pictures_side_by_side_766",
     "refused_selector",
     "rtl",
+    "ruby",
     "ruby_tcy",
     "rules_spaces",
+    "spacers",
     "text_edges",
     "turned_words_765",
     "typography",
@@ -647,6 +656,14 @@ fn spacers_between_paragraphs_are_spaced_in_linear_time() {
 /// `text-align` that calibre reads as a length (`compute_block_style`), and the rows below.
 #[test]
 fn what_kfxgen_raises_on_in_the_walk_is_raised() {
+    let many_digits = format!(
+        "<table border=\"{}\"><tr><td>x</td></tr></table>",
+        "1".repeat(4301)
+    );
+    let too_large = format!(
+        "<table border=\"{}\"><tr><td>x</td></tr></table>",
+        "1".repeat(400)
+    );
     for (body, css, exception) in [
         (
             "<div class=\"w\">x</div>",
@@ -694,6 +711,22 @@ fn what_kfxgen_raises_on_in_the_walk_is_raised() {
                 "px; line-height: normal }"
             ),
             "OverflowError",
+        ),
+        // `_width_pct`: `float()` of a width's points and digits.
+        (
+            "<table><tr><td width=\"1.2.3%\">x</td></tr></table>",
+            "",
+            "ValueError",
+        ),
+        // `_attr_border_px`: `int()` of more than 4300 digits.
+        (many_digits.as_str(), "", "ValueError"),
+        // `_table_block`: `0.45 * int` of a border too large for a float, with no CSS border.
+        (too_large.as_str(), "", "OverflowError"),
+        // `_cell_block_style`: a header cell's loose text, its block style only a language.
+        (
+            "<table><tr><th lang=\"en\" class=\"m\"><p>a</p>loose</th></tr></table>",
+            ".m { text-align: match-parent }",
+            "KeyError",
         ),
     ] {
         match extract(&page(body, css)) {
@@ -1549,5 +1582,813 @@ fn odd_box_values_do_not_panic() {
             let css = format!(".b {{ border: 1px solid; {v} }} .m {{ {v} }}");
             let _ = extract(&page(body, &css));
         }
+    }
+}
+
+/// A `<table>` of `rows` rows of `cols` cells in a `<tbody>`, each cell filled by `fill`.
+fn table_of(
+    rows: usize,
+    cols: usize,
+    css: &str,
+    fill: impl Fn(&mut deckle_kfxgen::dom::Dom, deckle_kfxgen::dom::NodeId, usize),
+) -> deckle_kfxgen::book::File {
+    let (mut dom, body) = empty_page();
+    let table = dom.append_child(body, "table");
+    let tbody = dom.append_child(table, "tbody");
+    let mut i = 0;
+    for _ in 0..rows {
+        let tr = dom.append_child(tbody, "tr");
+        for _ in 0..cols {
+            let td = dom.append_child(tr, "td");
+            fill(&mut dom, td, i);
+            i += 1;
+        }
+    }
+    file_of(dom, css)
+}
+
+/// The table block of a file of one table.
+fn table_rows(got: &FileBlocks) -> Vec<PyValue> {
+    assert_eq!(got.blocks.len(), 1, "one table block");
+    match got.blocks[0]
+        .to_py()
+        .get("table")
+        .and_then(|t| t.get("rows"))
+    {
+        Some(PyValue::List(rows)) => rows.clone(),
+        other => panic!("no rows: {other:?}"),
+    }
+}
+
+/// The refusal of the file's style text budget, which a table's cells are charged to.
+fn is_over_budget<T>(got: &Result<T, ItemError>) -> bool {
+    matches!(got, Err(ItemError::Error(Error::Book(deckle_kfxgen::book::Error::TooLarge { what })))
+        if what.contains("500000 declarations"))
+}
+
+/// A table of `cells` cells of a word each, in rows of 10, with a border on every cell.
+fn bordered_table(cells: usize) -> deckle_kfxgen::book::File {
+    table_of(cells / 10, 10, "td { border: 1px solid }", |dom, td, i| {
+        dom.set_attr(td, "id", Some(&format!("c{i}")));
+        dom.set_text(td, "cell");
+    })
+}
+
+/// 200,000 cells (20,000 rows of 10): each of a table's cells is charged three units of the
+/// file's style text budget from a count of the tree, before anything is resolved, so this
+/// table is refused by the budget after one pass over its elements.
+#[test]
+fn a_table_of_200000_cells_stays_under_the_cost_limit() {
+    let file = bordered_table(200_000);
+    let start = Instant::now();
+    let got = extract(&file);
+    let took = start.elapsed();
+    assert!(is_over_budget(&got), "{:?}", got.map(|b| b.blocks.len()));
+    assert!(took < COST_LIMIT, "{took:?}");
+}
+
+/// 20,000 cells (2,000 rows of 10) are one table block, made in time linear in the cells:
+/// every cell is walked once, and nothing scans earlier rows or cells again.
+#[test]
+fn a_table_of_20000_cells_converts_under_the_cost_limit() {
+    let file = bordered_table(20_000);
+    let start = Instant::now();
+    let got = extract(&file).expect("converts");
+    let took = start.elapsed();
+    assert_eq!(table_rows(&got).len(), 2_000);
+    assert!(took < COST_LIMIT, "{took:?}");
+}
+
+/// The refusal of a table kfxgen writes as rows (Task 17 ports that path).
+fn is_rows<T>(got: &Result<T, ItemError>) -> bool {
+    matches!(got, Err(ItemError::Error(Error::Unsupported { feature, .. })) if *feature == "tables written as rows (Task 17)")
+}
+
+/// `<table><tbody><tr><td>` nested `levels` times, a word in the innermost cell.
+fn tables_in_cells(levels: usize) -> deckle_kfxgen::book::File {
+    let (mut dom, body) = empty_page();
+    let mut at = body;
+    for _ in 0..levels {
+        let table = dom.append_child(at, "table");
+        let tbody = dom.append_child(table, "tbody");
+        let tr = dom.append_child(tbody, "tr");
+        at = dom.append_child(tr, "td");
+    }
+    dom.set_text(at, "x");
+    file_of(dom, "")
+}
+
+/// A table holding a table is never native (`_table_is_native`): kfxgen writes it as rows,
+/// which the port refuses by name until Task 17. Tables nested in cells as deep as a book may
+/// nest, and 5,000 levels (20,000 elements) in a `File` built by hand, are refused after one
+/// pass over the outer table, on a test thread's stack.
+#[test]
+fn tables_nested_in_cells_are_refused_after_one_pass() {
+    for levels in [(deckle_limits::MAX_DEPTH - 2) / 4, 5_000] {
+        let file = tables_in_cells(levels);
+        let start = Instant::now();
+        let got = extract(&file);
+        let took = start.elapsed();
+        assert!(is_rows(&got), "{levels}: {:?}", got.map(|b| b.blocks.len()));
+        assert!(took < COST_LIMIT, "{levels}: {took:?}");
+    }
+}
+
+/// A row nested in `groups` `<tbody>`s, its one cell holding two paragraphs.
+fn rows_in_nested_groups(groups: usize) -> deckle_kfxgen::book::File {
+    let (mut dom, body) = empty_page();
+    let mut at = dom.append_child(body, "table");
+    for _ in 0..groups {
+        at = dom.append_child(at, "tbody");
+    }
+    let tr = dom.append_child(at, "tr");
+    let td = dom.append_child(tr, "td");
+    for word in ["a", "b"] {
+        let p = dom.append_child(td, "p");
+        dom.set_text(p, word);
+    }
+    file_of(dom, "")
+}
+
+/// `take` follows row groups nested in row groups (kfxgen recurses once per group; here a
+/// stack). As deep as the walk goes, the row is built and its cell walked; past it, and at
+/// 20,000 levels in a `File` built by hand, the walk refuses the table by name.
+#[test]
+fn row_groups_nested_as_deep_as_the_walk_goes_are_built() {
+    // body > table (1) > tbody... > tr > td > p: the paragraphs at MAX_DEPTH.
+    let groups = deckle_limits::MAX_DEPTH - 4;
+    let got = extract(&rows_in_nested_groups(groups)).unwrap();
+    let rows = table_rows(&got);
+    assert_eq!(rows.len(), 1);
+    let cell = &rows[0].get("cells").and_then(PyValue::as_list).unwrap()[0];
+    assert_eq!(cell.get("text"), Some(&PyValue::Str("a b".into())));
+    for groups in [groups + 1, 20_000] {
+        let file = rows_in_nested_groups(groups);
+        let start = Instant::now();
+        let got = extract(&file);
+        let took = start.elapsed();
+        match &got {
+            Err(ItemError::Error(Error::TooLarge { what })) => {
+                assert!(what.ends_with("levels below the body"), "{what}");
+            }
+            other => panic!("{groups}: {:?}", other.as_ref().map(|b| b.blocks.len())),
+        }
+        assert!(took < COST_LIMIT, "{groups}: {took:?}");
+    }
+}
+
+/// A cell holding a paragraph and `deep` nested `<div>`s round another: walked as the body
+/// is, with the walk's own stack.
+fn deep_cell(deep: usize) -> deckle_kfxgen::book::File {
+    let (mut dom, body) = empty_page();
+    let table = dom.append_child(body, "table");
+    let tr = dom.append_child(table, "tr");
+    let td = dom.append_child(tr, "td");
+    let p = dom.append_child(td, "p");
+    dom.set_text(p, "a");
+    let mut at = td;
+    for _ in 0..deep {
+        at = dom.append_child(at, "div");
+    }
+    let p = dom.append_child(at, "p");
+    dom.set_text(p, "b");
+    file_of(dom, "div { margin: 0 }")
+}
+
+/// A cell's blocks as deep as the walk goes are walked into the cell's paragraphs; one level
+/// deeper, and 20,000 levels in a `File` built by hand, are refused by the walk, not
+/// overflowed.
+#[test]
+fn cells_holding_blocks_as_deep_as_the_walk_goes_are_walked() {
+    // body > table (1) > tr > td > div... > p: the last paragraph at MAX_DEPTH.
+    let deep = deckle_limits::MAX_DEPTH - 4;
+    let got = extract(&deep_cell(deep)).unwrap();
+    let rows = table_rows(&got);
+    let cell = &rows[0].get("cells").and_then(PyValue::as_list).unwrap()[0];
+    assert_eq!(cell.get("text"), Some(&PyValue::Str("a b".into())));
+    for deep in [deep + 1, 20_000] {
+        let file = deep_cell(deep);
+        let start = Instant::now();
+        let got = extract(&file);
+        let took = start.elapsed();
+        match &got {
+            Err(ItemError::Error(Error::TooLarge { what })) => {
+                assert!(what.ends_with("levels below the body"), "{what}");
+            }
+            other => panic!("{deep}: {:?}", other.as_ref().map(|b| b.blocks.len())),
+        }
+        assert!(took < COST_LIMIT, "{deep}: {took:?}");
+    }
+}
+
+/// Spans are clamped to 1..1000 (`_span_attr`) before any work: a colspan of 10^30 on 10,000
+/// cells makes the table too wide to be native after one cell (`_table_width` stops past 24
+/// columns); a rowspan of 10^30 on a 1,001-row native table is 1000, carried down one column,
+/// and ends at its row group's last row (`clamp_rowspans`); a span past 4300 digits is 1.
+#[test]
+fn huge_spans_take_bounded_work() {
+    let huge = "1".repeat(31);
+    let wide = table_of(1, 10_000, "", |dom, td, _| {
+        dom.set_attr(td, "colspan", Some(&huge));
+        dom.set_text(td, "x");
+    });
+    let start = Instant::now();
+    let got = extract(&wide);
+    assert!(is_rows(&got), "{:?}", got.map(|b| b.blocks.len()));
+    assert!(start.elapsed() < COST_LIMIT, "{:?}", start.elapsed());
+
+    // 1,001 rows of 4 columns, the first cell of the first row spanning the rows below,
+    // which hold 3 cells each.
+    let long = |rowspan: &str| {
+        let (mut dom, body) = empty_page();
+        let table = dom.append_child(body, "table");
+        let tbody = dom.append_child(table, "tbody");
+        for row in 0..1_001 {
+            let tr = dom.append_child(tbody, "tr");
+            for col in 0..4 {
+                if row > 0 && col == 3 {
+                    continue;
+                }
+                let td = dom.append_child(tr, "td");
+                if row == 0 && col == 0 {
+                    dom.set_attr(td, "rowspan", Some(rowspan));
+                }
+                dom.set_text(td, "x");
+            }
+        }
+        file_of(dom, "")
+    };
+    for (rowspan, want) in [(huge.as_str(), 1000), (&"9".repeat(5000), 1), ("-5", 1)] {
+        let file = long(rowspan);
+        let start = Instant::now();
+        let got = extract(&file);
+        let took = start.elapsed();
+        let got = got.unwrap_or_else(|e| panic!("{rowspan:.10}: {e:?}"));
+        let rows = table_rows(&got);
+        let first = &rows[0].get("cells").and_then(PyValue::as_list).unwrap()[0];
+        assert_eq!(
+            first.get("rowspan"),
+            Some(&PyValue::Int(want)),
+            "{rowspan:.10}"
+        );
+        assert!(took < COST_LIMIT, "{rowspan:.10}: {took:?}");
+    }
+}
+
+/// Each width a `<col span>` repeats is a value in the model (up to 1,000 per `<col>`), each
+/// charged to the file's budget before it is made: 2,000 `<col span="1000">` (two million
+/// widths) are refused after about half of them.
+#[test]
+fn widths_repeated_by_col_spans_are_charged() {
+    let (mut dom, body) = empty_page();
+    let table = dom.append_child(body, "table");
+    let group = dom.append_child(table, "colgroup");
+    for _ in 0..2_000 {
+        let col = dom.append_child(group, "col");
+        dom.set_attr(col, "span", Some("1000"));
+    }
+    let tr = dom.append_child(table, "tr");
+    let td = dom.append_child(tr, "td");
+    dom.set_text(td, "x");
+    let file = file_of(dom, "");
+    let budget = TextBudget::new();
+    let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+    let mut serials = Serials::default();
+    let none = HashSet::new();
+    let opts = ExtractOptions {
+        native_tables: true,
+        toc_targets: &none,
+        link_targets: &none,
+        keep_nav_listings: false,
+    };
+    let start = Instant::now();
+    let (got, bytes) =
+        allocated_by(|| extract_blocks(&mut Walk::new(&file, &resolver, &mut serials), &opts));
+    let took = start.elapsed();
+    eprintln!(
+        "2,000 col spans of 1,000: {:?}, {bytes} bytes, {took:?}",
+        got.as_ref().err()
+    );
+    assert!(
+        matches!(got, Err(ItemError::Error(_))),
+        "{:?}",
+        got.map(|b| b.blocks.len())
+    );
+    assert!(took < COST_LIMIT, "{took:?}");
+}
+
+/// `tables_more` (Task 17: three of its tables are written as rows) holds the only dumped
+/// native table with a caption, a colspan, a rowspan, header cells and a cell of paragraphs.
+/// With the rows tables taken out of its tree, the blocks up to that table match kfxgen's dump
+/// before spacing and after. With the notes table kept, `_is_notes_table` sends it to the rows
+/// path (kfxgen's dump counts it in `notes_seen`), refused until Task 17.
+#[test]
+fn tables_more_s_native_table_matches_the_dump() {
+    let toc = dump("tables_more", "toc.json.gz");
+    let link_targets = string_set(toc.get("link_targets"));
+    let none = HashSet::new();
+    let opts = ExtractOptions {
+        native_tables: true,
+        toc_targets: &none,
+        link_targets: &link_targets,
+        keep_nav_listings: false,
+    };
+    let PyValue::List(records) = dump("tables_more", "blocks/000.json.gz") else {
+        panic!("no records");
+    };
+    let record = &records[0];
+    let spacing = record.get("spacing").and_then(PyValue::as_list).unwrap();
+    let file_call = spacing
+        .iter()
+        .rfind(|c| c.get("depth").and_then(PyValue::as_int) == Some(0))
+        .unwrap();
+    let Some(PyValue::List(want_before)) = file_call.get("blocks") else {
+        panic!("no D2a blocks");
+    };
+    let Some(PyValue::List(want_after)) = record.get("blocks") else {
+        panic!("no D2 blocks");
+    };
+    for keep_notes in [false, true] {
+        let mut book = read_book(&fixtures::kfxgen("sources/tables_more.epub")).unwrap();
+        let file = &mut book.files[0];
+        assert!(file.href.ends_with("tables.xhtml"));
+        // In document order: the native table, the one with a hidden row, the one holding a
+        // table (and that table), the notes table.
+        let tables: Vec<_> = file
+            .dom
+            .descendants()
+            .filter(|&n| file.dom.tag(n) == "table")
+            .collect();
+        assert_eq!(tables.len(), 5);
+        let mut gone = vec![tables[1], tables[2]];
+        if !keep_notes {
+            gone.push(tables[4]);
+        }
+        file.dom.remove_many(&gone);
+        let file = &book.files[0];
+        let run = |before: bool| {
+            let budget = TextBudget::new();
+            let resolver = Resolver::new(file, &DEFAULT_PROFILE, &budget);
+            let mut serials = Serials::default();
+            let mut walk = Walk::new(file, &resolver, &mut serials);
+            if before {
+                blocks_before_spacing(&mut walk, &opts).map(|b| before_spacing_py(&b))
+            } else {
+                extract_blocks(&mut walk, &opts).map(|b| blocks_py(&b.blocks))
+            }
+        };
+        if keep_notes {
+            assert!(is_rows(&run(false)));
+            continue;
+        }
+        let mut failures = Vec::new();
+        for (before, want) in [(true, want_before), (false, want_after)] {
+            let PyValue::List(ours) = run(before).unwrap() else {
+                panic!("no list");
+            };
+            // The heading, the paragraph, the caption, the table.
+            for i in 0..4 {
+                for d in model_diff(&ours[i], &want[i]) {
+                    failures.push(format!("{}[{i}]{d}", if before { "D2a" } else { "D2" }));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+}
+
+/// `blocks[i]`'s value at a path of dict keys and list indexes ("table.rows.0.cells.1.text").
+fn at(blocks: &[Block], i: usize, path: &str) -> String {
+    let mut v = blocks[i].to_py();
+    for step in path.split('.').filter(|s| !s.is_empty()) {
+        v = match step.parse::<usize>() {
+            Ok(n) => match &v {
+                PyValue::List(items) => items[n].clone(),
+                other => panic!("{path}: not a list at {step}: {other:?}"),
+            },
+            Err(_) => match v.get(step) {
+                Some(x) => x.clone(),
+                None => return "absent".into(),
+            },
+        };
+    }
+    show(Some(&v))
+}
+
+/// The keys of a dict, in order.
+fn keys_at(blocks: &[Block], i: usize, path: &str) -> Vec<String> {
+    let mut v = blocks[i].to_py();
+    for step in path.split('.').filter(|s| !s.is_empty()) {
+        v = match step.parse::<usize>() {
+            Ok(n) => v.as_list().unwrap()[n].clone(),
+            Err(_) => v.get(step).unwrap().clone(),
+        };
+    }
+    match v {
+        PyValue::Dict(pairs) => pairs
+            .iter()
+            .map(|(k, _)| k.as_str().unwrap().to_owned())
+            .collect(),
+        other => panic!("{path}: not a dict: {other:?}"),
+    }
+}
+
+/// What no dump holds, each value read from the pinned `_table_block`, `_emit_fostered`, the
+/// table branch of `_walk_element`, `_walk_cell`, `_column_widths`, `_cell_block_style`,
+/// `_cell_valign`, `_header_not_bold`, `_attach_anchor_keys` and the file's trailing ids for
+/// the style the port resolves (not run: they are closures of `extract_blocks_from_html` or
+/// need calibre's resolver).
+#[test]
+fn tables_no_dump_holds_are_built_as_kfxgen_builds_them() {
+    let none: &[&str] = &[];
+
+    // Content outside the cells goes first, the ids carried from before the table on it; the
+    // caption takes the table's own ids, which stay in its offsets (kfxgen leaves them).
+    let got = walked_with(
+        "<div><a id=\"lead\"></a><table id=\"t\"><caption id=\"c\">Cap</caption>loose \
+         <b>bold</b><tr><td>a</td></tr><p>para</p></table></div>",
+        "",
+        none,
+    );
+    let b = &got.blocks;
+    assert_eq!(b.len(), 4);
+    assert_eq!(at(b, 0, "text"), "'loose bold'");
+    assert_eq!(at(b, 0, "anchor_ids"), "List([Str(\"lead\")])");
+    assert_eq!(
+        keys_at(b, 0, ""),
+        [
+            "text",
+            "spans",
+            "block_style",
+            "anchor_ids",
+            "anchor_offsets"
+        ]
+    );
+    assert_eq!(at(b, 1, "text"), "'para'");
+    assert_eq!(at(b, 1, "anchor_ids"), "List([])");
+    assert_eq!(at(b, 2, "text"), "'Cap'");
+    assert_eq!(at(b, 2, "anchor_ids"), "List([Str(\"t\"), Str(\"c\")])");
+    assert_eq!(at(b, 3, "type"), "'table'");
+    assert_eq!(at(b, 3, "anchor_ids"), "List([])");
+    assert_eq!(at(b, 3, "anchor_offsets"), "{'t': Int(0)}");
+    assert_eq!(at(b, 3, "table.anchor_ids"), "List([])");
+
+    // A contents entry naming a row past the first: the rows path (Task 17). Naming the
+    // table itself keeps it native.
+    let table = "<table id=\"t\"><tr><td>a</td></tr><tr id=\"r2\"><td>b</td></tr></table>";
+    let file = page(table, "");
+    let budget = TextBudget::new();
+    let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+    let mut serials = Serials::default();
+    let toc: HashSet<String> = ["r2".to_owned()].into();
+    let empty = HashSet::new();
+    let opts = ExtractOptions {
+        native_tables: true,
+        toc_targets: &toc,
+        link_targets: &empty,
+        keep_nav_listings: false,
+    };
+    assert!(is_rows(&extract_blocks(
+        &mut Walk::new(&file, &resolver, &mut serials),
+        &opts
+    )));
+    let got = walked_with(table, "", &["t"]);
+    assert_eq!(at(&got.blocks, 0, "type"), "'table'");
+
+    // Anchors between rows follow the row before them in calibre's notes layout; a row
+    // group's own ids and an empty anchor in a row go on the row; the ids left at the file's
+    // end go on the table's last row; every part is keyed, the file's key first on the table.
+    let file = page(
+        "<table><tbody id=\"g\"><tr><td>a</td></tr><a id=\"x1\"></a><tr><td>b<a id=\"in\"></a>\
+         </td><a id=\"r\"></a></tr><a id=\"x2\"></a></tbody></table><a id=\"end\"></a>",
+        "",
+    );
+    let got = extract(&file).unwrap();
+    let b = &got.blocks;
+    let doc = "OEBPS/a.xhtml";
+    assert_eq!(got.trailing_ids, ["end"]);
+    assert_eq!(
+        at(b, 0, "anchor_ids"),
+        "List([Str(\"g\"), Str(\"x1\"), Str(\"r\"), Str(\"x2\"), Str(\"in\"), Str(\"end\")])"
+    );
+    assert_eq!(
+        at(b, 0, "table.rows.0.anchor_ids"),
+        "List([Str(\"g\"), Str(\"x1\")])"
+    );
+    assert_eq!(
+        at(b, 0, "table.rows.1.anchor_ids"),
+        "List([Str(\"r\"), Str(\"x2\"), Str(\"end\")])"
+    );
+    assert_eq!(
+        at(b, 0, "table.anchor_keys"),
+        format!("List([Str(\"{doc}\")])")
+    );
+    assert_eq!(at(b, 0, "table.anchor_offsets"), "{}");
+    assert_eq!(
+        keys_at(b, 0, "table"),
+        [
+            "anchor_ids",
+            "rows",
+            "border",
+            "column_widths",
+            "width",
+            "bidi",
+            "anchor_keys",
+            "anchor_offsets"
+        ]
+    );
+    assert_eq!(
+        keys_at(b, 0, "table.rows.1"),
+        [
+            "group",
+            "border",
+            "bidi",
+            "group_bidi",
+            "group_border",
+            "anchor_ids",
+            "cells",
+            "source_order",
+            "anchor_keys",
+            "anchor_offsets"
+        ]
+    );
+    assert_eq!(
+        at(b, 0, "table.rows.1.anchor_keys"),
+        format!("List([Str(\"{doc}#r\"), Str(\"{doc}#x2\"), Str(\"{doc}#end\")])")
+    );
+    assert_eq!(
+        at(b, 0, "table.rows.1.cells.0.anchor_offsets"),
+        format!("{{'{doc}#in': Int(1)}}")
+    );
+    assert_eq!(
+        keys_at(b, 0, "table.rows.1.cells.0")
+            .last()
+            .map(String::as_str),
+        Some("anchor_keys")
+    );
+    // An anchor before the first row carries forward onto it.
+    let got = walked_with(
+        "<table><tbody><a id=\"y\"></a><tr><td>a</td></tr></tbody></table>",
+        "",
+        none,
+    );
+    assert_eq!(
+        at(&got.blocks, 0, "table.rows.0.anchor_ids"),
+        "List([Str(\"y\")])"
+    );
+
+    // Column widths from `<col>`s, a span repeating one; else from single-column cells, the
+    // last row that sets one winning; a percentage table width.
+    let got = walked_with(
+        "<table style=\"width: 80%\"><colgroup><col style=\"width: 30%\"/><col span=\"2\"/>\
+         </colgroup><tr><td>a</td><td>b</td><td>c</td></tr></table>",
+        "",
+        none,
+    );
+    assert_eq!(
+        at(&got.blocks, 0, "table.column_widths"),
+        "('col', List([Float(30.0), None, None]))"
+    );
+    assert_eq!(at(&got.blocks, 0, "table.width"), "80.0");
+    let got = walked_with(
+        "<table><tr><td width=\"25%\">a</td><td colspan=\"2\" width=\"50%\">b</td></tr>\
+         <tr><td>c</td><td width=\"10%\">d</td><td>e</td></tr></table>",
+        "",
+        none,
+    );
+    let b = &got.blocks;
+    assert_eq!(
+        at(b, 0, "table.column_widths"),
+        "('cell', List([Float(25.0), Float(10.0), None]))"
+    );
+    let set: Vec<String> = [(0, 0), (0, 1), (1, 0), (1, 1), (1, 2)]
+        .iter()
+        .map(|(r, c)| at(b, 0, &format!("table.rows.{r}.cells.{c}.width_set")))
+        .collect();
+    assert_eq!(set, ["True", "True", "False", "True", "False"]);
+
+    // A header cell: `start` is centred, `end` in a right-to-left table is left, its own
+    // `right` is right; a header cell whose weight is normal is not bold; a data cell takes
+    // its one paragraph's alignment; a heading in a cell.
+    let got = walked_with(
+        "<table><tr><th style=\"text-align: start\">s</th><th style=\"text-align: right\">r</th>\
+         <th style=\"font-weight: normal\">n</th><td><p style=\"text-align: right\">p</p></td>\
+         <td><h2>h</h2></td></tr></table><table dir=\"rtl\"><tr><th style=\"text-align: end\">e</th>\
+         </tr></table>",
+        "p, h2 { margin: 0 }",
+        none,
+    );
+    let b = &got.blocks;
+    assert_eq!(
+        at(b, 0, "table.rows.0.cells.0.block_style.align"),
+        "'center'"
+    );
+    assert_eq!(
+        at(b, 0, "table.rows.0.cells.1.block_style.align"),
+        "'right'"
+    );
+    assert_eq!(at(b, 0, "table.rows.0.cells.2.not_bold"), "True");
+    assert_eq!(at(b, 0, "table.rows.0.cells.0.not_bold"), "False");
+    assert_eq!(
+        at(b, 0, "table.rows.0.cells.3.block_style.align"),
+        "'right'"
+    );
+    assert_eq!(at(b, 0, "table.rows.0.cells.3.paragraphs"), "absent");
+    assert_eq!(at(b, 0, "table.rows.0.cells.4.heading"), "True");
+    assert_eq!(at(b, 1, "table.rows.0.cells.0.block_style.align"), "'left'");
+
+    // `valign` on the cell, else on its row; CSS on the cell wins over its attribute.
+    let got = walked_with(
+        "<table><tr valign=\"top\"><td valign=\"bottom\">a</td><td>b</td>\
+         <td class=\"c\" valign=\"bottom\">c</td></tr></table>",
+        "td.c { vertical-align: top }",
+        none,
+    );
+    let valign: Vec<String> = (0..3)
+        .map(|c| at(&got.blocks, 0, &format!("table.rows.0.cells.{c}.valign")))
+        .collect();
+    assert_eq!(valign, ["'bottom'", "'top'", "'top'"]);
+
+    // Ids left pending at a cell's end go on its last block; a cell whose blocks hold no text
+    // is one text entry after all; words and a picture are one paragraph of the cell.
+    let got = walked_with(
+        "<table><tr><td><p>a</p><p>b</p><span id=\"z\"></span></td><td><p></p><p> </p></td>\
+         <td>see <img src=\"a.png\"/> here</td></tr></table>",
+        "p { margin: 0 }",
+        none,
+    );
+    let b = &got.blocks;
+    assert_eq!(at(b, 0, "table.rows.0.cells.0.text"), "'a b'");
+    assert_eq!(
+        at(b, 0, "table.rows.0.cells.0.paragraphs.1.anchor_ids"),
+        "List([Str(\"z\")])"
+    );
+    assert_eq!(
+        at(b, 0, "table.rows.0.cells.0.paragraphs.1.anchor_offsets"),
+        "{'z': Int(0)}"
+    );
+    assert_eq!(at(b, 0, "anchor_ids"), "List([Str(\"z\")])");
+    assert_eq!(at(b, 0, "table.rows.0.cells.1.paragraphs"), "absent");
+    assert_eq!(at(b, 0, "table.rows.0.cells.1.heading"), "False");
+    let PyValue::List(paragraphs) = b[0]
+        .to_py()
+        .get("table")
+        .and_then(|t| t.get("rows"))
+        .and_then(|r| r.as_list().map(|r| r[0].clone()))
+        .and_then(|r| {
+            r.get("cells")
+                .and_then(|c| c.as_list().map(|c| c[2].clone()))
+        })
+        .and_then(|c| c.get("paragraphs").cloned())
+        .unwrap()
+    else {
+        panic!("no paragraphs");
+    };
+    assert_eq!(paragraphs.len(), 1);
+
+    // Borders: rows and row groups draw theirs only when collapsed; the `border` attribute's
+    // outset frame of N x 0.45pt and its inset rule round each cell.
+    let row_border = |collapse: &str| {
+        let got = walked_with(
+            "<table><tbody><tr><td>a</td></tr></tbody></table>",
+            &format!(
+                "table {{ border-collapse: {collapse} }} tr, tbody {{ border: 1px solid red }}"
+            ),
+            none,
+        );
+        (
+            at(&got.blocks, 0, "table.rows.0.border"),
+            at(&got.blocks, 0, "table.rows.0.group_border"),
+        )
+    };
+    let side = "('solid', 0.45, Int(4294901760))";
+    let drawn = format!("{{'top': {side}, 'right': {side}, 'bottom': {side}, 'left': {side}}}");
+    assert_eq!(row_border("collapse"), (drawn.clone(), drawn));
+    assert_eq!(
+        row_border("separate"),
+        ("None".to_owned(), "None".to_owned())
+    );
+    let got = walked_with("<table border=\"2\"><tr><td>a</td></tr></table>", "", none);
+    let frame = "('outset', 0.9, Int(4286611584))";
+    assert_eq!(
+        at(&got.blocks, 0, "table.border"),
+        format!("{{'top': {frame}, 'right': {frame}, 'bottom': {frame}, 'left': {frame}}}")
+    );
+    let rule = "('inset', 0.45, None)";
+    assert_eq!(
+        at(&got.blocks, 0, "table.rows.0.cells.0.border"),
+        format!("{{'top': {rule}, 'right': {rule}, 'bottom': {rule}, 'left': {rule}}}")
+    );
+
+    // A margined container's side margins go on its paragraphs, not on a table (Task 12's
+    // table skip in `_carry_container_margins`).
+    let got = walked_with(
+        "<div class=\"m\"><p>a</p><table><tr><td>b</td></tr></table></div>",
+        ".m { margin-left: 10% } p { margin: 0 }",
+        none,
+    );
+    assert_eq!(at(&got.blocks, 1, "type"), "'table'");
+    assert_eq!(at(&got.blocks, 1, "block_style"), "None");
+    assert_ne!(at(&got.blocks, 0, "block_style.margin_left"), "None");
+    // A spacer after a table that ends the file: its space stays on the table
+    // (`trailing_space`: a 19px line, 0.6 of it in ems); in a bordered box it goes into the
+    // box's padding at the bottom.
+    let spacer = "<table><tr><td>a</td></tr></table><p>\u{a0}</p>";
+    let got = extract(&page(spacer, "p { margin: 0 }")).unwrap();
+    assert_eq!(at(&got.blocks, 0, "trailing_space"), "0.7125");
+    let got = extract(&page(
+        &format!("<div class=\"b\">{spacer}</div>"),
+        ".b { border: 1px solid } p { margin: 0 }",
+    ))
+    .unwrap();
+    assert_eq!(
+        at(&got.blocks, 0, "box.padding"),
+        "{'top': 0.0, 'right': 0.0, 'bottom': 0.7125, 'left': 0.0}"
+    );
+    assert_eq!(at(&got.blocks, 0, "blocks.0.trailing_space"), "absent");
+
+    // A contents listing laid out as a table, holding a picture: discarded, its picture kept,
+    // and counted in `tables_seen` (a table that made blocks but no table block).
+    let got = extract(&page(
+        "<p>x</p><table class=\"toc\"><tr><td><img src=\"a.png\"/></td></tr></table>",
+        "",
+    ))
+    .unwrap();
+    assert_eq!(got.tables_seen, [got.blocks[1].id()]);
+}
+
+/// Each cell's alignment as the pinned `_cell_block_style` (then `_start_end_align` for a data
+/// cell) gives it, run under Python 3 on the styles the port resolves for the cell, its
+/// ancestors and its child (calibre's resolver is not available): a header cell's `inherit`
+/// from CSS above it but not from an `align` attribute, `initial`, `start` and `end` in left-to-
+/// right and right-to-left tables, its own alignment, its one paragraph's.
+#[test]
+fn cells_are_aligned_as_kfxgen_aligns_them() {
+    let none: &[&str] = &[];
+    let cases: [(&str, &str, &[&str]); 8] = [
+        (
+            "<table style=\"text-align: right\"><tr><th style=\"text-align: inherit\">a</th>\
+             </tr></table>",
+            "",
+            &["right"],
+        ),
+        (
+            "<table align=\"right\"><tr><th style=\"text-align: inherit\">a</th></tr></table>",
+            "",
+            &["right"],
+        ),
+        (
+            "<div style=\"text-align: right\"><table><tr><th style=\"text-align: inherit\">a\
+             </th></tr></table></div>",
+            "",
+            &["right"],
+        ),
+        (
+            "<table><tr><th style=\"text-align: initial\">a</th><th style=\"text-align: end\">\
+             b</th><th style=\"text-align: justify\">c</th><th>d</th><th style=\"text-align: \
+             center\">e</th><th style=\"text-align: left\">f</th></tr></table>",
+            "",
+            &["left", "right", "justify", "center", "center", "left"],
+        ),
+        (
+            "<table dir=\"rtl\"><tr><th style=\"text-align: initial\">a</th><th style=\"text-\
+             align: end\">b</th><th style=\"text-align: start\">c</th><th>d</th><th style=\"\
+             text-align: inherit\">e</th></tr></table>",
+            "",
+            &["right", "left", "center", "center", "left"],
+        ),
+        (
+            "<table><tr><th><p style=\"text-align: right\">a</p></th><th style=\"text-align: \
+             left\"><p>b</p></th><td align=\"right\">c</td><td><div style=\"text-align: \
+             center\">d</div></td></tr></table>",
+            "p, div { margin: 0 }",
+            &["right", "left", "right", "center"],
+        ),
+        (
+            "<table><tr style=\"text-align: right\"><th style=\"text-align: inherit\">a</th>\
+             </tr></table>",
+            "",
+            &["right"],
+        ),
+        (
+            "<table><tr><th align=\"right\">a</th><th align=\"left\" style=\"text-align: \
+             inherit\">b</th></tr></table>",
+            "",
+            &["right", "left"],
+        ),
+    ];
+    for (body, css, want) in cases {
+        let got = walked_with(body, css, none);
+        let aligns: Vec<String> = (0..want.len())
+            .map(|c| {
+                at(
+                    &got.blocks,
+                    0,
+                    &format!("table.rows.0.cells.{c}.block_style.align"),
+                )
+            })
+            .collect();
+        let want: Vec<String> = want.iter().map(|a| format!("'{a}'")).collect();
+        assert_eq!(aligns, want, "{body}");
     }
 }

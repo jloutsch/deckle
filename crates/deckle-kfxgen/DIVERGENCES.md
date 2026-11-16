@@ -782,6 +782,17 @@ kfxgen's native tables (`src/convert/blocks/tables.rs`, at ad38ec8):
   what kfxgen decides there is not known here. Smallest input: `<table><tr><td><epub:switch>
   <epub:case required-namespace="…">…</epub:case><epub:default>x</epub:default></epub:switch>
   </td></tr></table>`; kfxgen writes a native table (or rows, if its copy reads as hidden).
+- Each cell of a table (`<td>` or `<th>` anywhere below the `<table>`, a nested table's cells
+  too) is charged three units of the file's style text budget, counted from the tree before
+  anything is resolved, on top of what reading the table charges (about one unit a cell of a
+  word). The file stops (`Error::Book`, "the CSS of this book file gives its elements more than
+  500000 declarations") for 166,667 cells or more before any cell is read, and for about
+  125,000 cells of a word each once they are read (124,990 convert and 125,010 are refused, in
+  rows of 10, measured). Smallest refused input: `<table><tbody>` with 12,500 rows
+  of ten `<td>cell</td>`. kfxgen converts these tables. Its `_fostered_content` tests every element
+  of the table against a list of the table, its row groups and its rows, so its work grows
+  with rows times cells: about 1.6 billion comparisons for 125,000 cells in rows of 10 (worked
+  out from the code, not run).
 - A `<col span="N">` repeats its width N times (up to 1,000) in the model's column widths. Each
   repeat is charged to the file's style text budget before it is made, so a table whose `<col>`
   spans add up to about a million widths stops the file (`Error::Book`, "the CSS of this book
