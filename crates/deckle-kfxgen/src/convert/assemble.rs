@@ -9,7 +9,11 @@
 //! every listing against every section; each is quadratic in entries, blocks or listings on a
 //! hostile book. Here a file is found through a map, the page breaks are counted once
 //! (prefix sums), each entry's twin is kept as it is made, and the listings are sorted and
-//! searched: assembly is linear in files, blocks, ids and entries, but for sorting.
+//! searched. Its steps are linear in files, blocks, ids and entries, but for sorting and for
+//! two copies kfxgen makes too or shares: an entry's key copied onto each entry on its block
+//! after it, and a dropped listing's keys onto each page of no blocks that keeps it. Those
+//! grow with entries times key bytes, and with pages times listing ids; they are counted
+//! before they are made and refused past `MAX_CONTENT_FILE_BYTES` ([`Repeated`]).
 //!
 //! Assembly first works out every chapter over the book's blocks, changing them only as
 //! kfxgen does before it makes a chapter (`_spine_file`, an entry's key); then the blocks are
@@ -20,8 +24,9 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
+use super::Error;
 use super::blocks::{Block, DictIndex, Field, s};
-use super::chapters::{Chapter, SpineItem, fragment, joined_text, toc_fragments};
+use super::chapters::{Chapter, Repeated, SpineItem, fragment, joined_text, toc_fragments};
 use super::href::{key_doc, normalize, unquote};
 use super::inline::words;
 use super::toc::TocEntry;
@@ -78,20 +83,26 @@ pub(super) const LEADING_TITLE_MAX_LEN: usize = 60;
 /// section of the contents entries (`_assemble_chapters_by_coordinate`), else, when no entry
 /// lands or none makes a chapter, one per file that shows something besides the cover.
 /// kfxgen's warnings about entries naming no file, or an id no block has, go in `warnings`.
+/// [`Error::TooLarge`] when the keys the chapters repeat pass `MAX_CONTENT_FILE_BYTES`
+/// (module documentation).
 pub fn assemble(
     mut items: Vec<SpineItem>,
     entries: &[TocEntry],
     cover_href: Option<&str>,
     warnings: &mut Vec<String>,
-) -> Vec<Chapter> {
+) -> Result<Vec<Chapter>, Error> {
     if !entries.is_empty()
-        && let Some(planned) = plan(&mut items, entries, cover_href, warnings)
+        && let Some(planned) = plan(&mut items, entries, cover_href, warnings)?
         && !planned.is_empty()
     {
-        return fill(items, planned);
+        return Ok(fill(items, planned));
     }
-    fallback(items, cover_href)
+    Ok(fallback(items, cover_href))
 }
+
+/// What a key in a list costs besides its bytes, counted for a dropped listing's keys so that
+/// many short keys count too: its `PyValue` and its allocation.
+const KEY_COST: usize = 48;
 
 /// The fallback: each file a chapter, titled by its opening heading or "Section N" (N its
 /// place among the files), the title never printed; a page of the cover alone left out.
@@ -139,6 +150,9 @@ struct Coord<'e> {
 
 /// A contents listing: its file and its place in that file's `nav_listing_at`.
 type Listing = (usize, usize);
+
+/// The chapters planned, each with the flat range its blocks are to come from.
+type Planned = Vec<(Chapter, Range<usize>)>;
 
 /// The blocks of all files in a row, by flat index.
 struct Flat {
@@ -196,7 +210,7 @@ fn plan(
     entries: &[TocEntry],
     cover_href: Option<&str>,
     warnings: &mut Vec<String>,
-) -> Option<Vec<(Chapter, Range<usize>)>> {
+) -> Result<Option<Planned>, Error> {
     let flat = Flat::new(items);
     for (si, item) in items.iter_mut().enumerate() {
         for b in &mut item.blocks {
@@ -366,7 +380,7 @@ fn plan(
         last_block_in_file.insert(si, bi);
     }
     if coords.is_empty() {
-        return None;
+        return Ok(None);
     }
     let items: &[SpineItem] = items;
 
@@ -417,7 +431,8 @@ fn plan(
         })
     };
 
-    let mut chapters: Vec<(Chapter, Range<usize>)> = Vec::new();
+    let mut chapters: Planned = Vec::new();
+    let mut repeated = Repeated::default();
     let first_fi = coords[0].fi;
     // A head holding an id an entry names is the first chapter's, unless the id ends its file
     // and names the next file's start.
@@ -473,6 +488,13 @@ fn plan(
                 let mut ids: Vec<&String> = items[lsi].nav_listing_at[n].1.iter().collect();
                 ids.sort();
                 let doc = key_doc(&items[si].href, "");
+                // Each page that keeps the listing makes its keys anew (kfxgen too).
+                let bytes: usize = ids.iter().map(|i| i.len()).sum();
+                repeated.add(
+                    ids.len()
+                        .saturating_mul(doc.len() + 1 + KEY_COST)
+                        .saturating_add(bytes),
+                )?;
                 let keys = ids.iter().map(|i| s(&format!("{doc}#{i}"))).collect();
                 Some(Chapter::new(
                     c.title.to_owned(),
@@ -508,25 +530,26 @@ fn plan(
             }
         }
         ch.set("toc_level", PyValue::Int(c.level as i64));
-        let subs: Vec<PyValue> = (k + 1..nxt.unwrap_or(coords.len()))
-            .map(|j| {
-                let twin = root[j];
-                // On the section's own block it opens the section; one out of order lands on
-                // its own block.
-                let key = if out_of_order.contains(&twin) {
-                    coords[j].key.as_deref()
-                } else if twin == k {
-                    None
-                } else {
-                    coords[twin].key.as_deref()
-                };
-                PyValue::Dict(vec![
-                    (s("title"), s(coords[j].title)),
-                    (s("key"), key.map_or(PyValue::None, s)),
-                    (s("level"), PyValue::Int(coords[j].level as i64)),
-                ])
-            })
-            .collect();
+        let mut subs: Vec<PyValue> = Vec::new();
+        for j in k + 1..nxt.unwrap_or(coords.len()) {
+            let twin = root[j];
+            // On the section's own block it opens the section; one out of order lands on
+            // its own block. Another entry's key is a copy kfxgen shares.
+            let from = if out_of_order.contains(&twin) {
+                Some(j)
+            } else {
+                Some(twin).filter(|&t| t != k)
+            };
+            let key = from.and_then(|f| coords[f].key.as_deref());
+            if from != Some(j) {
+                repeated.add(key.map_or(0, str::len))?;
+            }
+            subs.push(PyValue::Dict(vec![
+                (s("title"), s(coords[j].title)),
+                (s("key"), key.map_or(PyValue::None, s)),
+                (s("level"), PyValue::Int(coords[j].level as i64)),
+            ]));
+        }
         if !subs.is_empty() {
             ch.set("sub_entries", PyValue::List(subs));
         }
@@ -557,13 +580,13 @@ fn plan(
             chapters.push((ch, r));
         }
     }
-    Some(chapters)
+    Ok(Some(chapters))
 }
 
 /// The blocks moved into the chapters planned: the ranges are in order and do not overlap
 /// (module documentation), so one pass hands each block to its chapter; a block in no range
 /// (a page of the cover alone) is dropped, as kfxgen drops it.
-fn fill(items: Vec<SpineItem>, planned: Vec<(Chapter, Range<usize>)>) -> Vec<Chapter> {
+fn fill(items: Vec<SpineItem>, planned: Planned) -> Vec<Chapter> {
     let mut blocks = items
         .into_iter()
         .flat_map(|i| i.blocks)

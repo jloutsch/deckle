@@ -29,9 +29,10 @@
 //! from the end, and the list is built once.
 //!
 //! What this step copies is bounded by the chapters it is given (each title and place once,
-//! the page's own text and keys once), but for the lines a page's headings repeat, each a copy
-//! of an entry's title and key: those are counted first and refused past `MAX_CONTENT_FILE_BYTES`
-//! (DIVERGENCES, "Headings a contents page repeats").
+//! the page's own text and keys once), which are bounded in turn because assembly counts the
+//! keys it repeats (`chapters.rs` `Repeated`); but for the lines a page's headings repeat, each
+//! a copy of an entry's title and key: those are counted first and refused past
+//! `MAX_CONTENT_FILE_BYTES` (DIVERGENCES, "Headings a contents page repeats").
 
 use std::collections::{HashMap, HashSet};
 

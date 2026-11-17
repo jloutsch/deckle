@@ -744,6 +744,18 @@ The picture tokens and the initial (`src/convert/pictures.rs`, `initial.rs`, at 
   file: what the first pass charged does not count on the second. The second pass (kfxgen's,
   printing the contents listings) also reads the listings the first left out, so a file with a
   very large listing can be refused there when the first pass was not.
+- The budgets of all a book's files also count together in each pass, and in the footnote
+  scan: past 2,000,000 units (`deckle_limits::MAX_BOOK_TEXT_BUDGET`, 128,000,000 bytes) the
+  book is refused at the charge that passes it (`Error::TooLarge`, "converting this book copies
+  or reads more than 128000000 bytes of its text and styles"), where kfxgen, which shares the
+  strings the port copies, makes the book. Smallest input: 20 files, each a link to an id of
+  32,000 letters round 240 words in `<i>` (each word's run copies the target); 5 such files
+  convert. The nine Gutenberg books charge at most 5,409 units in a pass.
+- A pass that makes more than 500,000 blocks (`deckle_limits::MAX_BOOK_BLOCKS`) is refused after
+  the file that passes it (`Error::TooLarge`, "this book has more than 500000 paragraphs and
+  other blocks"); kfxgen makes the book, however long it takes. Smallest input: 8 files of
+  125,000 `<p>x</p>` (refused after the fifth, in 34 s, release build). The nine Gutenberg books
+  make at most 3,450 blocks.
 - An `<svg>`'s own ids go on each picture block it draws (`_emit_image_block`), twice a block;
   kfxgen copies them without a limit. The port charges the copies to the same budget before
   making them, so `<svg id="(1 MiB)">` with 200 `<image href="a"/>` stops the file
@@ -964,6 +976,33 @@ limit. Smallest inputs: a contents entry titled `"!" * 10_000_000 + "A"`, or a s
 titled "A" in the section of the entry before it (a place) linking to an id of 10,000,000
 characters, and a "Contents" page of a heading "Contents" and four headings "A", each a link: four copies, over 40,000,000
 bytes, are refused; with three headings the book converts.
+
+## Titles and keys chapters repeat
+
+Three more steps copy a string kfxgen gives several chapters or entries
+(`src/convert/assemble.rs`, `src/convert/chapters.rs`). Each counts the bytes it is about to
+copy and, past 33,554,432 bytes (`MAX_CONTENT_FILE_BYTES`) in the book, stops the conversion
+(`Error::TooLarge`, "the contents repeat more than 33554432 bytes of titles and keys") where
+kfxgen makes the book. Each step counts on its own, so the three, with the contents page's
+count above, hold at most four times that.
+
+- **Contents entries on one block.** A contents entry landing on the block of the entry before
+  it gets that entry's key in the chapter's `sub_entries`; kfxgen's entries share the one
+  string, the port copies it for each. Smallest input: one page, an entry naming it, an entry
+  naming an id of 100,000 letters no block has (it snaps to the page's last block), and 336
+  entries naming other missing ids, each snapping to the same block; with 335 the book
+  converts.
+- **Pages that keep a dropped contents listing.** Each contents entry that makes a page of no
+  blocks keeping a listing gets the listing's keys (`_listing_keys`, `"<file>#<id>"` for each
+  id). kfxgen builds these too, so the growth is kfxgen's as well (its memory grows the same
+  way; the port's count stops it). Each key counts its bytes and 48 more, so many short keys
+  count too. Smallest input: a page with a `<div class="toc">` of 5,000 `<a id>` and 222
+  entries titled "Copyright", naming its first id and the page by turns (111 such pages); with
+  220 entries the book converts.
+- **A chapter cut where the writing mode changes.** Each part after the first gets the
+  chapter's title (`_split_by_writing_mode`); kfxgen's parts share it. Smallest input: 36
+  files alternately horizontal and vertical and two entries, the first titled with 1,000,000
+  letters (34 copies); 35 files convert.
 
 ## Warnings
 

@@ -14,7 +14,10 @@
 //! [`css::Error::Cascade`] after bounded work; kfxgen does that work for every element.
 
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::sync::LazyLock;
+
+use deckle_limits::{MAX_BOOK_TEXT_BUDGET, MAX_CASCADE_DECLS};
 
 use regex::Regex;
 
@@ -33,12 +36,22 @@ use crate::pyvalue::PyValue;
 /// bytes, as the cascade charges a declaration's text. Made once for the file and handed to
 /// every [`Resolver`] built for it (kfxgen builds one per pass and one in `_footnote_keys`), so
 /// building another does not add to the allowance. Past the limit, [`css::Error::Cascade`], as
-/// a cascade past it gives: the file is refused.
-pub struct TextBudget(RefCell<Units>);
+/// a cascade past it gives: the file is refused. The budgets of one pass over a book
+/// ([`TextBudget::for_book`]) also count together, against
+/// [`MAX_BOOK_TEXT_BUDGET`](deckle_limits::MAX_BOOK_TEXT_BUDGET): past that the same error
+/// stops the book, before the copy is made.
+pub struct TextBudget {
+    own: RefCell<Units>,
+    /// The units all the book's budgets were charged, shared by them.
+    book: Option<Rc<Cell<usize>>>,
+}
 
 impl Default for TextBudget {
     fn default() -> Self {
-        TextBudget(RefCell::new(Units(0)))
+        TextBudget {
+            own: RefCell::new(Units(0)),
+            book: None,
+        }
     }
 }
 
@@ -47,15 +60,38 @@ impl TextBudget {
         TextBudget::default()
     }
 
+    /// A budget for each of `files` files, counting together as one book's.
+    pub fn for_book(files: usize) -> Vec<TextBudget> {
+        let book = Rc::new(Cell::new(0));
+        (0..files)
+            .map(|_| TextBudget {
+                book: Some(Rc::clone(&book)),
+                ..TextBudget::default()
+            })
+            .collect()
+    }
+
     /// The units charged so far.
     pub fn charged(&self) -> usize {
-        self.0.borrow().0
+        self.own.borrow().0
+    }
+
+    /// The units all the budgets of its book were charged so far; 0 for a budget of no book.
+    pub fn book_charged(&self) -> usize {
+        self.book.as_ref().map_or(0, |b| b.get())
     }
 
     /// Charges `bytes` of book text about to be copied or read through. A value under
     /// [`TEXT_UNIT`] bytes costs nothing, so the free work of each read is a constant.
     pub(crate) fn charge(&self, bytes: usize) -> Result<(), css::Error> {
-        self.0.borrow_mut().charge(bytes / TEXT_UNIT)
+        let units = bytes / TEXT_UNIT;
+        if let Some(book) = &self.book {
+            book.set(book.get().saturating_add(units));
+            if book.get() > MAX_BOOK_TEXT_BUDGET {
+                return Err(css::Error::Cascade(MAX_CASCADE_DECLS));
+            }
+        }
+        self.own.borrow_mut().charge(units)
     }
 }
 

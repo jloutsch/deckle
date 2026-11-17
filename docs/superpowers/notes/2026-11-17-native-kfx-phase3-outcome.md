@@ -103,7 +103,9 @@ the tests.
 | Limit | Value | Smallest refused input |
 |---|---|---|
 | A file's text budget: the text and styles the converter copies or reads in one spine file | 500,000 units of 64 bytes (32,000,000 bytes), new for each file on each pass | 2,000 `<col span="1000">` in one table; `<table>` of 12,500 rows of ten one-word cells; 32 bordered `<div>`s nested round a paragraph of 999,806 characters |
-| The contents page's repeated titles and keys | 33,554,432 bytes (`MAX_CONTENT_FILE_BYTES`) | an entry titled `"!" * 10_000_000 + "A"` and a "Contents" page of four heading links "A" |
+| The book's text budget: the files' budgets of one pass (and of the footnote scan) together | 2,000,000 units (128,000,000 bytes, `MAX_BOOK_TEXT_BUDGET`); the corpus charges at most 5,409 (pg76) | 20 files each a link to an id of 32,000 letters round 240 words in `<i>` (5 convert); refused at a 112 MB peak, and 100 such files at 139 MB (2.7 GB before) |
+| Blocks a pass makes | 500,000 (`MAX_BOOK_BLOCKS`), checked after each file; the corpus makes at most 3,450 (pg98) | 8 files of 125,000 `<p>x</p>`: refused after the fifth, 34 s and 1.7 GB peak (55 s and 4.05 GB converted before) |
+| Repeated titles and keys: the contents page's headings; in assembly, an entry's key copied onto the entries on its block and a dropped listing's keys onto each page that keeps it; a chapter's title copied onto each part the writing-mode split makes | 33,554,432 bytes (`MAX_CONTENT_FILE_BYTES`) each, the three steps counting apart | an entry titled `"!" * 10_000_000 + "A"` and a "Contents" page of four heading links "A"; 336 entries snapping onto a block named by an id of 100,000 letters; 111 pages keeping a listing of 5,000 ids; 36 files alternately vertical under a title of 1,000,000 letters |
 | One picture | 100 megapixels (`MAX_IMAGE_PIXELS`) | a PNG whose header says 10,001 × 10,000 |
 | One picture's decode memory | `image`'s 512 MiB, less 8 bytes a pixel for a JPEG (about 48.8 megapixels for RGB) | a baseline RGB JPEG of 7,000 × 7,000 (worked out, not run) |
 | A book's pictures together | 10 gigapixels (`MAX_BOOK_IMAGE_PIXELS`) | 101 pictures whose headers say 10,000 × 10,000 |
@@ -140,6 +142,9 @@ feature or the limit; kfxgen (through Calibre) makes the book. Details are in
 | More than 256 MiB of fonts in a book | six TTFs of 50 MiB | Bounds memory from a small EPUB of deflated fonts. Fonts. |
 | Note and link keys under a very long path | a file at a path of 2,000 characters with 40,000 note markers linking to notes that link back (100 characters converts) | Each key holds the path; the copies are charged to the file's budget. Note and link keys. |
 | More than 32 MB of titles and keys repeated on a contents page | an entry titled `"!" * 10_000_000 + "A"` and four heading links "A" on a "Contents" page | kfxgen shares the strings; the port copies them, counted first. Headings a contents page repeats. |
+| More than 32 MB of keys repeated by assembly, or of titles by the writing-mode split | 336 entries snapping onto the block of an entry whose id has 100,000 letters; 111 pages keeping a listing of 5,000 ids; 36 alternately vertical files under a title of 1,000,000 letters | kfxgen shares the key and the title (it builds the listing keys too); the port copies them, counted first. Titles and keys chapters repeat. |
+| More than 128,000,000 bytes copied or read by a pass over all the book's files | 20 files each a link to an id of 32,000 letters round 240 italic words | Each file is under its own budget; the copies add up over the files. The block walk. |
+| More than 500,000 blocks in a pass | 8 files of 125,000 `<p>x</p>` | Bounds memory (about 4.7 KB a block) and time (about 55 µs a block). The block walk. |
 | Long text in a run's flags over many runs | a 1 MiB link target round 2,000 words | Flags are copied into each element and segment, charged. The inline walk. |
 | Tate-chu-yoko nested so their text is read over and over | nested tate-chu-yoko (no measured smallest) | Each is read once more for every one round it, charged. The inline walk. |
 | Many pictures drawn by one `<svg>` with a long id | `<svg id="(1 MiB)">` with 200 `<image href="a"/>` | The id goes on each picture block twice, charged. The block walk. |
@@ -155,12 +160,18 @@ From this phase's ledger (`GATE` lines):
 
 1. **Resolver cost.** `Resolver::resolve` costs about 33 µs per element in a release build (100,000
    visible `<a id>` elements: 3.34 s, linear); a file at the 500,000-element limit would take
-   about 17 s. Each paragraph or cell is fully resolved 4 to 5 times from different memos (81% of
-   a large table's time). Candidate fix: a per-node cache of resolve's values (estimated 3 to 4
-   times faster). Open.
+   about 17 s. At book scale: 4 files of 240,000 `<a id>` that show nothing, then a page of
+   text (960,000 elements), took 33.1 s for one pass (799 MB peak; 40 files of 24,000 the same,
+   review, release); the book's 2 million elements and attributes would take 35 to 70 s a pass,
+   twice that when the second pass runs. The time of a very large book is not bounded by any
+   limit: phase 4 needs a way to cancel a conversion. Each paragraph or cell is fully resolved
+   4 to 5 times from different memos (81% of a large table's time). Candidate fix: a per-node
+   cache of resolve's values (estimated 3 to 4 times faster). Open.
 2. **`Resolver::charge` rounds each charge down to whole 64-byte units,** so many small charges
-   are free and the book's node limit is what bounds them (761 MB measured for note keys). Open;
-   decide with the memory limits below.
+   are free: charges of 64 bytes or more are bounded by the file's budget and, since the final
+   fix pass, by the book's (`MAX_BOOK_TEXT_BUDGET`, per pass); charges under 64 bytes only by
+   the book's node limit (761 MB measured for note keys). Open; decide with the memory limits
+   below.
 3. **The XML parser's stack.** `roxmltree` recurses once per element level; in a release build
    253 levels took 160 to 176 KiB of stack (a 2 MiB thread has about 11.6 times that); a debug
    build overflows a 2 MiB thread at 135 to 253 levels. Open: which thread the app runs
@@ -186,8 +197,10 @@ From this phase's ledger (`GATE` lines):
     has the note. Open.
 11. **The model is built by copying every chapter** (`Chapter::to_py` while the chapters are
     alive): 8 files of 20,000 paragraphs peak at 854 MB through `convert` against 522 MB for the
-    chapters alone (review, ran). A consuming conversion would move the values. Joins the phase
-    2 item "the limits add up". Open.
+    chapters alone (review, ran). A consuming conversion would move the values, about halving
+    the peak of a book near `MAX_BOOK_BLOCKS` (about 2.4 GB and 27 s a pass at that limit,
+    extrapolated from 4.7 KB and 55 µs a block). Joins the phase 2 item "the limits add up".
+    Open.
 12. **Warnings have no size cap.** A contents entry's title is copied, escaped, into the
     "dropped: not in spine" warning: a 20 MB NCX gave 70 MB of warnings (review, ran), up to
     about 224 MB at `CalibreOpf`'s 64 MiB (worked out). Cutting the title in the warning would
@@ -203,7 +216,12 @@ From this phase's ledger (`GATE` lines):
     the file's index); and, in phase 2's `read_package`, the item's href copied once for each
     spine entry naming it (fix round 1 drops the unread `Package::spine` field: 5,000 entries
     of a 20,000-character name allocated 102 MB in `read_package` and now take under 20 MB
-    through `oeb_view`).
+    through `oeb_view`); and, in the final fix pass, what the final review found bounded per
+    item but multiplied across the book: the files' text budgets added up (now
+    `MAX_BOOK_TEXT_BUDGET`), keys and titles copied per entry, page or part (now counted against
+    `MAX_CONTENT_FILE_BYTES`), and the book's blocks (now `MAX_BOOK_BLOCKS`), each refused
+    before the memory is taken (the block limit after the file that passes it); `walk_body`'s
+    unreachable SVG-page branch deleted.
 
 The phase 2 note's seven items ("Before phase 4 calls `read_book`") still stand; phase 3 changed
 none of them and did not re-measure them:
@@ -292,8 +310,6 @@ From the ledger, none of them a difference a fixture or the corpus shows:
 
 ## Code no test reaches (deletion candidates)
 
-- `walk_body`'s SVG-page branch (`blocks/walk.rs`): Calibre drops an SVG spine page, so no body
-  is an `<svg>` (Task 21).
 - `SpineItem::from_py`, `Block::from_py`, `Chapter::from_py`: only tests call them (they feed
   kfxgen's recorded values to assembly and the title-page step).
 - `drop_keys`' box arms and `prepend_keys`' table arm (Task 21), `count_text_blocks`' box-in-cell

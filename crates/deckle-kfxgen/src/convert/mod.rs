@@ -101,10 +101,11 @@ pub fn convert(path: &Path, opts: &ConvertOptions) -> Result<Converted, Error> {
     let cover_href = pictures.cover_href.as_deref();
     let chapters = chapters(&book, &opf, opts, cover_href, &title, &mut warnings)?;
     warnings.extend(media_warning(&book));
-    let chapters = split_by_writing_mode(chapters);
+    let chapters = split_by_writing_mode(chapters)?;
     let font_table = font_table(&book, path, opts)?;
-    let budgets: Vec<TextBudget> = book.files.iter().map(|_| TextBudget::new()).collect();
-    let footnotes = footnote_keys(&book, &budgets)?;
+    let budgets = TextBudget::for_book(book.files.len());
+    let footnotes =
+        footnote_keys(&book, &budgets).map_err(|e| chapters::scan_refusal(e, &book, &budgets))?;
 
     let bytes = |b: Vec<u8>| PyValue::Bytes(b.into());
     let mut arg = |key: &str| {
@@ -189,7 +190,7 @@ fn chapters(
         let tables: Vec<(usize, BlockId)> = (items.iter().enumerate())
             .flat_map(|(n, i)| i.tables_seen.iter().map(move |&b| (n, b)))
             .collect();
-        let mut chapters = assemble(items, &entries, cover_href, &mut said);
+        let mut chapters = assemble(items, &entries, cover_href, &mut said)?;
         if listing_without_contents(&chapters, keep_nav_listings) {
             keep_nav_listings = true;
             continue;

@@ -148,6 +148,16 @@ pub const MAX_CASCADE_DECLS: usize = 500_000;
 /// `NOVEL_CSS`, cascades only) use 135,800.
 pub const MAX_BOOK_CASCADE_DECLS: usize = 3_000_000;
 
+/// EPUB to KFX: the units of [`MAX_CASCADE_DECLS`] the converter charges all a book's files
+/// together in one pass over them, for the text and style values it copies or reads (a unit for
+/// each 64 bytes): each file has [`MAX_CASCADE_DECLS`] of its own, and what a pass copies stays
+/// held until the book's chapters are made, so without this a book of many files each just
+/// under its own limit holds the files times 32 MB (100 files of 34.6 KB copying a long link
+/// target into each word: 2.7 GB peak). At the limit a pass has copied or read about 128 MB;
+/// that book is refused at a 139 MB peak (release build). The nine Gutenberg books charge at
+/// most 5,409 units in a pass (pg76).
+pub const MAX_BOOK_TEXT_BUDGET: usize = 2_000_000;
+
 /// EPUB to KFX: the nodes of one book file's tree, refused while the file is parsed: read as
 /// XML (a document, the OPF, the nav, the NCX, an XML item), its elements, runs of text,
 /// comments and processing instructions (`roxmltree`'s `nodes_limit`); read as HTML, its
@@ -160,6 +170,14 @@ pub const MAX_DOM_NODES: usize = 500_000;
 /// nine Gutenberg books hold at most 7,718 (pg76). A book of 2 million paragraphs, under the
 /// limit, peaked at 1.11 GB styled (2.2 s, release build).
 pub const MAX_BOOK_DOM_NODES: usize = 2_000_000;
+
+/// EPUB to KFX: the blocks (paragraphs, headings, pictures, tables and the like) the converter
+/// makes of all a book's files in one pass, refused after the file that passes it. Each block
+/// costs about 4.7 KB of peak memory and 55 µs (release build): 1 million paragraphs took
+/// 4 GB and 55 s before this limit; 8 files of 125,000 are refused after the fifth file, at a
+/// 1.7 GB peak in 34 s (release build). The nine Gutenberg books make at most 3,450 blocks
+/// (pg98).
+pub const MAX_BOOK_BLOCKS: usize = 500_000;
 
 /// EPUB to KFX: one book file read as a document or as XML (a spine document, the nav, the
 /// NCX, an XML manifest item), refused before it is parsed. The nine Gutenberg books' largest

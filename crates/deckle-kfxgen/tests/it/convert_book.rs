@@ -232,11 +232,11 @@ fn convert_then_generate_matches_expected_kfx() {
 const CONTAINER: &[u8] = br#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
 
 /// An EPUB 2 book at `path` of `a.xhtml` (a heading, a paragraph, an SVG drawing a word, an
-/// audio clip, a table), a stylesheet listed in the spine, and `b.xhtml`, whose one paragraph
-/// kfxgen raises on (`text-align: 5px`); its NCX names `a.xhtml`, an id `a.xhtml` lacks, and
-/// `b.xhtml`; `a.xhtml` has a read-aloud narration.
+/// audio clip, a table, a picture `x.png` that holds text), a stylesheet listed in the spine,
+/// and `b.xhtml`, whose one paragraph kfxgen raises on (`text-align: 5px`); its NCX names
+/// `a.xhtml`, an id `a.xhtml` lacks, and `b.xhtml`; `a.xhtml` has a read-aloud narration.
 fn book_kfxgen_warns_about(path: &Path) {
-    let opf = r#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">x</dc:identifier><dc:title>T</dc:title><dc:language>en</dc:language></metadata><manifest><item id="a" href="a.xhtml" media-type="application/xhtml+xml" media-overlay="smil"/><item id="b" href="b.xhtml" media-type="application/xhtml+xml"/><item id="css" href="s.css" media-type="text/css"/><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest><spine toc="ncx"><itemref idref="a"/><itemref idref="css"/><itemref idref="b"/></spine></package>"#;
+    let opf = r#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">x</dc:identifier><dc:title>T</dc:title><dc:language>en</dc:language></metadata><manifest><item id="a" href="a.xhtml" media-type="application/xhtml+xml" media-overlay="smil"/><item id="b" href="b.xhtml" media-type="application/xhtml+xml"/><item id="css" href="s.css" media-type="text/css"/><item id="x" href="x.png" media-type="image/png"/><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest><spine toc="ncx"><itemref idref="a"/><itemref idref="css"/><itemref idref="b"/></spine></package>"#;
     let point = |n: usize, label: &str, src: &str| {
         format!(
             r#"<navPoint id="p{n}" playOrder="{n}"><navLabel><text>{label}</text></navLabel><content src="{src}"/></navPoint>"#
@@ -248,7 +248,7 @@ fn book_kfxgen_warns_about(path: &Path) {
         point(2, "Gone", "a.xhtml#nowhere"),
         point(3, "Two", "b.xhtml"),
     );
-    let a = r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title></head><body><h1>One</h1><p>Text.</p><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><text x="0" y="5">Hi</text></svg><audio src="x.mp3">Fallback.</audio><table><tr><td>a</td><td>b</td></tr></table></body></html>"#;
+    let a = r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title></head><body><h1>One</h1><p>Text.</p><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><text x="0" y="5">Hi</text></svg><audio src="x.mp3">Fallback.</audio><table><tr><td>a</td><td>b</td></tr></table><p><img src="x.png" alt=""/></p></body></html>"#;
     let b = r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title><link rel="stylesheet" type="text/css" href="s.css"/></head><body><p class="a">x</p></body></html>"#;
     let css = ".a { text-align: 5px }";
     let entries: Vec<(&str, &[u8], u64)> = vec![
@@ -259,12 +259,13 @@ fn book_kfxgen_warns_about(path: &Path) {
         ("a.xhtml", a.as_bytes(), a.len() as u64),
         ("b.xhtml", b.as_bytes(), b.len() as u64),
         ("s.css", css.as_bytes(), css.len() as u64),
+        ("x.png", b"text", 4),
     ];
     std::fs::write(path, fixtures::stored_zip(&entries)).unwrap();
 }
 
 /// What kfxgen logs as a warning and Calibre's spine reader too, in the order they log it:
-/// a spine item that is no document, a file kfxgen raises on, words in an SVG picture, a
+/// a spine item that is no document, a picture kfxgen cannot read, a file kfxgen raises on, words in an SVG picture, a
 /// contents entry naming an id no block has and one naming a file that is left out, a table
 /// written as rows, and the narration and clip left out. The texts are kfxgen's (a Python
 /// `repr` written as Rust's `{:?}`), but for Calibre's, whose words are the port's.
@@ -280,6 +281,8 @@ fn convert_says_what_kfxgen_warns_about() {
     let got = convert(&path, &opts).unwrap();
     let want = [
         r#"  Spine item "s.css" is not a document: left out"#,
+        "  Skipping image \"x.png\": unsupported format (magic bytes 74657874); only JPEG and \
+         PNG are emitted as KFX resources",
         "  Spine item 2 parse failed (b.xhtml): AttributeError: compute_block_style: a \
          text-align Calibre reads as a number has no strip()",
         "  Words drawn in SVG pictures in 1 file are written after the picture, not over it \
@@ -546,4 +549,190 @@ fn the_second_pass_numbers_on_and_warns_once() {
         .filter(|w| w.contains("TOC anchor #nowhere"))
         .count();
     assert_eq!(snaps, 1, "{:?}", got.warnings);
+}
+
+/// A book whose one file has no name: the OPF at an empty path (`full-path=""`) lists itself
+/// as its document (`href=""`). kfxgen moves the keys of the ids ending a file to the next
+/// block only for a file with an href (`if end_ids and href`); with none, no key is made of
+/// the ids `f0` and `tail` ending it.
+#[test]
+fn ids_ending_a_file_of_no_name_make_no_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("book.epub");
+    let container = br#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
+    let opf = r#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">x</dc:identifier><dc:title>T</dc:title><dc:language>en</dc:language></metadata><manifest><item id="f0" href="" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="f0" id="tail"/></spine></package>"#;
+    let entries: Vec<(&str, &[u8], u64)> = vec![
+        ("mimetype", b"application/epub+zip", 20),
+        ("META-INF/container.xml", container, container.len() as u64),
+        ("", opf.as_bytes(), opf.len() as u64),
+    ];
+    std::fs::write(&path, fixtures::stored_zip(&entries)).unwrap();
+    let got = convert(&path, &ConvertOptions::default()).unwrap();
+    let blocks = chapters_of(&got)[0]
+        .get("blocks")
+        .and_then(PyValue::as_list)
+        .unwrap();
+    let last = blocks.last().unwrap();
+    assert_eq!(last.get("text").and_then(PyValue::as_str), Some("en"));
+    assert_eq!(last.get("anchor_keys"), Some(&PyValue::List(Vec::new())));
+}
+
+/// An EPUB 2 book at `path` of the pages `files` and an NCX of `points`, each given owned.
+fn book_of(path: &Path, files: &[(String, String)], points: &[(String, String)]) {
+    let files: Vec<(&str, &str)> = (files.iter())
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let points: Vec<(&str, &str)> = (points.iter())
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    book_of_pages(path, &files, &points);
+}
+
+/// The message of the refusal `convert` gives the book at `path`; it panics on a book that
+/// converts.
+fn refusal(path: &Path) -> String {
+    match convert(path, &ConvertOptions::default()) {
+        Ok(_) => panic!("{} converted", path.display()),
+        Err(e) => e.to_string(),
+    }
+}
+
+/// A book of `files` pages, each a link to an id of 32,000 letters round 240 words in italics:
+/// each word's run copies the link's target, charged to its file's text budget, every file
+/// well under its own.
+fn book_of_long_links(path: &Path, files: usize) {
+    let target = format!("c.xhtml#{}", "A".repeat(32_000));
+    let body = format!(
+        r#"<p><a href="{target}">{}</a></p>"#,
+        "<i>w</i> ".repeat(240)
+    );
+    let files: Vec<(String, String)> = (0..files)
+        .map(|i| (format!("f{i}.xhtml"), body.clone()))
+        .collect();
+    book_of(path, &files, &[("One".into(), "f0.xhtml".into())]);
+}
+
+/// The text budgets of a pass count together (`MAX_BOOK_TEXT_BUDGET`): a book whose files each
+/// copy a long link target into every word is refused once they have copied 128 MB together,
+/// before every file has made its copies; a book of fewer such files converts.
+#[test]
+fn files_that_together_copy_too_much_text_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("few.epub");
+    book_of_long_links(&path, 5);
+    convert(&path, &ConvertOptions::default()).unwrap();
+    let path = dir.path().join("many.epub");
+    book_of_long_links(&path, 20);
+    assert_eq!(
+        refusal(&path),
+        "converting this book copies or reads more than 128000000 bytes of its text and styles"
+    );
+}
+
+/// One page and an NCX of an entry naming it, an entry `R` naming an id of `len` letters no
+/// block has (it snaps to the page's last block), and `twins` entries each naming another
+/// missing id, which snaps to the same block: each is `R`'s twin, and its contents entry a
+/// copy of `R`'s key.
+fn book_of_twins(path: &Path, len: usize, twins: usize) {
+    let files = [("a.xhtml".to_owned(), "<h1>H</h1><p>one</p>".to_owned())];
+    let mut points = vec![
+        ("Head".to_owned(), "a.xhtml".to_owned()),
+        ("R".to_owned(), format!("a.xhtml#{}", "z".repeat(len))),
+    ];
+    points.extend((0..twins).map(|n| ("E".to_owned(), format!("a.xhtml#q{n}"))));
+    book_of(path, &files, &points);
+}
+
+/// Contents entries on one block copy the first one's key, which kfxgen shares: 335 copies of
+/// a key of 100,008 bytes are under 33,554,432 bytes and convert, 336 are refused.
+#[test]
+fn entries_on_one_block_repeat_its_key_up_to_a_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("under.epub");
+    book_of_twins(&path, 100_000, 335);
+    convert(&path, &ConvertOptions::default()).unwrap();
+    let path = dir.path().join("over.epub");
+    book_of_twins(&path, 100_000, 336);
+    assert_eq!(
+        refusal(&path),
+        "the contents repeat more than 33554432 bytes of titles and keys"
+    );
+}
+
+/// `files` pages, alternately horizontal and vertical, and an NCX naming the first, titled with
+/// `title` letters, and the last: the first chapter spans the others and is cut at each change
+/// of writing mode, each part after the first a copy of its title.
+fn book_of_turns(path: &Path, title: usize, files: usize) {
+    let files: Vec<(String, String)> = (0..files)
+        .map(|i| {
+            let body = if i % 2 == 1 {
+                r#"<body style="writing-mode: vertical-rl"><p>Down.</p></body>"#
+            } else {
+                "<p>Across.</p>"
+            };
+            (format!("f{i}.xhtml"), body.to_owned())
+        })
+        .collect();
+    let last = files.last().unwrap().0.clone();
+    let points = [
+        ("A".repeat(title), "f0.xhtml".to_owned()),
+        ("End".to_owned(), last),
+    ];
+    book_of(path, &files, &points);
+}
+
+/// A chapter cut at every change of writing mode copies its title into each part, which
+/// kfxgen's parts share: 33 copies of a title of 1,000,000 bytes convert, 34 are refused.
+#[test]
+fn a_chapter_cut_many_times_repeats_its_title_up_to_a_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("under.epub");
+    book_of_turns(&path, 1_000_000, 35);
+    convert(&path, &ConvertOptions::default()).unwrap();
+    let path = dir.path().join("over.epub");
+    book_of_turns(&path, 1_000_000, 36);
+    assert_eq!(
+        refusal(&path),
+        "the contents repeat more than 33554432 bytes of titles and keys"
+    );
+}
+
+/// A page with a contents listing of 5,000 ids and `entries` contents entries titled
+/// "Copyright" (a page kfxgen always starts), naming the listing's first id and the page by
+/// turns: each entry naming the page makes a page of no blocks that keeps the listing's keys.
+fn book_of_kept_listings(path: &Path, entries: usize) {
+    let ids: String = (0..5_000).map(|n| format!(r#"<a id="i{n}"/>"#)).collect();
+    let files = [(
+        "a.xhtml".to_owned(),
+        format!(r#"<p>Text</p><div class="toc">{ids}</div>"#),
+    )];
+    let points: Vec<(String, String)> = (0..entries)
+        .map(|n| {
+            let src = if n % 2 == 0 { "a.xhtml#i0" } else { "a.xhtml" };
+            ("Copyright".to_owned(), src.to_owned())
+        })
+        .collect();
+    book_of(path, &files, &points);
+}
+
+/// Each page of no blocks that keeps a dropped listing makes its keys anew (kfxgen too); they
+/// are counted, each key its bytes and 48 more, and refused past 33,554,432 bytes. A page here
+/// counts 303,890 bytes (5,000 keys of `a.xhtml#`, 56 bytes each, and the ids' 23,890): 220
+/// entries make 110 such pages and convert, 222 make 111 and are refused.
+#[test]
+fn pages_keeping_a_listing_repeat_its_keys_up_to_a_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("under.epub");
+    book_of_kept_listings(&path, 220);
+    let got = convert(&path, &ConvertOptions::default()).unwrap();
+    let kept = (chapters_of(&got).iter())
+        .filter(|c| c.get("_listing_keys").is_some())
+        .count();
+    assert!(kept > 100, "{kept} pages keep the listing");
+    let path = dir.path().join("over.epub");
+    book_of_kept_listings(&path, 222);
+    assert_eq!(
+        refusal(&path),
+        "the contents repeat more than 33554432 bytes of titles and keys"
+    );
 }

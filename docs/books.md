@@ -73,8 +73,9 @@ styles.
 
 ## Size limits
 
-A file that would make Deckle use more memory than these is refused, with an error that names
-the limit, instead of slowing the computer or crashing. Real books are far inside them.
+A file past one of these limits is refused, with an error that names the limit, before it
+takes more memory than the limit allows. Real books are far inside them. How long EPUB to KFX
+takes is not limited yet: a book built to come near its limits can take a minute or more.
 
 | What | Limit |
 |---|---|
@@ -86,10 +87,11 @@ the limit, instead of slowing the computer or crashing. Real books are far insid
 | EPUB to KFX: attributes in one tag, read as XML | 256 |
 | EPUB to KFX: elements and runs of text in one book file (read as HTML, attributes count too) | 500,000 |
 | EPUB to KFX: elements and attributes in all of a book's files together (every file is held until the book is styled; about 1.1 GB at the limit) | 2 million per book |
-| EPUB to KFX: text and styles copied or read while converting one book file (a table of about 125,000 one-word cells or 166,000 cells of any size, a paragraph of about a million characters inside 32 nested boxes, many note links in a file with a very long name) | 32,000,000 bytes per file |
+| EPUB to KFX: text and styles copied or read while converting one book file (a table of about 125,000 one-word cells or 166,000 cells of any size, a paragraph of about a million characters inside 32 nested boxes, many note links in a file with a very long name), and in all of a book's files together | 32,000,000 bytes per file, 128,000,000 per book |
+| EPUB to KFX: paragraphs and other blocks in all of a book's files (about 2.4 GB and 27 seconds at the limit) | 500,000 per book |
 | EPUB to KFX: a picture (a JPEG needs more memory to decode: about 48.8 megapixels, 59.7 if grey), and all of a book's pictures together | 100 megapixels each, 10 gigapixels per book |
 | EPUB to KFX: an embedded font (a larger one is left out of the book) and all of a book's fonts together | 50 MiB each, 256 MiB per book |
-| EPUB to KFX: titles and links a rebuilt contents page repeats beside its headings | 32 MB |
+| EPUB to KFX: titles and links copied again: by a rebuilt contents page beside its headings, for contents entries on one spot, for pages that keep a contents listing, for a chapter cut where the writing mode changes | 32 MB each |
 | EPUB to KFX: contents entries, and boxes (bordered or filled blocks), nested inside one another | 32 levels |
 | EPUB to KFX: a numbered list's numbers | below 2^63 (9,223,372,036,854,775,808) |
 | CSS rules in one book file (a rule for each selector of a list), and classes Calibre's flattening gives one book file | 50,000 |

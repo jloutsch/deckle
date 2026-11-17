@@ -7,13 +7,21 @@
 //! for the pass (the same one the pass's note and link scans charge), so a file the first pass
 //! fits is not refused by the second. The keys this loop copies (an empty file's ids, a file's
 //! trailing ids) are charged to it too, in whole 64-byte units, so a key under 64 bytes is
-//! free and the book's node limit bounds how many there are. So the work and memory of a pass
-//! are bounded by the budgets times the files and by the node limit; the second pass, which
-//! kfxgen runs after dropping the first's chapters, at most doubles the work.
+//! free and the book's node limit bounds how many there are. The budgets of a pass also count
+//! together, against [`MAX_BOOK_TEXT_BUDGET`], and the blocks of a pass against
+//! [`MAX_BOOK_BLOCKS`]: so the work and memory of a pass are bounded by those two limits and
+//! the node limit, not by the files; the second pass, which kfxgen runs after dropping the
+//! first's chapters, at most doubles the work.
+//!
+//! Where kfxgen gives several chapters or contents entries one string (a title, a key), the
+//! port copies it; those copies are counted ([`Repeated`]) and refused past
+//! [`MAX_CONTENT_FILE_BYTES`].
 
 use std::collections::{HashMap, HashSet};
 
-use deckle_limits::MAX_CASCADE_DECLS;
+use deckle_limits::{
+    MAX_BOOK_BLOCKS, MAX_BOOK_TEXT_BUDGET, MAX_CASCADE_DECLS, MAX_CONTENT_FILE_BYTES,
+};
 
 use super::args::is_vertical;
 use super::blocks::{Block, BlockId, DictIndex, Field, dedupe, dict_set, s, shift_ids, strs};
@@ -249,7 +257,8 @@ pub(super) fn joined_text<'b>(blocks: impl IntoIterator<Item = &'b Block>) -> St
 /// warning ("Spine item N parse failed") in `warnings`, as is kfxgen's about words drawn in
 /// SVG pictures. What the port refuses stops the book: a feature refused by name
 /// ([`Error::Unsupported`]) and a limit passed ([`Error::TooLarge`], a file's budget named as
-/// such). [`Error::NoContent`] when no file shows anything. Block ids are unique in the book.
+/// such, as is the book's [`MAX_BOOK_TEXT_BUDGET`], and more than [`MAX_BOOK_BLOCKS`] blocks).
+/// [`Error::NoContent`] when no file shows anything. Block ids are unique in the book.
 pub fn spine_items(
     book: &Book,
     opf: &CalibreOpf,
@@ -258,7 +267,30 @@ pub fn spine_items(
     keep_nav_listings: bool,
     warnings: &mut Vec<String>,
 ) -> Result<(Vec<SpineItem>, Vec<TocEntry>), Error> {
-    let budgets: Vec<TextBudget> = book.files.iter().map(|_| TextBudget::new()).collect();
+    let max_blocks = MAX_BOOK_BLOCKS;
+    items_within(
+        book,
+        opf,
+        opts,
+        serials,
+        keep_nav_listings,
+        warnings,
+        max_blocks,
+    )
+}
+
+/// [`spine_items`], refusing a pass of more than `max_blocks` blocks (a test sets a small
+/// limit).
+fn items_within(
+    book: &Book,
+    opf: &CalibreOpf,
+    opts: &ConvertOptions,
+    serials: &mut Serials,
+    keep_nav_listings: bool,
+    warnings: &mut Vec<String>,
+    max_blocks: usize,
+) -> Result<(Vec<SpineItem>, Vec<TocEntry>), Error> {
+    let budgets = TextBudget::for_book(book.files.len());
     // Percentages are measured against a 480pt page in a vertical book, 384pt otherwise.
     let _page = page_width(if is_vertical(book) {
         VERTICAL_PT
@@ -266,10 +298,7 @@ pub fn spine_items(
         HORIZONTAL_PT
     });
     let native_tables = !opts.disable_native_tables;
-    let book_wide = |e: Error| match budget_spent(book, &budgets) {
-        Some(i) => budget_refusal(e, &book.files[i].href, &budgets[i]),
-        None => e,
-    };
+    let book_wide = |e: Error| scan_refusal(e, book, &budgets);
     // kfxgen passes None without native tables; the walk reads the targets only with them.
     let link_targets = if native_tables {
         book_link_targets(book, &budgets).map_err(book_wide)?
@@ -344,6 +373,11 @@ pub fn spine_items(
         );
         let first_id = next_id;
         next_id = shift_ids(&mut got.blocks, first_id);
+        if next_id > max_blocks {
+            return Err(Error::TooLarge {
+                what: format!("this book has more than {max_blocks} paragraphs and other blocks"),
+            });
+        }
         let text = joined_text(&got.blocks);
         // Each block carries its file's writing mode, so a chapter spanning files knows its
         // own; a file that sets none is horizontal.
@@ -444,16 +478,35 @@ pub(super) fn fragment(href: &str) -> &str {
     href.split_once('#').map_or("", |(_, f)| f)
 }
 
-/// The first of the book's files whose budget is spent, if any.
-fn budget_spent(book: &Book, budgets: &[TextBudget]) -> Option<usize> {
-    (0..book.files.len()).find(|&i| budgets[i].charged() > MAX_CASCADE_DECLS)
+/// [`budget_refusal`] for a scan of all the book's files, charged to `budgets`, one for each
+/// of [`Book::files`]: the file whose budget is spent is named; the book's total, when that is
+/// what is spent, names none.
+pub(super) fn scan_refusal(e: Error, book: &Book, budgets: &[TextBudget]) -> Error {
+    let spent = (0..book.files.len()).find(|&i| budgets[i].charged() > MAX_CASCADE_DECLS);
+    let i = spent.unwrap_or(0);
+    match budgets.get(i) {
+        Some(budget) => budget_refusal(e, &book.files[i].href, budget),
+        None => e,
+    }
 }
 
 /// A budget refusal named for what it is: the budget counts the text and styles the
 /// converter copies or reads in a file, not only its CSS, which the message the budget gives
-/// (`css::Error::Cascade`'s) would say. Any other error unchanged.
+/// (`css::Error::Cascade`'s) would say; the book's total, when that is what is spent, is named
+/// as the book's. Any other error unchanged.
 fn budget_refusal(e: Error, href: &str, budget: &TextBudget) -> Error {
     match e {
+        Error::Book(book::Error::TooLarge { .. })
+            if budget.book_charged() > MAX_BOOK_TEXT_BUDGET =>
+        {
+            Error::TooLarge {
+                what: format!(
+                    "converting this book copies or reads more than {} bytes of its text and \
+                     styles",
+                    MAX_BOOK_TEXT_BUDGET * TEXT_UNIT
+                ),
+            }
+        }
         Error::Book(book::Error::TooLarge { .. }) if budget.charged() > MAX_CASCADE_DECLS => {
             Error::TooLarge {
                 what: format!(
@@ -646,17 +699,19 @@ fn drop_from(v: &mut PyValue, keys: &HashSet<String>) {
 
 /// `_split_by_writing_mode`: each chapter cut where its blocks' writing mode changes, a block
 /// of no mode staying with the one before. The first part keeps the chapter's keys; the
-/// others are `{title, text, blocks}` left out of the contents with no title printed. A
-/// contents page kfxgen built (`toc_links`) is left whole.
-pub fn split_by_writing_mode(chapters: Vec<Chapter>) -> Vec<Chapter> {
+/// others are `{title, text, blocks}` left out of the contents with no title printed. The
+/// contents page the title-page step rebuilt has no blocks, so it is left whole (kfxgen also
+/// tests its `toc_links`). Each part after the first copies the chapter's title, which
+/// kfxgen's parts share: past [`MAX_CONTENT_FILE_BYTES`] of those copies, [`Error::TooLarge`].
+pub fn split_by_writing_mode(chapters: Vec<Chapter>) -> Result<Vec<Chapter>, Error> {
+    let mut repeated = Repeated::default();
     let mut out = Vec::with_capacity(chapters.len());
     for mut ch in chapters {
         let at = ch
             .fields
             .iter()
             .position(|(k, v)| *k == "blocks" && matches!(v, Field::Blocks(_)));
-        let cut = at.is_some() && !ch.get("toc_links").is_some_and(PyValue::is_truthy);
-        let Some(at) = at.filter(|_| cut) else {
+        let Some(at) = at else {
             out.push(ch);
             continue;
         };
@@ -689,6 +744,7 @@ pub fn split_by_writing_mode(chapters: Vec<Chapter>) -> Vec<Chapter> {
             out.push(ch);
         }
         for (_, part) in groups {
+            repeated.add(title.as_str().map_or(0, str::len))?;
             let text = joined_text(&part);
             out.push(Chapter {
                 fields: vec![
@@ -701,5 +757,105 @@ pub fn split_by_writing_mode(chapters: Vec<Chapter>) -> Vec<Chapter> {
             });
         }
     }
-    out
+    Ok(out)
+}
+
+/// The bytes of titles and keys the port copies where kfxgen shares one string among
+/// chapters or contents entries (DIVERGENCES, "Titles and keys chapters repeat"), counted
+/// before each copy is made.
+#[derive(Default)]
+pub(super) struct Repeated(u64);
+
+impl Repeated {
+    /// Counts `bytes` about to be copied: past [`MAX_CONTENT_FILE_BYTES`] in all,
+    /// [`Error::TooLarge`].
+    pub(super) fn add(&mut self, bytes: usize) -> Result<(), Error> {
+        self.0 = self.0.saturating_add(bytes as u64);
+        if self.0 > MAX_CONTENT_FILE_BYTES {
+            return Err(Error::TooLarge {
+                what: format!(
+                    "the contents repeat more than {MAX_CONTENT_FILE_BYTES} bytes of titles and \
+                     keys"
+                ),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use deckle_kfx::fixtures;
+
+    use super::*;
+
+    const CONTAINER: &[u8] = br#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
+
+    /// A book of three files of ten paragraphs each, read as `convert` reads it.
+    fn book_of_paragraphs(dir: &std::path::Path) -> Book {
+        let mut items = String::new();
+        let mut spine = String::new();
+        let mut pages = Vec::new();
+        for i in 0..3 {
+            items += &format!(
+                r#"<item id="f{i}" href="f{i}.xhtml" media-type="application/xhtml+xml"/>"#
+            );
+            spine += &format!(r#"<itemref idref="f{i}"/>"#);
+            let body = "<p>x</p>".repeat(10);
+            pages.push((
+                format!("f{i}.xhtml"),
+                format!(
+                    r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title></head><body>{body}</body></html>"#
+                ),
+            ));
+        }
+        let opf = format!(
+            r#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">x</dc:identifier><dc:title>T</dc:title><dc:language>en</dc:language></metadata><manifest>{items}</manifest><spine>{spine}</spine></package>"#
+        );
+        let mut entries: Vec<(&str, &[u8], u64)> = vec![
+            ("mimetype", b"application/epub+zip", 20),
+            ("META-INF/container.xml", CONTAINER, CONTAINER.len() as u64),
+            ("content.opf", opf.as_bytes(), opf.len() as u64),
+        ];
+        for (name, page) in &pages {
+            entries.push((name, page.as_bytes(), page.len() as u64));
+        }
+        let path = dir.join("book.epub");
+        std::fs::write(&path, fixtures::stored_zip(&entries)).unwrap();
+        book::read_book(&path).unwrap()
+    }
+
+    /// A pass of more blocks than the book's limit is refused after the file that passes it;
+    /// one of as many as the limit is not. (The limit is set small here; `spine_items` passes
+    /// `MAX_BOOK_BLOCKS`.)
+    #[test]
+    fn a_pass_of_too_many_blocks_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let book = book_of_paragraphs(dir.path());
+        let opf = CalibreOpf::new(&book).unwrap();
+        let opts = ConvertOptions::default();
+        let pass = |max_blocks: usize| {
+            let mut serials = Serials::default();
+            items_within(
+                &book,
+                &opf,
+                &opts,
+                &mut serials,
+                false,
+                &mut Vec::new(),
+                max_blocks,
+            )
+        };
+        let (items, _) = pass(30).unwrap();
+        assert_eq!(items.iter().map(|i| i.blocks.len()).sum::<usize>(), 30);
+        match pass(29) {
+            Err(Error::TooLarge { what }) => {
+                assert_eq!(
+                    what,
+                    "this book has more than 29 paragraphs and other blocks"
+                )
+            }
+            got => panic!("{got:?}"),
+        }
+    }
 }
