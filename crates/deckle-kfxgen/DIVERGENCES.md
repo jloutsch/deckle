@@ -855,7 +855,17 @@ decodes, scales and writes pictures with Qt through calibre; the port uses the `
   before it is decoded. calibre lets Qt allocate up to 1,024 MB for a picture
   (`set_image_allocation_limit`), so kfxgen scales one of up to about 268 megapixels at 4
   bytes a pixel and leaves out a larger one (worked out from the code, not run). Smallest
-  input: a PNG whose header says 10,001 × 10,000.
+  input: a PNG whose header says 10,001 × 10,000. A GIF counts the larger of its screen and
+  its first frame, which `image` decodes at the frame's own size: a GIF of a 1 × 1 screen
+  whose frame says 11,000 × 10,000 is refused too.
+- A JPEG over about 48.8 megapixels refuses the book (`Error::TooLarge`) before it is decoded.
+  zune-jpeg keeps 2-byte coefficient planes for up to 4 components outside `image`'s 512 MiB
+  allocation limit (a progressive JPEG, or a first scan naming fewer components than the
+  frame: a 200-byte progressive 10,000 × 10,000 file reached 900 MB), so 8 bytes a pixel are
+  taken off that limit for every JPEG. With 3 bytes a pixel of RGB output (a CMYK JPEG is
+  decoded to RGB too), 11 × pixels must stay within 536,870,912 bytes: 48,806,446 pixels at
+  most. A grey JPEG (1 byte a pixel out, 9 in all) may have 59,652,323. kfxgen converts these.
+  Smallest input: a baseline RGB JPEG of 7,000 × 7,000 (49 megapixels; worked out, not run).
 - The pictures a book decodes may state 10 gigapixels together
   (`deckle_limits::MAX_BOOK_IMAGE_PIXELS`), counted from each header before its decode, every
   decode counted (a CMYK JPEG twice). The picture that passes it refuses the book

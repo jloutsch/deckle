@@ -364,13 +364,19 @@ fn unreadable_pictures_are_left_out_with_a_warning() {
     empty_gif[6] = 0;
     let mut cmyk = b"\xff\xd8\xff\xc0\x00\x14\x08\x00\x10\x00\x10\x04".to_vec();
     cmyk.extend([0x11; 40]);
-    let files: [(&str, &[u8]); 8] = [
+    let mut no_frame = gif_with_frame(4, 4, 4, 4);
+    no_frame.truncate(13 + 6 + 8);
+    no_frame.push(0x3B);
+    let cut_frame = gif_with_frame(4, 4, 4, 4)[..13 + 6 + 8 + 7].to_vec();
+    let files: [(&str, &[u8]); 10] = [
         ("cut.png", &png[..60]),
         ("cut.jpg", &jpeg[..jpeg.len() / 3]),
         ("garbage.jpg", &garbage_jpeg),
         ("bad.gif", &bad_gif),
         ("empty.gif", &empty_gif),
         ("cmyk.jpg", &cmyk),
+        ("no-frame.gif", &no_frame),
+        ("cut-frame.gif", &cut_frame),
         ("cover.png", &png[..png.len() - 20]),
         ("text.png", b"just some words, not a picture at all"),
     ];
@@ -412,13 +418,162 @@ fn a_book_past_its_pixel_budget_is_refused_from_the_headers() {
     let files: Vec<(&str, &[u8])> = names.iter().map(|n| (n.as_str(), png.as_slice())).collect();
     let dir = tempfile::tempdir().unwrap();
     let path = book_of(dir.path(), None, &files);
-    match images_of(&path, &ConvertOptions::default()) {
+    let book = read_book(&path).unwrap();
+    let (got, allocated) =
+        allocated_by(|| convert::images(&book, &path, &ConvertOptions::default()));
+    match got {
         Err(Error::TooLarge { what }) => {
             assert!(what.starts_with("p100.png:"), "{what}");
             assert!(what.contains("10000 megapixels together"), "{what}");
         }
         other => panic!("{:?}", other.map(|i| i.images.len())),
     }
+    // Each of the 100 failed decodes reserves its 100 MB picture; the 101st is not decoded.
+    assert!(
+        allocated < 100 * 100_000_000 + (64 << 20),
+        "{allocated} bytes"
+    );
+}
+
+/// A GIF whose screen is `sw` × `sh` and whose one frame states `fw` × `fh`, after a global
+/// colour table and a graphic control extension, with a few bytes of data.
+fn gif_with_frame(sw: u16, sh: u16, fw: u16, fh: u16) -> Vec<u8> {
+    let mut g = b"GIF89a".to_vec();
+    g.extend(sw.to_le_bytes());
+    g.extend(sh.to_le_bytes());
+    g.extend([0x80, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF]);
+    g.extend([0x21, 0xF9, 0x04, 0, 0, 0, 0, 0x00]);
+    g.extend([0x2C, 0, 0, 0, 0]);
+    g.extend(fw.to_le_bytes());
+    g.extend(fh.to_le_bytes());
+    g.extend([0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3B]);
+    g
+}
+
+#[test]
+fn a_gif_frame_larger_than_its_screen_is_charged_its_own_size() {
+    // A 1 × 1 screen over a frame of 110 megapixels: refused from the headers.
+    let dir = tempfile::tempdir().unwrap();
+    let gif = gif_with_frame(1, 1, 11_000, 10_000);
+    let path = book_of(dir.path(), None, &[("p.gif", &gif)]);
+    let book = read_book(&path).unwrap();
+    let (got, allocated) =
+        allocated_by(|| convert::images(&book, &path, &ConvertOptions::default()));
+    match got {
+        Err(Error::TooLarge { what }) => assert!(what.contains("100 megapixels"), "{what}"),
+        other => panic!("{:?}", other.map(|i| i.images.len())),
+    }
+    assert!(allocated < 8 << 20, "{allocated} bytes");
+    // Frames of 100 megapixels each fill the book's budget: the 101st is refused. An LZW code
+    // size past 12 stops each decode before its frame is allocated.
+    let mut gif = gif_with_frame(1, 1, 10_000, 10_000);
+    gif[37] = 0x0F;
+    let names: Vec<String> = (0..101).map(|i| format!("p{i:03}.gif")).collect();
+    let files: Vec<(&str, &[u8])> = names.iter().map(|n| (n.as_str(), gif.as_slice())).collect();
+    let dir = tempfile::tempdir().unwrap();
+    let path = book_of(dir.path(), None, &files);
+    match images_of(&path, &ConvertOptions::default()) {
+        Err(Error::TooLarge { what }) => assert!(what.starts_with("p100.gif:"), "{what}"),
+        other => panic!("{:?}", other.map(|i| i.images.len())),
+    }
+}
+
+/// A progressive JPEG of `w` × `h` and three components: its headers and a first scan of a few
+/// bytes (the reviewer's crafted file, about 200 bytes).
+fn progressive_jpeg(w: u16, h: u16) -> Vec<u8> {
+    let mut j = vec![0xFF, 0xD8, 0xFF, 0xDB, 0x00, 0x43, 0x00];
+    j.extend([1u8; 64]);
+    j.extend([0xFF, 0xC2, 0x00, 0x11, 8]);
+    j.extend(h.to_be_bytes());
+    j.extend(w.to_be_bytes());
+    j.push(3);
+    for c in 1..=3 {
+        j.extend([c, 0x11, 0x00]);
+    }
+    j.extend([0xFF, 0xC4, 0x00, 0x14, 0x00, 0x01]);
+    j.extend([0u8; 16]);
+    j.extend([
+        0xFF, 0xDA, 0x00, 0x0C, 3, 1, 0, 2, 0, 3, 0, 0x00, 0x00, 0x00,
+    ]);
+    j.extend([0u8; 64]);
+    j.extend([0xFF, 0xD9]);
+    j
+}
+
+#[test]
+fn a_large_progressive_jpeg_is_refused_before_its_planes_are_allocated() {
+    // 100 megapixels: zune-jpeg's coefficient planes alone would take 600 MB, outside
+    // `image`'s count.
+    let dir = tempfile::tempdir().unwrap();
+    let path = book_of(
+        dir.path(),
+        None,
+        &[("p.jpg", &progressive_jpeg(10_000, 10_000))],
+    );
+    let book = read_book(&path).unwrap();
+    let (got, allocated) =
+        allocated_by(|| convert::images(&book, &path, &ConvertOptions::default()));
+    match got {
+        Err(Error::TooLarge { what }) => assert!(what.contains("p.jpg"), "{what}"),
+        other => panic!("{:?}", other.map(|i| i.images.len())),
+    }
+    assert!(allocated < 8 << 20, "{allocated} bytes");
+    // 16 megapixels still converts, fitted into 1,920 px.
+    let dir = tempfile::tempdir().unwrap();
+    let path = book_of(
+        dir.path(),
+        None,
+        &[("p.jpg", &progressive_jpeg(4_000, 4_000))],
+    );
+    let got = images_of(&path, &ConvertOptions::default()).unwrap();
+    assert_eq!(dims(&got.images["p.jpg"]), (1920, 1920));
+}
+
+#[test]
+fn a_picture_of_exactly_100_megapixels_is_not_refused() {
+    // `MAX_IMAGE_PIXELS` is the most a picture may have: 10,000 × 10,000 is within it. Its
+    // data is missing, so it is left out as undecodable, not refused.
+    let mut png = encode(
+        &DynamicImage::ImageLuma8(image::GrayImage::new(8, 8)),
+        ImageFormat::Png,
+    );
+    png[16..20].copy_from_slice(&10_000u32.to_be_bytes());
+    png[20..24].copy_from_slice(&10_000u32.to_be_bytes());
+    fix_png_crc(&mut png, 8);
+    let dir = tempfile::tempdir().unwrap();
+    let path = book_of(dir.path(), None, &[("p.png", &png)]);
+    let got = images_of(&path, &ConvertOptions::default()).unwrap();
+    assert!(got.images.is_empty());
+}
+
+/// The quantisation tables (`DQT` segments) of a JPEG, in order.
+fn jpeg_tables(b: &[u8]) -> Vec<&[u8]> {
+    let mut out = Vec::new();
+    let mut i = 2;
+    while i + 4 <= b.len() && b[i] == 0xFF && b[i + 1] != 0xDA {
+        let len = usize::from(u16::from_be_bytes([b[i + 2], b[i + 3]]));
+        if b[i + 1] == 0xDB {
+            out.push(&b[i + 4..i + 2 + len]);
+        }
+        i += 2 + len;
+    }
+    out
+}
+
+#[test]
+fn jpegs_are_written_at_quality_85() {
+    let path = fixtures::kfxgen("sources/pictures_more.epub");
+    let got = images_of(&path, &ConvertOptions::default()).unwrap();
+    let ours = &got.images["OEBPS/cmyk.jpg"];
+    let mut want = Vec::new();
+    image::load_from_memory(ours)
+        .unwrap()
+        .write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(
+            &mut want, 85,
+        ))
+        .unwrap();
+    assert!(!jpeg_tables(ours).is_empty());
+    assert_eq!(jpeg_tables(ours), jpeg_tables(&want));
 }
 
 #[test]

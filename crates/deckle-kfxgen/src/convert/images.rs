@@ -21,11 +21,12 @@
 //! Hostile input: a picture is only ever read from the archive, by its manifest href, through
 //! [`EpubReader`]'s limits; no path from the book reaches the file system. Every decode goes
 //! through [`Pictures::decode`], which reads the size the header states and refuses a picture
-//! over [`MAX_IMAGE_PIXELS`] before anything is decoded, charges its size to the book's
-//! [`MAX_BOOK_IMAGE_PIXELS`] (every decode: a CMYK JPEG is decoded twice), and
-//! leaves `image`'s own allocation limit (512 MiB) in place for the rest. A picture that does not decode is left out with a
-//! warning, as kfxgen leaves out one Qt can't read. Pictures are read, converted and dropped
-//! one at a time; only the results are kept.
+//! over [`MAX_IMAGE_PIXELS`] before anything is decoded (a GIF's first frame counted too, as
+//! it is decoded at its own size), and charges its size to the book's [`MAX_BOOK_IMAGE_PIXELS`]
+//! (every decode: a CMYK JPEG is decoded twice). It keeps `image`'s allocation limit (512 MiB),
+//! less 8 bytes a pixel for a JPEG, whose decoder allocates coefficient planes outside it. A
+//! picture that does not decode is left out with a warning, as kfxgen leaves out one Qt can't
+//! read. Pictures are read, converted and dropped one at a time; only the results are kept.
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
@@ -35,7 +36,7 @@ use deckle_kfx::epub_zip::{EpubReader, InspectError};
 use deckle_limits::{MAX_BOOK_IMAGE_PIXELS, MAX_IMAGE_PIXELS};
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
-use image::{DynamicImage, ImageError, ImageReader};
+use image::{DynamicImage, ImageError, ImageFormat, ImageReader, Limits};
 
 use super::pictures::svg_draws_shapes_only;
 use super::{ConvertOptions, Error};
@@ -271,7 +272,7 @@ impl Pictures {
     }
 
     /// `image_from_data`: `data` decoded, None when `image` can't read it. The size the
-    /// header states is checked first: a picture over [`MAX_IMAGE_PIXELS`], one that takes
+    /// headers state is checked first: a picture over [`MAX_IMAGE_PIXELS`], one that takes
     /// the book's decodes past [`MAX_BOOK_IMAGE_PIXELS`], or one that needs more than `image`'s
     /// allocation limit, refuses the book.
     fn decode(&mut self, data: &[u8], href: &str) -> Result<Option<DynamicImage>, Error> {
@@ -280,10 +281,21 @@ impl Pictures {
                 .with_guessed_format()
                 .map_err(ImageError::IoError)
         };
+        let Ok(format) = reader().map(|r| r.format()) else {
+            return Ok(None);
+        };
         let Ok((w, h)) = reader().and_then(|r| r.into_dimensions()) else {
             return Ok(None);
         };
-        let pixels = u64::from(w) * u64::from(h);
+        let mut pixels = u64::from(w) * u64::from(h);
+        if format == Some(ImageFormat::Gif) {
+            // `image` decodes a GIF's first frame at the frame's own size, which may be past
+            // the screen's; one with no frame doesn't decode.
+            let Some((fw, fh)) = gif_frame_size(data) else {
+                return Ok(None);
+            };
+            pixels = pixels.max(u64::from(fw) * u64::from(fh));
+        }
         if pixels > MAX_IMAGE_PIXELS {
             return Err(Error::TooLarge {
                 what: format!(
@@ -302,7 +314,20 @@ impl Pictures {
                 ),
             });
         }
-        match reader().and_then(ImageReader::decode) {
+        let mut limits = Limits::default();
+        if format == Some(ImageFormat::Jpeg) {
+            // zune-jpeg keeps a plane of 2-byte coefficients for each of up to 4 components
+            // (a progressive JPEG, or a first scan naming fewer components than the frame)
+            // outside `image`'s count, so they are taken off its allocation limit.
+            limits.max_alloc = limits
+                .max_alloc
+                .map(|m| m.saturating_sub(pixels.saturating_mul(8)));
+        }
+        let decoded = reader().and_then(|mut r| {
+            r.limits(limits);
+            r.decode()
+        });
+        match decoded {
             Ok(img) => Ok(Some(img)),
             Err(ImageError::Limits(_)) => Err(Error::TooLarge {
                 what: format!("{href}: this picture needs more memory to decode than allowed"),
@@ -508,6 +533,38 @@ fn read_image_size(data: &[u8]) -> Option<(u32, u32)> {
     Some((be16(i + 7), be16(i + 5)))
 }
 
+/// A GIF's first frame's width and height, from its image descriptor: after the header, the
+/// global colour table and any extensions (each a label, then sub-blocks to an empty one).
+/// None when the file ends first or something else stands there. Each step moves forward, so
+/// the walk is linear in the file.
+fn gif_frame_size(data: &[u8]) -> Option<(u32, u32)> {
+    let flags = *data.get(10)?;
+    let mut i = 13;
+    if flags & 0x80 != 0 {
+        i += 3 << ((flags & 7) + 1);
+    }
+    loop {
+        match *data.get(i)? {
+            0x2C => {
+                let d = data.get(i + 5..i + 9)?;
+                let le16 = |a: u8, b: u8| u32::from(u16::from_le_bytes([a, b]));
+                return Some((le16(d[0], d[1]), le16(d[2], d[3])));
+            }
+            0x21 => {
+                i += 2;
+                loop {
+                    let n = usize::from(*data.get(i)?);
+                    i += 1 + n;
+                    if n == 0 {
+                        break;
+                    }
+                }
+            }
+            _ => return None,
+        }
+    }
+}
+
 /// `_jpeg_frame_at`: where a JPEG's frame header starts, when it is whole enough to state the
 /// size.
 fn jpeg_frame_at(data: &[u8]) -> Option<usize> {
@@ -564,6 +621,22 @@ mod tests {
         // Its shape is wider than the box's: the width fills the box, the height is floored.
         assert_eq!(qt_keep_aspect(10, 10, 5, 8), (5, 5));
         assert_eq!(qt_keep_aspect(7, 3, 5, 8), (5, 2));
+    }
+
+    #[test]
+    fn gif_frame_size_reads_past_extensions_and_stops_at_the_end() {
+        let mut gif = b"GIF89a\x01\x00\x01\x00\x80\x00\x00".to_vec();
+        gif.extend([0, 0, 0, 0xFF, 0xFF, 0xFF]);
+        // A comment extension of two sub-blocks, then the frame.
+        gif.extend([0x21, 0xFE, 2, b'h', b'i', 1, b'!', 0]);
+        gif.extend([0x2C, 0, 0, 0, 0, 0xAC, 0x0D, 0xAC, 0x0D, 0]);
+        assert_eq!(gif_frame_size(&gif), Some((3500, 3500)));
+        // Every cut before the frame's height ends, the descriptor's flags byte aside.
+        for n in 0..gif.len() - 1 {
+            assert_eq!(gif_frame_size(&gif[..n]), None, "{n}");
+        }
+        // The trailer where a frame should be.
+        assert_eq!(gif_frame_size(&[&gif[..27], &[0x3B]].concat()), None);
     }
 
     #[test]
