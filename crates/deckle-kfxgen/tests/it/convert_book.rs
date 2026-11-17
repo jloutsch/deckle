@@ -227,3 +227,140 @@ fn convert_then_generate_matches_expected_kfx() {
     assert_eq!(swapped, ["pictures_more"]);
     assert_eq!(identical, 55 - 1 - NOT_PORTED.len());
 }
+
+const CONTAINER: &[u8] = br#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
+
+/// An EPUB 2 book at `path` of `a.xhtml` (a heading, a paragraph, an SVG drawing a word, an
+/// audio clip, a table), a stylesheet listed in the spine, and `b.xhtml`, whose one paragraph
+/// kfxgen raises on (`text-align: 5px`); its NCX names `a.xhtml`, an id `a.xhtml` lacks, and
+/// `b.xhtml`; `a.xhtml` has a read-aloud narration.
+fn book_kfxgen_warns_about(path: &Path) {
+    let opf = r#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">x</dc:identifier><dc:title>T</dc:title><dc:language>en</dc:language></metadata><manifest><item id="a" href="a.xhtml" media-type="application/xhtml+xml" media-overlay="smil"/><item id="b" href="b.xhtml" media-type="application/xhtml+xml"/><item id="css" href="s.css" media-type="text/css"/><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest><spine toc="ncx"><itemref idref="a"/><itemref idref="css"/><itemref idref="b"/></spine></package>"#;
+    let point = |n: usize, label: &str, src: &str| {
+        format!(
+            r#"<navPoint id="p{n}" playOrder="{n}"><navLabel><text>{label}</text></navLabel><content src="{src}"/></navPoint>"#
+        )
+    };
+    let ncx = format!(
+        r#"<?xml version="1.0"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head><meta name="dtb:uid" content="x"/></head><docTitle><text>T</text></docTitle><navMap>{}{}{}</navMap></ncx>"#,
+        point(1, "One", "a.xhtml"),
+        point(2, "Gone", "a.xhtml#nowhere"),
+        point(3, "Two", "b.xhtml"),
+    );
+    let a = r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title></head><body><h1>One</h1><p>Text.</p><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><text x="0" y="5">Hi</text></svg><audio src="x.mp3">Fallback.</audio><table><tr><td>a</td><td>b</td></tr></table></body></html>"#;
+    let b = r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title><link rel="stylesheet" type="text/css" href="s.css"/></head><body><p class="a">x</p></body></html>"#;
+    let css = ".a { text-align: 5px }";
+    let entries: Vec<(&str, &[u8], u64)> = vec![
+        ("mimetype", b"application/epub+zip", 20),
+        ("META-INF/container.xml", CONTAINER, CONTAINER.len() as u64),
+        ("content.opf", opf.as_bytes(), opf.len() as u64),
+        ("toc.ncx", ncx.as_bytes(), ncx.len() as u64),
+        ("a.xhtml", a.as_bytes(), a.len() as u64),
+        ("b.xhtml", b.as_bytes(), b.len() as u64),
+        ("s.css", css.as_bytes(), css.len() as u64),
+    ];
+    std::fs::write(path, fixtures::stored_zip(&entries)).unwrap();
+}
+
+/// What kfxgen logs as a warning and Calibre's spine reader too, in the order they log it:
+/// a spine item that is no document, a file kfxgen raises on, words in an SVG picture, a
+/// contents entry naming an id no block has and one naming a file that is left out, a table
+/// written as rows, and the narration and clip left out. The texts are kfxgen's (a Python
+/// `repr` written as Rust's `{:?}`), but for Calibre's, whose words are the port's.
+#[test]
+fn convert_says_what_kfxgen_warns_about() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("book.epub");
+    book_kfxgen_warns_about(&path);
+    let opts = ConvertOptions {
+        disable_native_tables: true,
+        ..ConvertOptions::default()
+    };
+    let got = convert(&path, &opts).unwrap();
+    let want = [
+        r#"  Spine item "s.css" is not a document: left out"#,
+        "  Spine item 2 parse failed (b.xhtml): AttributeError: compute_block_style: a \
+         text-align Calibre reads as a number has no strip()",
+        "  Words drawn in SVG pictures in 1 file are written after the picture, not over it \
+         (#231)",
+        // "One" lands on block 0, so the next missing id snaps to block 1.
+        "  TOC anchor #nowhere not found in a.xhtml; snapping to block 1",
+        r#"  TOC entry "Two" dropped: not in spine"#,
+        "  1 table in 1 file written as one paragraph per row, so columns do not line up: \
+         native tables are turned off (#219)",
+        "  Left out, since kfxgen writes no audio or video: this book's read-aloud narration \
+         and 1 audio or video clip in 1 file. The text and pictures are converted, with each \
+         clip's fallback text (#248)",
+    ];
+    assert_eq!(got.warnings, want);
+}
+
+/// An EPUB 2 book at `path` of the pages `files` (name, `<body>` content) in that spine
+/// order, with an NCX of `points` (label, src).
+fn book_of_pages(path: &Path, files: &[(&str, &str)], points: &[(&str, &str)]) {
+    let mut items =
+        String::from(r#"<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>"#);
+    let mut spine = String::new();
+    for (i, (name, _)) in files.iter().enumerate() {
+        items += &format!(r#"<item id="f{i}" href="{name}" media-type="application/xhtml+xml"/>"#);
+        spine += &format!(r#"<itemref idref="f{i}"/>"#);
+    }
+    let opf = format!(
+        r#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">x</dc:identifier><dc:title>T</dc:title><dc:language>en</dc:language></metadata><manifest>{items}</manifest><spine toc="ncx">{spine}</spine></package>"#
+    );
+    let nav: String = (points.iter().enumerate())
+        .map(|(n, (label, src))| {
+            format!(
+                r#"<navPoint id="p{n}" playOrder="{n}"><navLabel><text>{label}</text></navLabel><content src="{src}"/></navPoint>"#
+            )
+        })
+        .collect();
+    let ncx = format!(
+        r#"<?xml version="1.0"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head><meta name="dtb:uid" content="x"/></head><docTitle><text>T</text></docTitle><navMap>{nav}</navMap></ncx>"#
+    );
+    let pages: Vec<(String, String)> = (files.iter())
+        .map(|(name, body)| {
+            let page = format!(
+                r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title></head><body>{body}</body></html>"#
+            );
+            ((*name).to_owned(), page)
+        })
+        .collect();
+    let mut entries: Vec<(&str, &[u8], u64)> = vec![
+        ("mimetype", b"application/epub+zip", 20),
+        ("META-INF/container.xml", CONTAINER, CONTAINER.len() as u64),
+        ("content.opf", opf.as_bytes(), opf.len() as u64),
+        ("toc.ncx", ncx.as_bytes(), ncx.len() as u64),
+    ];
+    for (name, page) in &pages {
+        entries.push((name, page.as_bytes(), page.len() as u64));
+    }
+    std::fs::write(path, fixtures::stored_zip(&entries)).unwrap();
+}
+
+/// A table whose first block goes with its page (a "Contents" page, which the title-page step
+/// rebuilds from the entries) is not counted, as kfxgen counts only tables still in a chapter;
+/// the block of another file with the same place in its file does not stand in for it.
+#[test]
+fn only_tables_still_in_a_chapter_are_counted() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("book.epub");
+    let files = [
+        (
+            "c.xhtml",
+            r#"<h1>Contents</h1><table><tr><td><a href="a.xhtml">One</a></td></tr></table>"#,
+        ),
+        ("a.xhtml", "<h1>One</h1><p>Text.</p><p>More.</p>"),
+    ];
+    book_of_pages(
+        &path,
+        &files,
+        &[("Contents", "c.xhtml"), ("One", "a.xhtml")],
+    );
+    let opts = ConvertOptions {
+        disable_native_tables: true,
+        ..ConvertOptions::default()
+    };
+    let got = convert(&path, &opts).unwrap();
+    assert_eq!(got.warnings, Vec::<String>::new());
+}

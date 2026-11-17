@@ -16,10 +16,11 @@ use std::collections::{HashMap, HashSet};
 use deckle_limits::MAX_CASCADE_DECLS;
 
 use super::args::is_vertical;
-use super::blocks::{Block, DictIndex, Field, dedupe, dict_set, s, strs};
+use super::blocks::{Block, BlockId, DictIndex, Field, dedupe, dict_set, s, shift_ids, strs};
 use super::href::{key_doc, normalize, unquote};
 use super::inline::{Walk, keyword, own_anchor_ids};
 use super::notes::{book_link_targets, note_pair_ids, note_target_ids};
+use super::pictures::svg_text_paragraphs;
 use super::toc::{TocEntry, respell_toc_hrefs, spine_in_order, toc_entries};
 use super::{
     CalibreOpf, ConvertOptions, Error, ExtractOptions, HORIZONTAL_PT, ItemError, Resolver, Serials,
@@ -47,6 +48,9 @@ pub struct SpineItem {
     pub note_ids: HashSet<String>,
     /// The ids at its very end with no block after them (`frozenset(end_ids)`).
     pub trailing_ids: HashSet<String>,
+    /// The first block of each table written as rows of text, for the warning about them;
+    /// not in kfxgen's dict (it keeps them in a list of its own).
+    pub tables_seen: Vec<BlockId>,
 }
 
 impl SpineItem {
@@ -111,6 +115,7 @@ impl SpineItem {
             nav_listing_at: listings.collect::<Option<_>>()?,
             note_ids: strings(v.get("note_ids")?)?.into_iter().collect(),
             trailing_ids: strings(v.get("trailing_ids")?)?.into_iter().collect(),
+            tables_seen: Vec::new(),
         })
     }
 }
@@ -240,16 +245,18 @@ pub(super) fn joined_text<'b>(blocks: impl IntoIterator<Item = &'b Block>) -> St
 /// [`TextBudget`] for each of [`Book::files`]; `serials` runs on across the book and its
 /// passes.
 ///
-/// A file kfxgen raises on is left out, as kfxgen's `try` round each file leaves it ("Spine
-/// item N parse failed"). What the port refuses stops the book: a feature refused by name
+/// A file kfxgen raises on is left out, as kfxgen's `try` round each file leaves it, with its
+/// warning ("Spine item N parse failed") in `warnings`, as is kfxgen's about words drawn in
+/// SVG pictures. What the port refuses stops the book: a feature refused by name
 /// ([`Error::Unsupported`]) and a limit passed ([`Error::TooLarge`], a file's budget named as
-/// such). [`Error::NoContent`] when no file shows anything.
+/// such). [`Error::NoContent`] when no file shows anything. Block ids are unique in the book.
 pub fn spine_items(
     book: &Book,
     opf: &CalibreOpf,
     opts: &ConvertOptions,
     serials: &mut Serials,
     keep_nav_listings: bool,
+    warnings: &mut Vec<String>,
 ) -> Result<(Vec<SpineItem>, Vec<TocEntry>), Error> {
     let budgets: Vec<TextBudget> = book.files.iter().map(|_| TextBudget::new()).collect();
     // Percentages are measured against a 480pt page in a vertical book, 384pt otherwise.
@@ -282,7 +289,11 @@ pub fn spine_items(
     let mut items: Vec<SpineItem> = Vec::new();
     // The keys of files that show nothing, and of ids ending a file: the next shown block's.
     let mut orphan_keys: Vec<String> = Vec::new();
-    for &f in &spine {
+    // Files whose SVG pictures draw words, said once.
+    let mut svg_text_files = 0;
+    // The next file's first block id.
+    let mut next_id = 0;
+    for (i, &f) in spine.iter().enumerate() {
         let (file, budget) = (&book.files[f], &budgets[f]);
         if is_calibre_inline_toc(&file.dom) {
             continue;
@@ -311,9 +322,28 @@ pub fn spine_items(
         let (writing_mode, mut got) = match walked {
             Ok(walked) => walked,
             // kfxgen logs the file as failed and goes on without it.
-            Err(ItemError::Raised(_)) => continue,
+            Err(ItemError::Raised(r)) => {
+                let href = if href.is_empty() { "<unknown>" } else { href };
+                warnings.push(format!(
+                    "  Spine item {} parse failed ({href}): {}: {}",
+                    i + 1,
+                    r.exception,
+                    r.note
+                ));
+                continue;
+            }
             Err(ItemError::Error(e)) => return Err(budget_refusal(e, href, budget)),
         };
+        let dom = &file.dom;
+        // Looked for only in a file with some `<text>`: each `<svg>` reads all below it.
+        svg_text_files += usize::from(
+            dom.descendants().any(|n| dom.tag(n) == "text")
+                && dom
+                    .descendants()
+                    .any(|n| dom.tag(n) == "svg" && !svg_text_paragraphs(dom, n).is_empty()),
+        );
+        let first_id = next_id;
+        next_id = shift_ids(&mut got.blocks, first_id);
         let text = joined_text(&got.blocks);
         // Each block carries its file's writing mode, so a chapter spanning files knows its
         // own; a file that sets none is horizontal.
@@ -357,7 +387,17 @@ pub fn spine_items(
             nav_listing_at: got.nav_listing_at,
             note_ids,
             trailing_ids: got.end_ids.into_iter().collect(),
+            tables_seen: (got.tables_seen.iter())
+                .map(|b| b.shifted(first_id))
+                .collect(),
         });
+    }
+    if svg_text_files > 0 {
+        warnings.push(format!(
+            "  Words drawn in SVG pictures in {svg_text_files} file{} are written after the \
+             picture, not over it (#231)",
+            if svg_text_files == 1 { "" } else { "s" }
+        ));
     }
     // Nothing shown followed: the book's last block takes them.
     if !orphan_keys.is_empty()

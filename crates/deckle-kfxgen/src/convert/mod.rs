@@ -60,6 +60,7 @@ pub use pictures::css_background_image;
 pub use resolver::{Resolved, Resolver, TextBudget};
 pub use toc::{TocEntry, respell_toc_hrefs, spine_in_order, toc_entries};
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use crate::load::Model;
@@ -87,13 +88,19 @@ pub fn convert(path: &Path, opts: &ConvertOptions) -> Result<Converted, Error> {
     let book = book::read_book(path).map_err(Error::Book)?;
     let opf = CalibreOpf::new(&book).map_err(Error::Book)?;
     let mut book_level = book_args(&book, &opf, opts);
+    // Calibre's, which its reader logs before kfxgen starts. Not Calibre's own words.
+    let mut warnings: Vec<String> = (book.oeb.spine_left_out.iter())
+        .map(|href| format!("  Spine item {href:?} is not a document: left out"))
+        .collect();
     let pictures = images(&book, path, opts)?;
-    let warnings = pictures.warnings;
+    warnings.extend(pictures.warnings);
     let title = match book_level.iter().find(|(k, _)| k == "title") {
         Some((_, PyValue::Str(t))) => t.clone(),
         _ => unreachable!("book_args gives a title"),
     };
-    let chapters = chapters(&book, &opf, opts, pictures.cover_href.as_deref(), &title)?;
+    let cover_href = pictures.cover_href.as_deref();
+    let chapters = chapters(&book, &opf, opts, cover_href, &title, &mut warnings)?;
+    warnings.extend(media_warning(&book));
     let chapters = split_by_writing_mode(chapters);
     let font_table = font_table(&book, path, opts)?;
     let budgets: Vec<TextBudget> = book.files.iter().map(|_| TextBudget::new()).collect();
@@ -162,26 +169,111 @@ const KFXGEN_COMMIT: &str = "ad38ec8";
 /// `extract_chapters_from_oeb` and its rerun (`_with_listings_kept`): the files' blocks
 /// assembled into chapters, read again printing the contents listings when dropping them
 /// leaves the book with no contents page, then the title page and the contents page made.
-/// The serial numbers run on across both passes, as kfxgen's do.
+/// The serial numbers run on across both passes, as kfxgen's do. The warnings are the last
+/// pass's: kfxgen logs the first pass's too, but drops what that pass made.
 fn chapters(
     book: &book::Book,
     opf: &CalibreOpf,
     opts: &ConvertOptions,
     cover_href: Option<&str>,
     title: &str,
+    warnings: &mut Vec<String>,
 ) -> Result<Vec<Chapter>, Error> {
     let mut serials = Serials::default();
     let mut keep_nav_listings = false;
     loop {
-        let (items, entries) = spine_items(book, opf, opts, &mut serials, keep_nav_listings)?;
-        let mut chapters = assemble(items, &entries, cover_href);
+        let mut said = Vec::new();
+        let (items, entries) =
+            spine_items(book, opf, opts, &mut serials, keep_nav_listings, &mut said)?;
+        let tables: Vec<(String, BlockId)> = (items.iter())
+            .flat_map(|i| i.tables_seen.iter().map(|&b| (i.href.clone(), b)))
+            .collect();
+        let mut chapters = assemble(items, &entries, cover_href, &mut said);
         if listing_without_contents(&chapters, keep_nav_listings) {
             keep_nav_listings = true;
             continue;
         }
         replace_title_page(&mut chapters, title, keep_nav_listings)?;
+        warnings.extend(said);
+        warnings.extend(flattened_tables(&chapters, &tables, opts));
         return Ok(chapters);
     }
+}
+
+/// `_warn_flattened_tables`'s warning: how many tables were written as rows of text, of those
+/// whose first block is still a block of a chapter, and why.
+fn flattened_tables(
+    chapters: &[Chapter],
+    tables: &[(String, BlockId)],
+    opts: &ConvertOptions,
+) -> Option<String> {
+    let kept: HashSet<BlockId> = (chapters.iter())
+        .flat_map(|c| c.blocks().iter().map(Block::id))
+        .collect();
+    let written: Vec<&str> = (tables.iter())
+        .filter(|(_, b)| kept.contains(b))
+        .map(|(href, _)| href.as_str())
+        .collect();
+    let n = written.len();
+    if n == 0 {
+        return None;
+    }
+    let files = written.iter().collect::<HashSet<_>>().len();
+    let plural = |k: usize| if k == 1 { "" } else { "s" };
+    let why = if opts.disable_native_tables {
+        "native tables are turned off"
+    } else if n == 1 {
+        "it could not be laid out as a Kindle table (for example over 24 columns, or an image \
+         or a nested table in a cell)"
+    } else {
+        "they could not be laid out as Kindle tables (for example over 24 columns, or an image \
+         or a nested table in a cell)"
+    };
+    Some(format!(
+        "  {n} table{} in {files} file{} written as one paragraph per row, so columns do not \
+         line up: {why} (#219)",
+        plural(n),
+        plural(files)
+    ))
+}
+
+/// `_warn_media`'s warning: the book's read-aloud narration (a `media-overlay` in its OPF) and
+/// its audio and video clips are left out. kfxgen reads every OPF the container names; the
+/// port, the first, the one Calibre reads.
+fn media_warning(book: &book::Book) -> Option<String> {
+    let (mut clips, mut files) = (0, 0);
+    for file in &book.files {
+        let dom = &file.dom;
+        let n = (dom.descendants())
+            .filter(|&n| matches!(dom.tag(n), "audio" | "video"))
+            .count();
+        clips += n;
+        files += usize::from(n > 0);
+    }
+    let plural = |k: usize| if k == 1 { "" } else { "s" };
+    let mut what = Vec::new();
+    if book.package.opf.media_overlay {
+        what.push("this book's read-aloud narration".to_owned());
+    }
+    if clips > 0 {
+        what.push(format!(
+            "{clips} audio or video clip{} in {files} file{}",
+            plural(clips),
+            plural(files)
+        ));
+    }
+    (!what.is_empty()).then(|| {
+        format!(
+            "  Left out, since kfxgen writes no audio or video: {}. The text and pictures are \
+             converted{} (#248)",
+            what.join(" and "),
+            if clips > 0 {
+                ", with each clip's fallback text"
+            } else {
+                ""
+            }
+        )
+    })
 }
 
 /// Why a book cannot be converted.

@@ -113,6 +113,9 @@ pub struct Oeb {
     pub page_progression_direction: Option<String>,
     /// The OPF Calibre writes for the book, which kfxgen reads.
     pub(crate) rewritten: RewrittenOpf,
+    /// The spine's files Calibre leaves out of its spine as no document (an SVG page, a
+    /// picture), in spine order; `oeb.json` does not record them.
+    pub spine_left_out: Vec<String>,
 }
 
 /// The OPF `epub_input.py` `convert` writes at the root of the folder Calibre unpacks the book

@@ -176,6 +176,11 @@ yet (phase 3 plan, Decision 6): `block_edges`, `css_quirks` and `text_edges` (pr
 and `tables_more` (block styles in table cells). `tests/it/whole_book.rs` checks that each is
 refused naming that feature.
 
+`tests/it/convert_book.rs` converts every source with `convert::convert` and compares the
+result with its model (the whole argument tree; pictures kfxgen re-encoded by format, size and
+JPEG components, as `convert_images.rs` does), then generates it and compares the bytes with
+`expected.kfx` (for `pictures_more`, with kfxgen's three re-encoded pictures put in).
+
 The sources from kfxgen's `test_books` were written by kfxgen's author for its tests: made-up
 text and test pictures, no other book's content. kfxgen does not publish all of them; the copies
 here are offered under the GNU General Public License, version 3, as kfxgen is.

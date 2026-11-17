@@ -1073,6 +1073,7 @@ struct State {
     toc: Vec<TocNode>,
     auto: bool,
     meta: Metadata,
+    spine_left_out: Vec<String>,
 }
 
 impl State {
@@ -1238,16 +1239,16 @@ impl State {
             };
             let mt = self.item(i).media_type.to_lowercase();
             let linear = is_linear(r.linear.as_deref());
+            let href = self.item(i).href.clone();
             if is_doc(&mt) {
                 self.push_spine(i, linear);
-            } else if is_xml(&mt) {
-                let href = self.item(i).href.clone();
-                if book.doc(&href, false)?.is_some_and(|d| d.html_root) {
-                    if let Some(it) = self.items[i].as_mut() {
-                        it.media_type = XHTML_MIME.to_owned();
-                    }
-                    self.push_spine(i, linear);
+            } else if is_xml(&mt) && book.doc(&href, false)?.is_some_and(|d| d.html_root) {
+                if let Some(it) = self.items[i].as_mut() {
+                    it.media_type = XHTML_MIME.to_owned();
                 }
+                self.push_spine(i, linear);
+            } else {
+                self.spine_left_out.push(href);
             }
         }
         if self.spine.is_empty() {
@@ -1749,6 +1750,7 @@ impl State {
             metadata: self.meta,
             page_progression_direction: self.ppd,
             rewritten,
+            spine_left_out: self.spine_left_out,
         }
     }
 }

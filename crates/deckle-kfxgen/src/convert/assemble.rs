@@ -77,13 +77,15 @@ pub(super) const LEADING_TITLE_MAX_LEN: usize = 60;
 /// The chapters kfxgen makes of the book's shown files before its title-page step: one per
 /// section of the contents entries (`_assemble_chapters_by_coordinate`), else, when no entry
 /// lands or none makes a chapter, one per file that shows something besides the cover.
+/// kfxgen's warnings about entries naming no file, or an id no block has, go in `warnings`.
 pub fn assemble(
     mut items: Vec<SpineItem>,
     entries: &[TocEntry],
     cover_href: Option<&str>,
+    warnings: &mut Vec<String>,
 ) -> Vec<Chapter> {
     if !entries.is_empty()
-        && let Some(planned) = plan(&mut items, entries, cover_href)
+        && let Some(planned) = plan(&mut items, entries, cover_href, warnings)
         && !planned.is_empty()
     {
         return fill(items, planned);
@@ -193,6 +195,7 @@ fn plan(
     items: &mut [SpineItem],
     entries: &[TocEntry],
     cover_href: Option<&str>,
+    warnings: &mut Vec<String>,
 ) -> Option<Vec<(Chapter, Range<usize>)>> {
     let flat = Flat::new(items);
     for (si, item) in items.iter_mut().enumerate() {
@@ -249,7 +252,12 @@ fn plan(
     // its offsets are, so each is written once.
     let mut keyed: HashMap<usize, (HashSet<String>, DictIndex)> = HashMap::new();
     for entry in entries {
-        let Some(&own_si) = order.get(&normalize(&entry.href)) else {
+        let norm = normalize(&entry.href);
+        let Some(&own_si) = order.get(&norm) else {
+            warnings.push(format!(
+                "  TOC entry {:?} dropped: not in spine",
+                entry.title
+            ));
             continue;
         };
         let amap = &anchors[own_si];
@@ -268,7 +276,13 @@ fn plan(
         }
         let mut bi = match amap.get(frag.as_ref()) {
             Some(&bi) if !frag.is_empty() => bi,
-            _ if !frag.is_empty() => last_block_in_file.get(&own_si).map_or(0, |b| b + 1),
+            _ if !frag.is_empty() => {
+                let bi = last_block_in_file.get(&own_si).map_or(0, |b| b + 1);
+                warnings.push(format!(
+                    "  TOC anchor #{frag} not found in {norm}; snapping to block {bi}"
+                ));
+                bi
+            }
             _ => 0,
         };
         bi = bi.min(item.blocks.len().saturating_sub(1));

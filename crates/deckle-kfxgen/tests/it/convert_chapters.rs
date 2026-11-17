@@ -91,7 +91,7 @@ fn assembly_matches_the_dump() {
         let entries = entries_of(name);
         for (p, record) in records(name).iter().enumerate() {
             let cover = record.get("cover_href").and_then(PyValue::as_str);
-            let got = assemble(items_of(record), &entries, cover);
+            let got = assemble(items_of(record), &entries, cover, &mut Vec::new());
             chapters += got.len();
             for d in model_diff(&chapters_py(&got), record.get("chapters").unwrap()) {
                 failures.push(format!("{name} pass {p} chapters{d}"));
@@ -126,6 +126,7 @@ fn the_per_file_loop_feeds_assembly_what_python_fed_it() {
                 &ConvertOptions::default(),
                 &mut serials,
                 p == 1,
+                &mut Vec::new(),
             );
             let (items, entries) = match got {
                 Ok(got) => got,
@@ -191,6 +192,7 @@ fn run(book: &Book, opf: &CalibreOpf) -> Result<(Vec<SpineItem>, Vec<TocEntry>),
         &ConvertOptions::default(),
         &mut Serials::default(),
         false,
+        &mut Vec::new(),
     )
 }
 
@@ -375,7 +377,7 @@ fn files_are_chapters_when_no_entry_lands() {
         href: "missing.xhtml".into(),
         level: 0,
     }];
-    let got = assemble(items, &entries, Some("cover.jpg"));
+    let got = assemble(items, &entries, Some("cover.jpg"), &mut Vec::new());
     assert_eq!(
         titles_and_texts(&got),
         [
@@ -432,7 +434,7 @@ fn assembly_of_crafted_books_matches_kfxgen() {
                 level: e["level"].as_u64().unwrap() as usize,
             })
             .collect();
-        let mut got = assemble(items, &entries, case["cover"].as_str());
+        let mut got = assemble(items, &entries, case["cover"].as_str(), &mut Vec::new());
         if case["split"].as_bool() == Some(true) {
             got = split_by_writing_mode(got);
         }
@@ -488,7 +490,7 @@ fn assembly_of_many_blocks_and_entries_costs_little() {
     }
     entries.extend((0..MISSING).map(|j| entry(format!("g.xhtml#gone{j}"))));
     let start = std::time::Instant::now();
-    let got = assemble(vec![f, g], &entries, None);
+    let got = assemble(vec![f, g], &entries, None, &mut Vec::new());
     let took = start.elapsed();
     eprintln!(
         "{BLOCKS} blocks, {} entries: {} chapters in {took:?}",
@@ -510,7 +512,8 @@ fn measure(what: &str, book: &Book, opf: &CalibreOpf) {
     let ((items, entries), bytes) = crate::support::allocated_by(|| run(book, opf).unwrap());
     let walked = start.elapsed();
     let blocks: usize = items.iter().map(|i| i.blocks.len()).sum();
-    let (chapters, more) = crate::support::allocated_by(|| assemble(items, &entries, None));
+    let (chapters, more) =
+        crate::support::allocated_by(|| assemble(items, &entries, None, &mut Vec::new()));
     eprintln!(
         "{what}: {} files, {blocks} blocks, {} entries: loop {walked:?} ({} MB allocated), \
          assembly {:?} ({} MB), {} chapters",
@@ -666,6 +669,7 @@ fn the_second_pass_charges_a_fresh_budget() {
             &ConvertOptions::default(),
             &mut serials,
             keep_nav_listings,
+            &mut Vec::new(),
         );
         assert!(
             got.is_ok(),
@@ -743,7 +747,7 @@ fn final_chapters_match_every_model() {
         let passes = records(name);
         for (p, record) in passes.iter().enumerate() {
             let cover = record.get("cover_href").and_then(PyValue::as_str);
-            let mut got = assemble(items_of(record), &entries, cover);
+            let mut got = assemble(items_of(record), &entries, cover, &mut Vec::new());
             let kept = p == 1;
             let rerun = listing_without_contents(&got, kept);
             if rerun != (p + 1 < passes.len()) {

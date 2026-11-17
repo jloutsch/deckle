@@ -56,6 +56,31 @@ pub struct Block {
     fields: Vec<(&'static str, Field)>,
 }
 
+impl BlockId {
+    /// The identity [`shift_ids`] gives a block that had this one.
+    pub(in crate::convert) fn shifted(self, by: usize) -> BlockId {
+        BlockId(self.0 + by)
+    }
+}
+
+/// Every block's identity in `blocks`, the blocks boxes hold included, moved up by `by`, so
+/// blocks of different files never share one (kfxgen's `id(block)` is unique in the book);
+/// one past the largest after, or `by` when there are none.
+pub(in crate::convert) fn shift_ids(blocks: &mut [Block], by: usize) -> usize {
+    let mut end = by;
+    let mut stack: Vec<&mut Block> = blocks.iter_mut().collect();
+    while let Some(Block { id, fields }) = stack.pop() {
+        *id = id.shifted(by);
+        end = end.max(id.0 + 1);
+        for (_, f) in fields {
+            if let Field::Blocks(kids) = f {
+                stack.extend(kids.iter_mut());
+            }
+        }
+    }
+    end
+}
+
 impl Block {
     pub fn id(&self) -> BlockId {
         self.id

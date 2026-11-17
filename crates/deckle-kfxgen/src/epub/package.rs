@@ -210,6 +210,9 @@ pub(crate) struct Opf {
     pub prefixes: BTreeMap<String, String>,
     pub raw: Metadata,
     pub calibre: CalibreMeta,
+    /// Whether an element named `item` anywhere in it has a `media-overlay` (kfxgen's
+    /// `_has_media_overlays`: the book has read-aloud narration).
+    pub media_overlay: bool,
 }
 
 fn opf_ns(ns: Option<&str>) -> bool {
@@ -386,6 +389,11 @@ impl Opf {
             prefixes,
             raw,
             calibre,
+            media_overlay: doc.descendants().any(|n| {
+                n.is_element()
+                    && n.tag_name().name() == "item"
+                    && n.attribute("media-overlay").is_some()
+            }),
         })
     }
 }
