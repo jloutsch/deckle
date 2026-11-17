@@ -486,11 +486,13 @@ fn malformed_fonts_are_skipped_without_panicking() {
     fonts.push(("too_many.woff".to_owned(), woff(TRUETYPE, &tables)));
     fonts.push(("good.woff".to_owned(), good_woff));
     fonts.push(("good.ttf".to_owned(), good_ttf));
+    // A collection's own header is not read: kfxgen embeds it as it is.
+    fonts.push(("collection.ttc".to_owned(), b"ttcf junk".to_vec()));
 
     let dir = tempfile::tempdir().unwrap();
     let table = table_of(&book_of_fonts(dir.path(), &fonts)).unwrap();
     let kept: Vec<String> = faces(&table).into_iter().map(|(f, _)| f).collect();
-    assert_eq!(kept, ["good.woff", "good.ttf"]);
+    assert_eq!(kept, ["good.woff", "good.ttf", "collection.ttc"]);
 }
 
 #[test]
@@ -740,8 +742,10 @@ fn a_woff_given_beside_a_ttf_face_adds_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let ttf = sfnt(&[], 0);
     let w = woff(TRUETYPE, &small_head());
-    // The WOFF-only rule repeats a face a TTF rule gives; the WOFF2-only rule is another face.
+    // The first WOFF-only rule repeats a face a TTF rule gives; the bold one is another face. A
+    // rule with no family gives none.
     let css = r#"@font-face { font-family: "F"; src: url(f.woff) }
+        @font-face { font-weight: bold; src: url(f.ttf) }
         @font-face { font-family: "F"; src: url(f.ttf) }
         @font-face { font-family: "F"; font-weight: bold; src: url(f.woff), url(f.woff) }"#;
     let path = font_book(dir.path(), css, &[("f.woff", &w), ("f.ttf", &ttf)], &[]);
@@ -752,4 +756,31 @@ fn a_woff_given_beside_a_ttf_face_adds_nothing() {
         sha256(&got[1].1),
         "5c61988bd968fba00792bf848108c7fc5614c98d49fa350c5cfe7fe07cfbdbd3"
     );
+}
+
+#[test]
+fn a_large_compressed_table_unpacks_as_stored_raw() {
+    // Over the 64 KiB the output buffer starts at, so it grows.
+    let big: Vec<u8> = (0..300_000u32).map(|i| (i % 7 + i / 1000) as u8).collect();
+    let mut z = ZlibEncoder::new(Vec::new(), Compression::default());
+    z.write_all(&big).unwrap();
+    let stream = z.finish().unwrap();
+    assert!(stream.len() < big.len());
+    let mut tables = small_head();
+    tables[1] = (b"glyf", big.clone(), big.clone());
+    let stored = woff(TRUETYPE, &tables);
+    tables[1] = (b"glyf", big.clone(), stream);
+    let compressed = woff(TRUETYPE, &tables);
+    let dir = tempfile::tempdir().unwrap();
+    let path = book_of_fonts(
+        dir.path(),
+        &[
+            ("stored.woff".to_owned(), stored),
+            ("compressed.woff".to_owned(), compressed),
+        ],
+    );
+    let got = faces(&table_of(&path).unwrap());
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[0].1, got[1].1);
+    assert!(got[0].1.windows(big.len()).any(|w| w == big));
 }
