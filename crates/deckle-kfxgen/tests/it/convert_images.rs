@@ -359,11 +359,18 @@ fn unreadable_pictures_are_left_out_with_a_warning() {
     garbage_jpeg.extend([0x5A; 200]);
     let mut bad_gif = b"GIF89a\x10\x00\x10\x00\x80\x00\x00".to_vec();
     bad_gif.extend([0xFF; 40]);
-    let files: [(&str, &[u8]); 6] = [
+    // A GIF of no width, and a frame header of four components (CMYK) over nothing.
+    let mut empty_gif = bad_gif.clone();
+    empty_gif[6] = 0;
+    let mut cmyk = b"\xff\xd8\xff\xc0\x00\x14\x08\x00\x10\x00\x10\x04".to_vec();
+    cmyk.extend([0x11; 40]);
+    let files: [(&str, &[u8]); 8] = [
         ("cut.png", &png[..60]),
         ("cut.jpg", &jpeg[..jpeg.len() / 3]),
         ("garbage.jpg", &garbage_jpeg),
         ("bad.gif", &bad_gif),
+        ("empty.gif", &empty_gif),
+        ("cmyk.jpg", &cmyk),
         ("cover.png", &png[..png.len() - 20]),
         ("text.png", b"just some words, not a picture at all"),
     ];
@@ -380,7 +387,33 @@ fn unreadable_pictures_are_left_out_with_a_warning() {
             );
         }
     }
+    for why in [
+        "CMYK picture kept as it is",
+        "GIF has unreadable dimensions",
+    ] {
+        assert!(got.warnings.iter().any(|w| w.contains(why)), "{why}");
+    }
     assert!(got.cover.is_none());
+}
+
+#[test]
+fn a_picture_needing_more_than_512_mib_is_refused_before_decoding() {
+    // 81 megapixels, within the pixel limit, but 16-bit RGBA: 648 MB decoded.
+    let mut png = encode(&picture(8, 8), ImageFormat::Png);
+    png[16..20].copy_from_slice(&9_000u32.to_be_bytes());
+    png[20..24].copy_from_slice(&9_000u32.to_be_bytes());
+    png[24..26].copy_from_slice(&[16, 6]);
+    fix_png_crc(&mut png, 8);
+    let dir = tempfile::tempdir().unwrap();
+    let path = book_of(dir.path(), None, &[("p.png", &png)]);
+    let book = read_book(&path).unwrap();
+    let (got, allocated) =
+        allocated_by(|| convert::images(&book, &path, &ConvertOptions::default()));
+    match got {
+        Err(Error::TooLarge { what }) => assert!(what.contains("p.png"), "{what}"),
+        other => panic!("{:?}", other.map(|i| i.images.len())),
+    }
+    assert!(allocated < 8 << 20, "{allocated} bytes");
 }
 
 #[test]
