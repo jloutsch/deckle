@@ -11,10 +11,12 @@
 //!
 //! Hostile input: a font is only read from the archive, through the manifest item a `src`
 //! names (by href, else by file name, as kfxgen looks it up), so no path from the book reaches
-//! the file system. Every offset and length a font states is checked against its bytes. A
-//! WOFF's tables are inflated no further than the lengths they declare, which together stay
-//! within [`MAX_FONT_BYTES`] for a font (kfxgen's `_check_woff`) and [`MAX_BOOK_FONT_BYTES`]
-//! for the book, charged before inflating. A WOFF's directory holds at most 65,535 entries
+//! the file system; a file is read for its first 4 bytes, then whole only when tried. Every
+//! offset and length a font states is checked against its bytes. A WOFF's tables are inflated
+//! no further than the lengths they declare, which together stay within [`MAX_FONT_BYTES`]
+//! (kfxgen's `_check_woff`). The fonts a book embeds stay within [`MAX_BOOK_FONT_BYTES`]
+//! together: a WOFF charged its tables' declared size before inflating, a TTF/OTF its size
+//! before it is kept, each file once however many rules or hrefs name it. A WOFF's directory holds at most 65,535 entries
 //! (1.3 MB); one naming 4,096 tables or more, or a tag that is not ASCII, is skipped, as
 //! fontTools cannot write it. Each file is worked out once however often the rules name it.
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -37,9 +39,9 @@ use crate::pyvalue::PyValue;
 /// `MAX_FONT_BYTES`: the most bytes a face embeds, and a WOFF's tables unpack to.
 const MAX_FONT_BYTES: usize = 50 * 1024 * 1024;
 
-/// The most bytes the book's WOFF tables may inflate to together, against a book of many
-/// fonts each just under [`MAX_FONT_BYTES`]; past it the book is refused. kfxgen has no such
-/// bound.
+/// The most bytes the book's fonts may come to together (a WOFF's declared tables, a
+/// TTF/OTF's file), against a book of many fonts each just under [`MAX_FONT_BYTES`]; past it
+/// the book is refused. kfxgen has no such bound.
 const MAX_BOOK_FONT_BYTES: u64 = 256 * 1024 * 1024;
 
 /// `parse_weight`: a CSS font-weight as a number, 400 for none or one `int()` can't read.
@@ -318,9 +320,8 @@ struct Fonts<'a> {
     by_base: HashMap<&'a str, usize>,
     kinds: HashMap<usize, Option<Kind>>,
     embeds: HashMap<usize, Option<Arc<[u8]>>>,
-    /// The bytes WOFF tables were allowed to inflate to so far, against
-    /// [`MAX_BOOK_FONT_BYTES`].
-    inflated: u64,
+    /// The font bytes charged so far, against [`MAX_BOOK_FONT_BYTES`].
+    charged: u64,
 }
 
 impl<'a> Fonts<'a> {
@@ -342,7 +343,7 @@ impl<'a> Fonts<'a> {
             by_base,
             kinds: HashMap::new(),
             embeds: HashMap::new(),
-            inflated: 0,
+            charged: 0,
         })
     }
 
@@ -376,10 +377,15 @@ impl<'a> Fonts<'a> {
         if let Some(k) = self.kinds.get(&i) {
             return Ok(k.map(|k| (i, k)));
         }
-        let magic = self.bytes(i)?.and_then(|d| d.get(..4).map(<[u8]>::to_vec));
-        let kind = match magic.as_deref() {
-            Some(b"\x00\x01\x00\x00" | b"OTTO" | b"true" | b"ttcf") => Some(Kind::Sfnt),
-            Some(b"wOFF" | b"wOF2") => Some(Kind::Woff),
+        // Only the magic is read here; the body once, when the font is tried.
+        let magic = match self.zip.read_prefix(&unquote(&self.items[i].href), 4) {
+            Ok(magic) => magic,
+            Err(InspectError::MissingFile(_)) => Vec::new(),
+            Err(e) => return Err(read_error(e)),
+        };
+        let kind = match &magic[..] {
+            b"\x00\x01\x00\x00" | b"OTTO" | b"true" | b"ttcf" => Some(Kind::Sfnt),
+            b"wOFF" | b"wOF2" => Some(Kind::Woff),
             _ => None,
         };
         self.kinds.insert(i, kind);
@@ -402,14 +408,33 @@ impl<'a> Fonts<'a> {
                 file: href.to_owned(),
             });
         } else if data.starts_with(b"wOFF") {
+            // Charged before inflating, the declared size of its tables.
             self.sfnt_from_woff(&data, href)?
-                .filter(|d| d.len() <= MAX_FONT_BYTES)
-        } else {
+                .filter(|d| d.len() <= MAX_FONT_BYTES && check_sfnt(d))
+        } else if check_sfnt(&data) {
+            self.charge(data.len(), href)?;
             Some(data)
+        } else {
+            None
         };
-        let out = data.filter(|d| check_sfnt(d)).map(Arc::from);
+        let out = data.map(Arc::from);
         self.embeds.insert(i, out.clone());
         Ok(out)
+    }
+
+    /// Counts `bytes` of a font file against [`MAX_BOOK_FONT_BYTES`]; the font that passes it
+    /// refuses the book.
+    fn charge(&mut self, bytes: usize, href: &str) -> Result<(), Error> {
+        self.charged += bytes as u64;
+        if self.charged > MAX_BOOK_FONT_BYTES {
+            return Err(Error::TooLarge {
+                what: format!(
+                    "{href}: this book's fonts come to more than {} MiB together",
+                    MAX_BOOK_FONT_BYTES / (1024 * 1024)
+                ),
+            });
+        }
+        Ok(())
     }
 
     /// `sfnt_from_woff` for a WOFF: the bytes fontTools writes for it, None when kfxgen's
@@ -425,7 +450,8 @@ impl<'a> Fonts<'a> {
         if be32(data, 16) as usize > MAX_FONT_BYTES {
             return Ok(None);
         }
-        let mut entries = Vec::with_capacity(num_tables);
+        let mut entries =
+            Vec::with_capacity(num_tables.min((data.len() - WOFF_HEADER_LEN) / WOFF_ENTRY_LEN));
         let mut declared = 0usize;
         for i in 0..num_tables {
             let pos = WOFF_HEADER_LEN + i * WOFF_ENTRY_LEN;
@@ -456,16 +482,8 @@ impl<'a> Fonts<'a> {
         if last.len() >= 4096 || last.keys().any(|t| !t.is_ascii()) {
             return Ok(None);
         }
-        // Charged before inflating: `declared` bounds what the tables inflate to.
-        self.inflated += declared as u64;
-        if self.inflated > MAX_BOOK_FONT_BYTES {
-            return Err(Error::TooLarge {
-                what: format!(
-                    "{href}: this book's WOFF fonts unpack to more than {} MiB together",
-                    MAX_BOOK_FONT_BYTES / (1024 * 1024)
-                ),
-            });
-        }
+        // `declared` bounds what the tables inflate to.
+        self.charge(declared, href)?;
         // `_check_woff` inflates every compressed table, from what of it the file holds, no
         // further than one byte past its length; fontTools then reads the table a tag names
         // last, whole, and inflates it to its end.

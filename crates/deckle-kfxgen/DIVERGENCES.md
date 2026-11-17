@@ -882,19 +882,31 @@ decodes, scales and writes pictures with Qt through calibre; the port uses the `
 
 `convert::font_table` (`font_table.py`) differs here:
 
-- A WOFF2 face that would be embedded refuses the book (`Error::Unsupported`, "WOFF2 fonts"):
+- A WOFF2 that is tried refuses the book (`Error::Unsupported`, "WOFF2 fonts"): every `src`
+  before it failed, including a damaged WOFF2 kfxgen would skip in favour of a later `url()`.
   fontTools rebuilds a WOFF2's glyph tables with its own compiler, which the port does not
-  have. A WOFF2 over 50 MiB, or given after a TTF/OTF that is chosen, is skipped as in kfxgen.
-  Smallest input: `@font-face { font-family: F; src: url(f.woff2) }` with any `wOF2` file.
-- The WOFF tables a book inflates may declare 256 MiB together, charged per WOFF before it is
-  inflated, whether or not it is then embedded; the WOFF that passes it refuses the book
-  (`Error::TooLarge`). kfxgen has no such limit. Smallest input: six WOFFs each declaring
-  50 MiB of tables. Five WOFFs of 65,535 entries each inflating 49.8 MB, the most a WOFF may
-  ask for, took 3.3 s in a debug build before the sixth was refused.
+  have, so it cannot tell a good WOFF2 from a damaged one. A WOFF2 over 50 MiB, or given after
+  a `src` that is chosen, is skipped as in kfxgen. Smallest input:
+  `src: url(bad.woff2), url(good.woff)`, where kfxgen would embed `good.woff` (read, not run:
+  kfxgen's WOFF2 path needs brotli).
+- The fonts a book embeds may come to 256 MiB together: a WOFF is charged the declared size of
+  its tables before it is inflated (whether or not it is then embedded), a TTF/OTF its size
+  before it is kept. Each file is charged once, however many rules or hrefs name it (rules
+  naming one href still give one face, and hrefs finding one file by its file name give a face
+  each, sharing its bytes, as in kfxgen). The font that passes it refuses the book
+  (`Error::TooLarge`). kfxgen has no such limit; calibre holds every file in memory. Smallest
+  input: six TTFs of 50 MiB (the sixth is refused); a 1 MB EPUB of twenty deflated ones held
+  1,000 MiB as faces before. Five WOFFs of 65,535 entries each inflating 49.8 MB, the most a
+  WOFF may ask for, took 3.3 s in a debug build before the sixth was refused.
 - A WOFF is unpacked to the bytes fontTools 4.60.1 writes, compared on the `fonts_woff` model
   and on WOFFs made in the tests; the version calibre bundles was not read.
 - When two manifest files share a file name and a `src` names neither by href, the port takes
   the last in the OPF. calibre's manifest is a set, so which one kfxgen takes varies from run
   to run.
+- A font family is lower-cased by the Rust toolchain's Unicode version (17.0 for rustc 1.99),
+  not Python's (16.0 for 3.14). The 28 code points Unicode 17 gave lower-case forms (U+A7CE,
+  U+A7D2, U+A7D4, U+16EA0–U+16EB8) are lower-cased by Rust and left as they are by Python, so a
+  family holding one gets another `css_family` and name hash than in kfxgen. Smallest input:
+  `font-family: "\16EA0 x"`.
 - `KFXGEN_MAX_FONT_BYTES` is not read; the cap is its default, 50 MiB. kfxgen's warnings for a
   skipped face are not reported.

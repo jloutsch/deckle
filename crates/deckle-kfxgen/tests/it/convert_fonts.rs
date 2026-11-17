@@ -14,6 +14,8 @@ use deckle_kfxgen::pyvalue::PyValue;
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
 use sha2::{Digest, Sha256};
+use zip::write::SimpleFileOptions;
+use zip::{CompressionMethod, ZipWriter};
 
 use crate::convert_args::{dict, sources};
 use crate::convert_support::model_diff;
@@ -70,21 +72,23 @@ fn font_book(dir: &Path, css: &str, fonts: &[(&str, &[u8])], extra: &[(&str, &[u
         r#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">x</dc:identifier><dc:title>T</dc:title><dc:language>en</dc:language></metadata><manifest><item id="c" href="c.xhtml" media-type="application/xhtml+xml"/><item id="s" href="s.css" media-type="text/css"/>{items}</manifest><spine><itemref idref="c"/></spine></package>"#
     );
     let page = r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title><link rel="stylesheet" type="text/css" href="s.css"/></head><body><p>Hi.</p></body></html>"#;
-    let mut entries: Vec<(&str, &[u8], u64)> = vec![
-        ("mimetype", b"application/epub+zip", 20),
-        ("META-INF/container.xml", CONTAINER, CONTAINER.len() as u64),
-        ("content.opf", opf.as_bytes(), opf.len() as u64),
-        ("c.xhtml", page.as_bytes(), page.len() as u64),
-        ("s.css", css.as_bytes(), css.len() as u64),
+    let mut entries: Vec<(&str, &[u8])> = vec![
+        ("mimetype", b"application/epub+zip"),
+        ("META-INF/container.xml", CONTAINER),
+        ("content.opf", opf.as_bytes()),
+        ("c.xhtml", page.as_bytes()),
+        ("s.css", css.as_bytes()),
     ];
-    entries.extend(
-        fonts
-            .iter()
-            .chain(extra)
-            .map(|&(n, d)| (n, d, d.len() as u64)),
-    );
+    entries.extend(fonts.iter().chain(extra));
     let path = dir.join("book.epub");
-    std::fs::write(&path, fixtures::stored_zip(&entries)).unwrap();
+    // `zip`'s writer, stored: its CRC is fast enough for books of 300 MiB of fonts.
+    let mut zip = ZipWriter::new(std::fs::File::create(&path).unwrap());
+    let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+    for (name, data) in entries {
+        zip.start_file(name, stored).unwrap();
+        zip.write_all(data).unwrap();
+    }
+    zip.finish().unwrap();
     path
 }
 
@@ -184,19 +188,27 @@ fn a_font_past_50_mib_is_skipped() {
     let dir = tempfile::tempdir().unwrap();
     let big = sfnt(&[], 50 * MIB + 1 - sfnt(&[], 0).len());
     assert_eq!(big.len(), 50 * MIB + 1);
+    let exact = sfnt(&[], 50 * MIB - sfnt(&[], 0).len());
+    assert_eq!(exact.len(), 50 * MIB);
     let small = sfnt(&[], 4);
     let css = r#"@font-face { font-family: "Big"; src: url(big.ttf), url(small.ttf) }
-        @font-face { font-family: "Only big"; src: url(big.ttf) }"#;
+        @font-face { font-family: "Only big"; src: url(big.ttf) }
+        @font-face { font-family: "Exact"; src: url(exact.ttf) }"#;
     let path = font_book(
         dir.path(),
         css,
-        &[("big.ttf", &big), ("small.ttf", &small)],
+        &[
+            ("big.ttf", &big),
+            ("small.ttf", &small),
+            ("exact.ttf", &exact),
+        ],
         &[],
     );
-    assert_eq!(
-        faces(&table_of(&path).unwrap()),
-        [("big".to_owned(), small)]
-    );
+    let got = faces(&table_of(&path).unwrap());
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[0], ("big".to_owned(), small));
+    // Exactly at the cap is kept.
+    assert!(got[1].0 == "exact" && got[1].1 == exact);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -368,6 +380,56 @@ fn woffs_unpack_as_fonttools_writes_them() {
         .collect();
     tables.extend(tags.iter().map(|t| (t, Vec::new(), Vec::new())));
     let most = woff(TRUETYPE, &tables);
+    // Every table class with dependencies in fontTools 4.60.1, and odd ASCII tags (the
+    // review's `ttf_deps`).
+    let deps: [&[u8; 4]; 39] = [
+        b"head",
+        b"hhea",
+        b"maxp",
+        b"loca",
+        b"glyf",
+        b"fvar",
+        b"name",
+        b"ltag",
+        b"avar",
+        b"cvar",
+        b"cvt ",
+        b"trak",
+        b"vhea",
+        b"vmtx",
+        b"CBLC",
+        b"CBDT",
+        b"EBLC",
+        b"EBDT",
+        b"Gloc",
+        b"Glat",
+        b"TSI0",
+        b"TSI1",
+        b"TSI2",
+        b"TSI3",
+        b"GVAR",
+        b"gvar",
+        b"OS/2",
+        b"cmap",
+        b"hmtx",
+        b"post",
+        b"DSIG",
+        b"CFF2",
+        b"kern",
+        b"LTSH",
+        b"prep",
+        b"\0\0\0\0",
+        b"a b ",
+        b"~~~~",
+        b"\x7f\x7f\x7f\x7f",
+    ];
+    let tables: Vec<_> = deps
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(i, t)| (*t, table_data(t, 3 + i), table_data(t, 3 + i)))
+        .collect();
+    let ttf_deps = woff(TRUETYPE, &tables);
 
     let fonts = [
         (
@@ -399,6 +461,12 @@ fn woffs_unpack_as_fonttools_writes_them() {
             zero_past_end,
             "a58aa0ede5e2c3f87fa1f99b54eb7c13482836b01cafc610542036b8d7422dc6",
             "b464fa11bf06a7b0a5b59350456f2b3bc95a4195da933d7201f266926cdffe6a",
+        ),
+        (
+            "ttf_deps",
+            ttf_deps,
+            "38508a280092ccb186f2d4bccf201c04d9db85b45a8ad882b04815249f8a0a65",
+            "861a1cd794e65e855f480bf95138107894c2ab15f110bf9dcae7f23fffad55fc",
         ),
         (
             "most",
@@ -452,9 +520,15 @@ fn malformed_fonts_are_skipped_without_panicking() {
     edited("offset_wraps.woff", &good_woff, &|w| {
         set_entry(w, 0, 4, u32::MAX - 3)
     });
-    edited("longer_compressed.woff", &good_woff, &|w| {
-        set_entry(w, 0, 8, 21)
-    });
+    // A zlib stream longer than the table it inflates to, exactly: kfxgen refuses it unread.
+    let mut tables = small_head();
+    let maxp = table_data(b"maxp", 6);
+    let mut z = ZlibEncoder::new(Vec::new(), Compression::default());
+    z.write_all(&maxp).unwrap();
+    let stream = z.finish().unwrap();
+    assert!(stream.len() > maxp.len());
+    tables[4] = (b"maxp", maxp, stream);
+    edited("longer_compressed.woff", &woff(TRUETYPE, &tables), &|_| {});
     edited("tables_max.woff", &good_woff, &|w| w[12..14].fill(0xFF));
     let mut tables = small_head();
     tables[1] = (b"glyf", glyf(), unhex(GLYF_ZLIB));
@@ -788,4 +862,75 @@ fn a_large_compressed_table_unpacks_as_stored_raw() {
     assert_eq!(got.len(), 2);
     assert_eq!(got[0].1, got[1].1);
     assert!(got[0].1.windows(big.len()).any(|w| w == big));
+}
+
+/// A TrueType font of `len` bytes: the tables `_check_sfnt` asks for, then zeros.
+fn ttf_of(len: usize) -> Vec<u8> {
+    sfnt(&[], len - sfnt(&[], 0).len())
+}
+
+#[test]
+fn a_book_whose_fonts_pass_256_mib_together_is_refused() {
+    let ttf = ttf_of(50 * MIB);
+    let names: Vec<String> = (0..6).map(|i| format!("f{i}.ttf")).collect();
+    let dir = tempfile::tempdir().unwrap();
+    // Five files of 50 MiB fit. Each is named three times: twice by its href (one face, as
+    // kfxgen keeps one face an href) and once by another href found by its file name (another
+    // face, sharing the bytes). Each file is charged once: 250 MiB.
+    let css: String = names[..5]
+        .iter()
+        .map(|n| {
+            format!(
+                r#"@font-face {{ font-family: "{n}"; src: url({n}) }}
+                @font-face {{ font-family: "{n}"; font-weight: bold; src: url({n}) }}
+                @font-face {{ font-family: "{n}"; font-style: italic; src: url(d/{n}) }}"#
+            )
+        })
+        .collect();
+    let files: Vec<(&str, &[u8])> = names[..5].iter().map(|n| (n.as_str(), &ttf[..])).collect();
+    let path = font_book(dir.path(), &css, &files, &[]);
+    let got = faces(&table_of(&path).unwrap());
+    assert_eq!(got.len(), 10);
+    drop(got);
+    // A sixth passes the budget, and is the one named.
+    let css: String = names
+        .iter()
+        .map(|n| format!(r#"@font-face {{ font-family: "{n}"; src: url({n}) }}"#))
+        .collect();
+    let files: Vec<(&str, &[u8])> = names.iter().map(|n| (n.as_str(), &ttf[..])).collect();
+    let path = font_book(dir.path(), &css, &files, &[]);
+    drop(ttf);
+    let book = read_book(&path).unwrap();
+    let (got, bytes) =
+        allocated_by(|| convert::font_table(&book, &path, &ConvertOptions::default()));
+    let err = got.unwrap_err();
+    assert!(
+        matches!(&err, Error::TooLarge { what } if what.starts_with("f5.ttf: ")),
+        "{err:?}"
+    );
+    eprintln!(
+        "six 50 MiB TTFs, the sixth refused: {} MiB allocated",
+        bytes >> 20
+    );
+    // Each file read once (its buffer grows to 64 MiB) and the five kept copied once: 634 MiB,
+    // about 314 MiB of it live at once. Read twice and all six kept, it was 1,068 MiB.
+    assert!(bytes < 700 << 20, "{bytes} bytes allocated");
+}
+
+#[test]
+fn non_font_files_named_as_src_are_read_for_their_magic_only() {
+    let junk = vec![0u8; 20 * MIB];
+    let names = ["a.bin", "b.bin", "c.bin"];
+    let css: String = names
+        .iter()
+        .map(|n| format!(r#"@font-face {{ font-family: "{n}"; src: url({n}) }}"#))
+        .collect();
+    let files: Vec<(&str, &[u8])> = names.iter().map(|n| (*n, &junk[..])).collect();
+    let dir = tempfile::tempdir().unwrap();
+    let path = font_book(dir.path(), &css, &files, &[]);
+    let book = read_book(&path).unwrap();
+    let (table, bytes) =
+        allocated_by(|| convert::font_table(&book, &path, &ConvertOptions::default()).unwrap());
+    assert!(faces(&table).is_empty());
+    assert!(bytes < MIB as u64, "{bytes} bytes allocated");
 }

@@ -126,6 +126,17 @@ impl EpubReader {
         read_entry(&mut f, self.entry_limit)
     }
 
+    /// The first `n` bytes of `name`, fewer when it is shorter; the rest is not read.
+    pub fn read_prefix(&mut self, name: &str, n: u64) -> Result<Vec<u8>, InspectError> {
+        let f = self
+            .zip
+            .by_name(name)
+            .map_err(|_| InspectError::MissingFile(name.to_owned()))?;
+        let mut out = Vec::new();
+        f.take(n).read_to_end(&mut out).map_err(InspectError::Io)?;
+        Ok(out)
+    }
+
     /// Resolves an href relative to the OPF directory, dropping any fragment.
     pub fn resolve(&self, href: &str) -> String {
         let href = href.split('#').next().unwrap_or("");
