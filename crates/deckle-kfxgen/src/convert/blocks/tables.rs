@@ -1775,12 +1775,11 @@ impl Walker<'_, '_, '_, '_> {
         drop(css);
         let bidi = PyValue::Dict(self.bidi.bidi(dom, self.resolver, table)?);
         let horizontal = dom.attr(table, HORIZONTAL).is_some();
-        let toc = self.opts.toc_targets;
-        if !toc.is_empty() {
+        if self.has_targets {
             let start = table_start_ids(&own, &job.rows);
             if every
                 .iter()
-                .any(|a| !start.contains(a.as_str()) && toc.contains(a))
+                .any(|a| !start.contains(a.as_str()) && self.opts.is_target(a))
             {
                 // A chapter cannot start inside one block: the rows path keeps 5.8.8's
                 // chapters, and records its own listings (#282).

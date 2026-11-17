@@ -336,8 +336,7 @@ impl Walker<'_, '_, '_, '_> {
         // holds one block, so this never refuses it. Kids left flat are looked at again by
         // each container round them, so each kid this loop visits costs a unit, and the ids
         // it reads cost their bytes, charged once after the loop.
-        let toc = self.opts.toc_targets;
-        if !toc.is_empty() {
+        if self.has_targets {
             let (mut looked, mut bytes, mut named) = (0usize, 0usize, false);
             for b in self.blocks[start..].iter().skip(1) {
                 looked += 1;
@@ -351,7 +350,7 @@ impl Walker<'_, '_, '_, '_> {
                 if ids
                     .iter()
                     .filter_map(PyValue::as_str)
-                    .any(|a| toc.contains(a))
+                    .any(|a| self.opts.is_target(a))
                 {
                     named = true;
                     break;

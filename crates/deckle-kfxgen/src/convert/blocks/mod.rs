@@ -180,12 +180,29 @@ impl Block {
 pub struct ExtractOptions<'o> {
     /// Write an eligible `<table>` as one table block, not a paragraph per row.
     pub native_tables: bool,
-    /// The fragment ids this file's contents entries name.
+    /// The fragment ids this file's contents entries name (shared by every file of its base
+    /// name, as kfxgen keys them).
     pub toc_targets: &'o HashSet<String>,
+    /// This file's note ids: not targets though an entry names them (kfxgen takes them out
+    /// of `toc_targets`; here they are read beside it, not copied out of it).
+    pub note_ids: &'o HashSet<String>,
     /// The book's link targets, `"file#id"`.
     pub link_targets: &'o HashSet<String>,
     /// Print contents listings as the book has them (the second pass).
     pub keep_nav_listings: bool,
+}
+
+impl ExtractOptions<'_> {
+    /// Whether `id` is one of kfxgen's `toc_targets`.
+    pub(super) fn is_target(&self, id: &str) -> bool {
+        self.toc_targets.contains(id) && !self.note_ids.contains(id)
+    }
+
+    /// Whether kfxgen's `toc_targets` holds anything: at most one look per note id.
+    pub(super) fn has_targets(&self) -> bool {
+        self.toc_targets.len() > self.note_ids.len()
+            || self.toc_targets.iter().any(|t| !self.note_ids.contains(t))
+    }
 }
 
 /// A spine file's blocks and what the extraction noted about them (kfxgen's out-lists).
@@ -279,5 +296,37 @@ pub(in crate::convert) fn dict_set(pairs: &mut Vec<(PyValue, PyValue)>, key: &st
     match pairs.iter_mut().find(|(k, _)| k.as_str() == Some(key)) {
         Some((_, v)) => *v = value,
         None => pairs.push((s(key), value)),
+    }
+}
+
+/// Where each string key of a dict's pairs is, built once, for writing many keys into one
+/// dict ([`dict_set`] scans the pairs for each, quadratic over many keys).
+pub(in crate::convert) struct DictIndex(HashMap<String, usize>);
+
+impl DictIndex {
+    pub(in crate::convert) fn new(pairs: &[(PyValue, PyValue)]) -> Self {
+        let mut at = HashMap::with_capacity(pairs.len());
+        for (i, (k, _)) in pairs.iter().enumerate() {
+            if let Some(k) = k.as_str() {
+                at.entry(k.to_owned()).or_insert(i);
+            }
+        }
+        Self(at)
+    }
+
+    /// [`dict_set`] on the pairs this index was built from.
+    pub(in crate::convert) fn set(
+        &mut self,
+        pairs: &mut Vec<(PyValue, PyValue)>,
+        key: &str,
+        value: PyValue,
+    ) {
+        match self.0.get(key) {
+            Some(&i) => pairs[i].1 = value,
+            None => {
+                self.0.insert(key.to_owned(), pairs.len());
+                pairs.push((s(key), value));
+            }
+        }
     }
 }

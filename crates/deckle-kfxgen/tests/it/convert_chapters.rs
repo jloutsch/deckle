@@ -7,7 +7,7 @@
 use deckle_kfx::fixtures;
 use deckle_kfxgen::book::{Book, read_book};
 use deckle_kfxgen::convert::{
-    CalibreOpf, Chapter, ConvertOptions, Error, Serials, SpineItem, TextBudget, TocEntry, assemble,
+    CalibreOpf, Chapter, ConvertOptions, Error, Serials, SpineItem, TocEntry, assemble,
     spine_items, split_by_writing_mode,
 };
 use deckle_kfxgen::pyvalue::PyValue;
@@ -77,10 +77,6 @@ fn items_of(record: &PyValue) -> Vec<SpineItem> {
         .collect()
 }
 
-fn budgets(book: &Book) -> Vec<TextBudget> {
-    book.files.iter().map(|_| TextBudget::new()).collect()
-}
-
 /// For every source and each of its passes, assembly of the files kfxgen assembled gives the
 /// chapters kfxgen had right before its title-page step.
 #[test]
@@ -118,7 +114,6 @@ fn the_per_file_loop_feeds_assembly_what_python_fed_it() {
         let book = read_book(&fixtures::kfxgen(&format!("sources/{name}.epub")))
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         let opf = CalibreOpf::new(&book).unwrap_or_else(|e| panic!("{name}: {e:?}"));
-        let budgets = budgets(&book);
         let mut serials = Serials::default();
         let want_entries = entries_py(&entries_of(name));
         for (p, record) in records(name).iter().enumerate() {
@@ -127,7 +122,6 @@ fn the_per_file_loop_feeds_assembly_what_python_fed_it() {
                 &book,
                 &opf,
                 &ConvertOptions::default(),
-                &budgets,
                 &mut serials,
                 p == 1,
             );
@@ -193,7 +187,6 @@ fn run(book: &Book, opf: &CalibreOpf) -> Result<(Vec<SpineItem>, Vec<TocEntry>),
         book,
         opf,
         &ConvertOptions::default(),
-        &budgets(book),
         &mut Serials::default(),
         false,
     )
@@ -409,14 +402,15 @@ fn files_are_chapters_when_no_entry_lands() {
 /// (`tests/it/data/assembly_probe.json`, which says how they were run): a listing kept as a
 /// page of no blocks, a listing's chapter, entries merged into one section and split again
 /// round a listing, entries on one block, a head before the first entry with and without an
-/// entry's id, files named by a file name, and chapters cut by writing mode.
+/// entry's id, files named by a file name, chapters cut by writing mode, and entries naming
+/// ids their file lacks after an entry there (each on the block after the last one placed).
 #[test]
 fn assembly_of_crafted_books_matches_kfxgen() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/it/data/assembly_probe.json");
     let probe: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     let cases = probe["cases"].as_object().unwrap();
-    assert_eq!(cases.len(), 6);
+    assert_eq!(cases.len(), 7);
     let mut failures = Vec::new();
     for (name, case) in cases {
         let py = |key: &str| PyValue::from_json(&case[key], &path, name).unwrap();
@@ -462,13 +456,13 @@ fn block_with_id(file: &str, text: &str, id: &str) -> PyValue {
 /// What kfxgen does in time quadratic in blocks, entries or listings, done here once each:
 /// an entry for each of 50,000 blocks, each followed by one out of document order (kfxgen
 /// scans the blocks back to it for a page break), a listing after every other block (tested
-/// against every section), and 20,000 entries naming ids a one-block file lacks (each key
-/// tested against the block's keys, and a chain of entries on one block followed link by
-/// link).
+/// against every section), and 200,000 entries naming ids a one-block file lacks (each key
+/// tested against the block's keys and written to its offsets, and a chain of entries on one
+/// block followed link by link).
 #[test]
 fn assembly_of_many_blocks_and_entries_costs_little() {
     const BLOCKS: usize = 50_000;
-    const MISSING: usize = 20_000;
+    const MISSING: usize = 200_000;
     let f: Vec<PyValue> = (0..BLOCKS)
         .map(|i| block_with_id("f.xhtml", &format!("b{i}"), &format!("i{i}")))
         .collect();
@@ -581,4 +575,140 @@ fn keys_of_ids_ending_a_file_leave_its_table() {
     assert!(format!("{a:?}").contains("\"t\""), "the id stays: {a:?}");
     let b = items[1].blocks[0].to_py();
     assert_eq!(strings(b.get("anchor_keys")), ["a.xhtml#t", "b.xhtml"]);
+}
+
+/// The keys of a file of 200,000 ids that shows nothing go onto the next shown block, each
+/// written to its offsets once: the work is linear in the keys. The ids sit in a part not
+/// shown, which the walk passes over, so the time is the keys'.
+#[test]
+fn many_keys_of_a_file_that_shows_nothing_cost_little() {
+    const IDS: usize = 200_000;
+    let ids: String = (0..IDS).map(|i| format!(r#"<a id="i{i}"></a>"#)).collect();
+    let ids = format!(r#"<div class="h">{ids}</div>"#);
+    let (book, opf) = book_of_pages(
+        &[("a.xhtml", &ids), ("b.xhtml", "<p>x</p>")],
+        ".h { display: none }",
+    );
+    let start = std::time::Instant::now();
+    let (items, _) = run(&book, &opf).unwrap();
+    let took = start.elapsed();
+    eprintln!("{IDS} keys of a file showing nothing: {took:?}");
+    let b = items[0].blocks[0].to_py();
+    let keys = strings(b.get("anchor_keys"));
+    assert_eq!(keys.len(), IDS + 2);
+    assert_eq!(keys[..2], ["a.xhtml", "a.xhtml#i0"]);
+    let offsets = b.get("anchor_offsets").unwrap();
+    assert_eq!(offsets.get("a.xhtml#i199999"), Some(&PyValue::Int(0)));
+    assert!(took < crate::support::COST_LIMIT, "{took:?}");
+}
+
+/// Files of one base name in different folders share one set of contents targets (kfxgen
+/// keys them by base name); reading it for each file does not copy it: 400 files and 40,000
+/// entries allocate little.
+#[test]
+fn files_sharing_a_base_name_do_not_each_copy_the_contents_targets() {
+    const FILES: usize = 400;
+    const PER_FILE: usize = 100;
+    let mut items = String::new();
+    let mut spine = String::new();
+    let mut points = String::new();
+    let page = r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title></head><body><p>x</p></body></html>"#;
+    let names: Vec<String> = (0..FILES).map(|i| format!("d{i}/p.xhtml")).collect();
+    for (i, name) in names.iter().enumerate() {
+        items += &format!(r#"<item id="f{i}" href="{name}" media-type="{XHTML}"/>"#);
+        spine += &format!(r#"<itemref idref="f{i}"/>"#);
+        for j in 0..PER_FILE {
+            points += &format!(
+                r#"<navPoint><navLabel><text>E</text></navLabel><content src="{name}#e{i}_{j}"/></navPoint>"#
+            );
+        }
+    }
+    let ncx = format!(
+        r#"<?xml version="1.0"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head/><docTitle><text>T</text></docTitle><navMap>{points}</navMap></ncx>"#
+    );
+    let opf = format!(
+        r#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">x</dc:identifier><dc:title>T</dc:title><dc:language>en</dc:language></metadata><manifest>{items}<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest><spine toc="ncx">{spine}</spine></package>"#
+    );
+    let mut zipped: Vec<(&str, &[u8])> = vec![("toc.ncx", ncx.as_bytes())];
+    for name in &names {
+        zipped.push((name, page.as_bytes()));
+    }
+    let (book, opf) = book_of(&opf, &zipped);
+    let ((items, entries), bytes) = crate::support::allocated_by(|| run(&book, &opf).unwrap());
+    eprintln!(
+        "{FILES} files, {} entries: {} MB allocated",
+        entries.len(),
+        bytes >> 20
+    );
+    assert_eq!((items.len(), entries.len()), (FILES, FILES * PER_FILE));
+    assert!(bytes < 200 << 20, "{} MB allocated", bytes >> 20);
+}
+
+/// Each pass charges a fresh budget for each file, so a file that fits once is not refused on
+/// the second pass: a page holding a contents listing left out on the first pass (no entry
+/// and no contents page name it, so kfxgen prints it on a second), and a table of 500
+/// `<col span="1000"/>`, which charges a little over half a budget each pass.
+#[test]
+fn the_second_pass_charges_a_fresh_budget() {
+    let listing = r#"<p>An opening paragraph that runs on past sixty characters of text.</p><div class="toc"><p><a href="b.xhtml">B</a></p></div>"#;
+    let table = format!(
+        "<table>{}<tr><td>x</td></tr></table>",
+        r#"<col span="1000"/>"#.repeat(500)
+    );
+    let (book, opf) = book_of_pages(&[("t.xhtml", listing), ("b.xhtml", &table)], "");
+    let mut serials = Serials::default();
+    for keep_nav_listings in [false, true] {
+        let got = spine_items(
+            &book,
+            &opf,
+            &ConvertOptions::default(),
+            &mut serials,
+            keep_nav_listings,
+        );
+        assert!(
+            got.is_ok(),
+            "pass {}: {:?}",
+            keep_nav_listings as u8,
+            got.err()
+        );
+    }
+}
+
+/// A note kfxgen finds by its links alone (here a link marked as a note reference), in a book
+/// whose contents Calibre makes, is one of its file's note ids, though nothing in the file
+/// marks it.
+#[test]
+fn a_note_found_by_its_links_is_a_note_of_its_file() {
+    let (book, opf) = book_of_pages(
+        &[
+            (
+                "a.xhtml",
+                r#"<p>See this<a role="doc-noteref" href="b.xhtml#n1">1</a> here.</p>"#,
+            ),
+            ("b.xhtml", r#"<p id="n1">The note.</p>"#),
+        ],
+        "",
+    );
+    assert!(book.oeb.auto_generated_toc);
+    let (items, _) = run(&book, &opf).unwrap();
+    assert!(items[0].note_ids.is_empty(), "{:?}", items[0].note_ids);
+    assert_eq!(items[1].note_ids, ["n1".to_owned()].into());
+}
+
+/// The keys of a file that shows nothing go first on a native table opening the next file,
+/// on the table's own keys too (its first row takes them).
+#[test]
+fn keys_of_what_shows_nothing_go_on_a_native_table_too() {
+    let (book, opf) = book_of_pages(
+        &[
+            ("a.xhtml", r#"<div id="e"></div>"#),
+            ("b.xhtml", "<table><tr><td>x</td><td>y</td></tr></table>"),
+        ],
+        "",
+    );
+    let (items, _) = run(&book, &opf).unwrap();
+    let b = items[0].blocks[0].to_py();
+    let table = b.get("table").unwrap();
+    let keys = strings(table.get("anchor_keys"));
+    assert_eq!(keys[..2], ["a.xhtml", "a.xhtml#e"], "{keys:?}");
 }

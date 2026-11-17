@@ -246,6 +246,8 @@ pub(super) struct Walker<'o, 'w, 'a, 's> {
     pub(super) dom: &'a Dom,
     pub(super) resolver: &'a Resolver<'a>,
     pub(super) opts: &'o ExtractOptions<'o>,
+    /// Whether this file has contents targets ([`ExtractOptions::has_targets`], read once).
+    pub(super) has_targets: bool,
     pub(super) blocks: Vec<Block>,
     next_id: usize,
     pub(super) pending_ids: Vec<String>,
@@ -291,6 +293,7 @@ pub(super) fn walk(w: &mut Walk, opts: &ExtractOptions) -> Result<Walked, ItemEr
         dom,
         resolver,
         opts,
+        has_targets: opts.has_targets(),
         blocks: Vec::new(),
         next_id: 0,
         pending_ids: Vec::new(),

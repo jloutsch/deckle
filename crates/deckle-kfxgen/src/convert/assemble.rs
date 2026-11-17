@@ -20,7 +20,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
-use super::blocks::{Block, Field, s};
+use super::blocks::{Block, DictIndex, Field, s};
 use super::chapters::{Chapter, SpineItem, fragment, joined_text, toc_fragments};
 use super::href::{key_doc, normalize, unquote};
 use super::inline::words;
@@ -244,8 +244,9 @@ fn plan(
     // Page -> (the file of the entry before, the listing): a page of no blocks.
     let mut empty_listing: HashMap<usize, (usize, Listing)> = HashMap::new();
     let mut moved_ids: HashSet<String> = HashSet::new();
-    // The keys on each block an entry's key was added to, so each is tested once.
-    let mut keyed: HashMap<usize, HashSet<String>> = HashMap::new();
+    // The keys on each block an entry's key was added to, so each is tested once, and where
+    // its offsets are, so each is written once.
+    let mut keyed: HashMap<usize, (HashSet<String>, DictIndex)> = HashMap::new();
     for entry in entries {
         let Some(&own_si) = order.get(&normalize(&entry.href)) else {
             continue;
@@ -314,9 +315,14 @@ fn plan(
             && !amap.contains_key(frag.as_ref())
             && let Some(block) = flat.get_mut(items, fi)
         {
-            let there = keyed
-                .entry(fi)
-                .or_insert_with(|| ids(block.get("anchor_keys")).map(str::to_owned).collect());
+            let (there, at) = keyed.entry(fi).or_insert_with(|| {
+                let offsets = match block.get("anchor_offsets") {
+                    Some(PyValue::Dict(pairs)) => DictIndex::new(pairs),
+                    _ => DictIndex::new(&[]),
+                };
+                let keys = ids(block.get("anchor_keys")).map(str::to_owned).collect();
+                (keys, offsets)
+            });
             if there.insert(key.clone()) {
                 match block.get_mut("anchor_keys") {
                     Some(PyValue::List(keys)) => keys.push(s(key)),
@@ -326,7 +332,7 @@ fn plan(
                     block.set("anchor_offsets", PyValue::Dict(Vec::new()));
                 }
                 if let Some(PyValue::Dict(offsets)) = block.get_mut("anchor_offsets") {
-                    super::blocks::dict_set(offsets, key, PyValue::Int(0));
+                    at.set(offsets, key, PyValue::Int(0));
                 }
             }
         }

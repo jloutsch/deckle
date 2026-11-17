@@ -734,11 +734,15 @@ The picture tokens and the initial (`src/convert/pictures.rs`, `initial.rs`, at 
   the generator refuses `label_texts` anyway.
 - Each anchor key a block gets is a copy of the file's href and an id. The copies are charged to
   the file's style text budget, so a file with a very long href and very many ids is refused
-  where kfxgen makes the book. So are the keys the per-file loop makes (`src/convert/chapters.rs`)
-  for a file that shows nothing (one for each of its ids) and for the ids ending a file. A file
-  past its budget stops the conversion with `Error::TooLarge`, "<file>: converting this file
-  copies or reads more than 32000000 bytes of its text and styles" (the budget, 500,000 units
-  of 64 bytes, counts the text and styles the converter copies or reads, not only CSS).
+  where kfxgen makes the book. The keys the per-file loop makes (`src/convert/chapters.rs`) for
+  a file that shows nothing (one for each of its ids) and for the ids ending a file are charged
+  too, but in whole 64-byte units, so a key under 64 bytes costs nothing: the book's node limit,
+  not the budget, bounds how many there are. A file past its budget stops the conversion with
+  `Error::TooLarge`, "<file>: converting this file copies or reads more than 32000000 bytes of
+  its text and styles" (the budget, 500,000 units of 64 bytes, counts the text and styles the
+  converter copies or reads, not only CSS). Each pass of the loop (kfxgen's second prints the
+  contents listings) charges a new budget for each file, so the second pass refuses only what
+  the first would.
 - An `<svg>`'s own ids go on each picture block it draws (`_emit_image_block`), twice a block;
   kfxgen copies them without a limit. The port charges the copies to the same budget before
   making them, so `<svg id="(1 MiB)">` with 200 `<image href="a"/>` stops the file

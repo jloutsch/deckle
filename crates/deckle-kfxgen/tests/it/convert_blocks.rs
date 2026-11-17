@@ -232,6 +232,7 @@ fn blocks_match_the_dump() {
                 let opts = ExtractOptions {
                     native_tables: args.get("native_tables") == Some(&PyValue::Bool(true)),
                     toc_targets: &toc_targets,
+                    note_ids: &HashSet::new(),
                     link_targets: &link_targets,
                     keep_nav_listings: args.get("keep_nav_listings") == Some(&PyValue::Bool(true)),
                 };
@@ -319,6 +320,7 @@ fn extract(file: &deckle_kfxgen::book::File) -> Result<FileBlocks, ItemError> {
     let opts = ExtractOptions {
         native_tables: true,
         toc_targets: &none,
+        note_ids: &HashSet::new(),
         link_targets: &none,
         keep_nav_listings: false,
     };
@@ -532,6 +534,7 @@ fn margins_carried_through_too_many_divs_are_refused() {
     let opts = ExtractOptions {
         native_tables: true,
         toc_targets: &none,
+        note_ids: &HashSet::new(),
         link_targets: &none,
         keep_nav_listings: false,
     };
@@ -628,6 +631,7 @@ fn long_margins_kept_for_pictures_in_many_divs_are_refused() {
     let opts = ExtractOptions {
         native_tables: true,
         toc_targets: &none,
+        note_ids: &HashSet::new(),
         link_targets: &none,
         keep_nav_listings: false,
     };
@@ -833,6 +837,7 @@ fn cost_of(file: &deckle_kfxgen::book::File) -> (usize, u64, Duration) {
     let opts = ExtractOptions {
         native_tables: true,
         toc_targets: &none,
+        note_ids: &HashSet::new(),
         link_targets: &none,
         keep_nav_listings: false,
     };
@@ -1104,6 +1109,7 @@ fn before_spacing(body: &str, css: &str) -> Vec<Block> {
     let opts = ExtractOptions {
         native_tables: true,
         toc_targets: &none,
+        note_ids: &HashSet::new(),
         link_targets: &none,
         keep_nav_listings: false,
     };
@@ -1190,6 +1196,7 @@ fn walked_with(body: &str, css: &str, toc: &[&str]) -> BeforeSpacing {
     let opts = ExtractOptions {
         native_tables: true,
         toc_targets: &toc,
+        note_ids: &HashSet::new(),
         link_targets: &none,
         keep_nav_listings: false,
     };
@@ -1884,6 +1891,7 @@ fn widths_repeated_by_col_spans_are_charged() {
     let opts = ExtractOptions {
         native_tables: true,
         toc_targets: &none,
+        note_ids: &HashSet::new(),
         link_targets: &none,
         keep_nav_listings: false,
     };
@@ -2062,6 +2070,7 @@ fn tables_no_dump_holds_are_built_as_kfxgen_builds_them() {
     let opts = ExtractOptions {
         native_tables: true,
         toc_targets: &toc,
+        note_ids: &HashSet::new(),
         link_targets: &empty,
         keep_nav_listings: false,
     };
@@ -2631,6 +2640,7 @@ fn an_svg_s_id_copied_onto_each_picture_is_charged() {
         let opts = ExtractOptions {
             native_tables: true,
             toc_targets: &none,
+            note_ids: &HashSet::new(),
             link_targets: &none,
             keep_nav_listings: false,
         };

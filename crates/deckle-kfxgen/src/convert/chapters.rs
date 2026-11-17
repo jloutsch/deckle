@@ -3,17 +3,20 @@
 //! (`converter.py` `extract_chapters_from_oeb` up to `_assemble_chapters_by_coordinate`, at
 //! kfxgen `ad38ec8`), the chapter dicts, and `_split_by_writing_mode`.
 //!
-//! Every file is extracted once per pass, each charged to its own [`TextBudget`] (the same one
-//! the note and link scans charge), and the keys this loop copies (an empty file's ids, a
-//! file's trailing ids) are charged to it too. So the work and memory of a pass are bounded by
-//! the budgets times the files, and the files by the book's node limit.
+//! Each pass extracts every file once, charged to a [`TextBudget`] of the file's own, made new
+//! for the pass (the same one the pass's note and link scans charge), so a file the first pass
+//! fits is not refused by the second. The keys this loop copies (an empty file's ids, a file's
+//! trailing ids) are charged to it too, in whole 64-byte units, so a key under 64 bytes is
+//! free and the book's node limit bounds how many there are. So the work and memory of a pass
+//! are bounded by the budgets times the files and by the node limit; the second pass, which
+//! kfxgen runs after dropping the first's chapters, at most doubles the work.
 
 use std::collections::{HashMap, HashSet};
 
 use deckle_limits::MAX_CASCADE_DECLS;
 
 use super::args::is_vertical;
-use super::blocks::{Block, Field, dedupe, dict_set, s, strs};
+use super::blocks::{Block, DictIndex, Field, dedupe, dict_set, s, strs};
 use super::href::{key_doc, normalize, unquote};
 use super::inline::{Walk, keyword, own_anchor_ids};
 use super::notes::{book_link_targets, note_pair_ids, note_target_ids};
@@ -192,9 +195,9 @@ pub(super) fn joined_text<'b>(blocks: impl IntoIterator<Item = &'b Block>) -> St
 /// `extract_chapters_from_oeb`'s files, up to chapter assembly: the book's contents entries
 /// and, for each spine file in kfxgen's order that shows something, its blocks
 /// ([`SpineItem`]), at the page width kfxgen extracts the book at. `keep_nav_listings` is the
-/// second pass, which prints the book's contents listings; `budgets` holds one
-/// [`TextBudget`] for each of [`Book::files`], for every pass; `serials` runs on across the
-/// book and its passes.
+/// second pass, which prints the book's contents listings; each call charges a new
+/// [`TextBudget`] for each of [`Book::files`]; `serials` runs on across the book and its
+/// passes.
 ///
 /// A file kfxgen raises on is left out, as kfxgen's `try` round each file leaves it ("Spine
 /// item N parse failed"). What the port refuses stops the book: a feature refused by name
@@ -204,10 +207,10 @@ pub fn spine_items(
     book: &Book,
     opf: &CalibreOpf,
     opts: &ConvertOptions,
-    budgets: &[TextBudget],
     serials: &mut Serials,
     keep_nav_listings: bool,
 ) -> Result<(Vec<SpineItem>, Vec<TocEntry>), Error> {
+    let budgets: Vec<TextBudget> = book.files.iter().map(|_| TextBudget::new()).collect();
     // Percentages are measured against a 480pt page in a vertical book, 384pt otherwise.
     let _page = page_width(if is_vertical(book) {
         VERTICAL_PT
@@ -215,18 +218,18 @@ pub fn spine_items(
         HORIZONTAL_PT
     });
     let native_tables = !opts.disable_native_tables;
-    let book_wide = |e: Error| match budget_spent(book, budgets) {
+    let book_wide = |e: Error| match budget_spent(book, &budgets) {
         Some(i) => budget_refusal(e, &book.files[i].href, &budgets[i]),
         None => e,
     };
     // kfxgen passes None without native tables; the walk reads the targets only with them.
     let link_targets = if native_tables {
-        book_link_targets(book, budgets).map_err(book_wide)?
+        book_link_targets(book, &budgets).map_err(book_wide)?
     } else {
         HashSet::new()
     };
     let note_pairs = if book.oeb.auto_generated_toc {
-        note_pair_ids(book, budgets).map_err(book_wide)?
+        note_pair_ids(book, &budgets).map_err(book_wide)?
     } else {
         HashMap::new()
     };
@@ -254,13 +257,11 @@ pub fn spine_items(
         if let Some(pairs) = note_pairs.get(&doc) {
             note_ids.extend(pairs.iter().cloned());
         }
-        let targets: HashSet<String> = toc_targets
-            .get(&normalize(href))
-            .map(|t| t.difference(&note_ids).cloned().collect())
-            .unwrap_or_default();
+        let no_targets = HashSet::new();
         let extract = ExtractOptions {
             native_tables,
-            toc_targets: &targets,
+            toc_targets: toc_targets.get(&normalize(href)).unwrap_or(&no_targets),
+            note_ids: &note_ids,
             link_targets: &link_targets,
             keep_nav_listings,
         };
@@ -330,8 +331,9 @@ pub fn spine_items(
             last.set("anchor_offsets", PyValue::Dict(Vec::new()));
         }
         if let Some(PyValue::Dict(offsets)) = last.get_mut("anchor_offsets") {
+            let mut index = DictIndex::new(offsets);
             for k in &orphan_keys {
-                dict_set(offsets, k, at.clone());
+                index.set(offsets, k, at.clone());
             }
         }
     }
@@ -432,8 +434,9 @@ fn prepend_keys(block: &mut Block, keys: Vec<String>) {
         block.set("anchor_offsets", PyValue::Dict(Vec::new()));
     }
     if let Some(PyValue::Dict(offsets)) = block.get_mut("anchor_offsets") {
+        let mut at = DictIndex::new(offsets);
         for k in &keys {
-            dict_set(offsets, k, PyValue::Int(0));
+            at.set(offsets, k, PyValue::Int(0));
         }
     }
     if let Some(PyValue::Dict(tbl)) = block.get_mut("table") {
