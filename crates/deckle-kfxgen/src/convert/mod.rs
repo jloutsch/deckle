@@ -75,11 +75,11 @@ pub struct Converted {
     pub warnings: Vec<String>,
 }
 
-/// kfxgen's `convert_oeb_to_kfx` up to the generator, on the EPUB at `path`, in its order:
-/// the metadata, the cover and pictures, the chapters (a second pass printing the contents
-/// listings when the first leaves the book no contents page), the split by writing mode, the
-/// fonts, then the notes, landmarks and page list. `display_dims` is always empty, as kfxgen
-/// passes it.
+/// kfxgen's `convert_oeb_to_kfx` up to the generator, on the EPUB at `path`: the metadata
+/// (with the landmarks and page list, which kfxgen works out last; neither can fail or log, so
+/// the order does not show), the cover and pictures, the chapters (a second pass printing the
+/// contents listings when the first leaves the book no contents page), the split by writing
+/// mode, the fonts, then the footnotes. `display_dims` is always empty, as kfxgen passes it.
 ///
 /// Errors: the book cannot be read ([`Error::Book`]), uses what the port refuses
 /// ([`Error::Unsupported`]), passes one of its limits ([`Error::TooLarge`]), or shows nothing
@@ -185,8 +185,9 @@ fn chapters(
         let mut said = Vec::new();
         let (items, entries) =
             spine_items(book, opf, opts, &mut serials, keep_nav_listings, &mut said)?;
-        let tables: Vec<(String, BlockId)> = (items.iter())
-            .flat_map(|i| i.tables_seen.iter().map(|&b| (i.href.clone(), b)))
+        // Each table's file by its place among the items: the warning counts files only.
+        let tables: Vec<(usize, BlockId)> = (items.iter().enumerate())
+            .flat_map(|(n, i)| i.tables_seen.iter().map(move |&b| (n, b)))
             .collect();
         let mut chapters = assemble(items, &entries, cover_href, &mut said);
         if listing_without_contents(&chapters, keep_nav_listings) {
@@ -204,15 +205,15 @@ fn chapters(
 /// whose first block is still a block of a chapter, and why.
 fn flattened_tables(
     chapters: &[Chapter],
-    tables: &[(String, BlockId)],
+    tables: &[(usize, BlockId)],
     opts: &ConvertOptions,
 ) -> Option<String> {
     let kept: HashSet<BlockId> = (chapters.iter())
         .flat_map(|c| c.blocks().iter().map(Block::id))
         .collect();
-    let written: Vec<&str> = (tables.iter())
+    let written: Vec<usize> = (tables.iter())
         .filter(|(_, b)| kept.contains(b))
-        .map(|(href, _)| href.as_str())
+        .map(|&(file, _)| file)
         .collect();
     let n = written.len();
     if n == 0 {

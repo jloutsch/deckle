@@ -211,6 +211,33 @@ fn opf2(manifest: &str, spine: &str, extra_meta: &str) -> String {
     )
 }
 
+/// A spine listing one file many times does not copy its href for each listing: 5,000
+/// itemrefs of a stylesheet named by 20,000 characters are read, and the stylesheet left out of
+/// the spine once, in well under the 100 MB a copy each would take (Calibre keeps each spine
+/// item once).
+#[test]
+fn a_file_listed_many_times_in_the_spine_is_not_copied_each_time() {
+    let name = format!("{}.css", "s".repeat(20_000));
+    let manifest = format!(
+        r#"<item id="c" href="c.xhtml" media-type="application/xhtml+xml"/><item id="s" href="{name}" media-type="text/css"/>"#
+    );
+    let spine = format!(
+        r#"<itemref idref="c"/>{}"#,
+        r#"<itemref idref="s"/>"#.repeat(5_000)
+    );
+    let f = epub_with(
+        &opf2(&manifest, &spine, ""),
+        &[("c.xhtml", CHAPTER), (&name, "p {}")],
+    );
+    let (oeb, bytes) = crate::support::allocated_by(|| {
+        let (pkg, mut zip) = open(f.path());
+        oeb_view(&pkg, &mut zip).unwrap()
+    });
+    assert_eq!(oeb.spine.len(), 1);
+    assert_eq!(oeb.spine_left_out, [name]);
+    assert!(bytes < 20_000_000, "{bytes} bytes");
+}
+
 #[test]
 fn no_contents_file_gives_generated_flag() {
     let mut f = tempfile::NamedTempFile::new().unwrap();

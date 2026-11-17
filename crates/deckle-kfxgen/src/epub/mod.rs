@@ -37,8 +37,6 @@ pub struct Package {
     pub ncx_text: Option<String>,
     /// The manifest in OPF order, hrefs as written (relative to the OPF).
     pub manifest: Vec<Item>,
-    /// The spine's itemrefs that name a manifest item, hrefs as written.
-    pub spine: Vec<SpineRef>,
     /// The `<guide>` references as written.
     pub guide: Vec<GuideRef>,
     /// The metadata as written: each field's elements' text, in OPF order.

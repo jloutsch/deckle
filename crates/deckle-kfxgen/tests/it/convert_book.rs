@@ -14,6 +14,7 @@ use deckle_kfxgen::pyvalue::PyValue;
 use crate::convert_args::sources;
 use crate::convert_images::compare;
 use crate::convert_support::model_diff;
+use crate::support::allocated_by;
 use crate::whole_book::NOT_PORTED;
 
 /// The arguments that hold pictures.
@@ -298,15 +299,32 @@ fn convert_says_what_kfxgen_warns_about() {
 /// An EPUB 2 book at `path` of the pages `files` (name, `<body>` content) in that spine
 /// order, with an NCX of `points` (label, src).
 fn book_of_pages(path: &Path, files: &[(&str, &str)], points: &[(&str, &str)]) {
+    book_with(path, files, points, "", None);
+}
+
+/// [`book_of_pages`] with `meta` in the OPF's metadata and, if given, a PNG `cover.png` that
+/// the metadata names as the cover. A page's content starting `<body` is its whole `<body>`.
+fn book_with(
+    path: &Path,
+    files: &[(&str, &str)],
+    points: &[(&str, &str)],
+    meta: &str,
+    cover: Option<&[u8]>,
+) {
     let mut items =
         String::from(r#"<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>"#);
+    let mut meta = meta.to_owned();
+    if cover.is_some() {
+        items += r#"<item id="cov" href="cover.png" media-type="image/png"/>"#;
+        meta += r#"<meta name="cover" content="cov"/>"#;
+    }
     let mut spine = String::new();
     for (i, (name, _)) in files.iter().enumerate() {
         items += &format!(r#"<item id="f{i}" href="{name}" media-type="application/xhtml+xml"/>"#);
         spine += &format!(r#"<itemref idref="f{i}"/>"#);
     }
     let opf = format!(
-        r#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">x</dc:identifier><dc:title>T</dc:title><dc:language>en</dc:language></metadata><manifest>{items}</manifest><spine toc="ncx">{spine}</spine></package>"#
+        r#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">x</dc:identifier><dc:title>T</dc:title><dc:language>en</dc:language>{meta}</metadata><manifest>{items}</manifest><spine toc="ncx">{spine}</spine></package>"#
     );
     let nav: String = (points.iter().enumerate())
         .map(|(n, (label, src))| {
@@ -320,8 +338,13 @@ fn book_of_pages(path: &Path, files: &[(&str, &str)], points: &[(&str, &str)]) {
     );
     let pages: Vec<(String, String)> = (files.iter())
         .map(|(name, body)| {
+            let body = if body.starts_with("<body") {
+                (*body).to_owned()
+            } else {
+                format!("<body>{body}</body>")
+            };
             let page = format!(
-                r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title></head><body>{body}</body></html>"#
+                r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title></head>{body}</html>"#
             );
             ((*name).to_owned(), page)
         })
@@ -334,6 +357,9 @@ fn book_of_pages(path: &Path, files: &[(&str, &str)], points: &[(&str, &str)]) {
     ];
     for (name, page) in &pages {
         entries.push((name, page.as_bytes(), page.len() as u64));
+    }
+    if let Some(png) = cover {
+        entries.push(("cover.png", png, png.len() as u64));
     }
     std::fs::write(path, fixtures::stored_zip(&entries)).unwrap();
 }
@@ -363,4 +389,161 @@ fn only_tables_still_in_a_chapter_are_counted() {
     };
     let got = convert(&path, &opts).unwrap();
     assert_eq!(got.warnings, Vec::<String>::new());
+}
+
+/// The page's file name is not copied once for each table written as rows (kfxgen's tuples
+/// share one string): 2,000 tables in a file named by 20,000 characters cost about what they
+/// cost in a file of a short name, where a copy each would add 40 MB.
+#[test]
+fn tables_written_as_rows_do_not_copy_their_file_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let body = "<table><tr><td>a</td></tr></table><p>x</p>".repeat(2_000);
+    let opts = ConvertOptions {
+        disable_native_tables: true,
+        ..ConvertOptions::default()
+    };
+    let cost = |name: &str| {
+        let path = dir.path().join(format!("{}.epub", name.len()));
+        book_of_pages(&path, &[(name, &body)], &[("One", name)]);
+        let (got, bytes) = allocated_by(|| convert(&path, &opts).unwrap());
+        assert!(
+            got.warnings
+                .iter()
+                .any(|w| w.starts_with("  2000 tables in 1 file"))
+        );
+        bytes
+    };
+    let short = cost("a.xhtml");
+    let long = cost(&format!("{}.xhtml", "a".repeat(20_000)));
+    assert!(
+        long.saturating_sub(short) < 20_000_000,
+        "{short} bytes, {long} with the long name"
+    );
+}
+
+/// A PNG of `w` × `h` grey pixels.
+fn png(w: u32, h: u32) -> Vec<u8> {
+    let img =
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(w, h, image::Rgb([90, 90, 90])));
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+fn chapters_of(got: &Converted) -> &[PyValue] {
+    got.model
+        .args
+        .get("chapters")
+        .and_then(PyValue::as_list)
+        .unwrap()
+}
+
+/// The cover found with the pictures reaches chapter assembly: a page showing only the cover
+/// picture makes no chapter of its own (kfxgen's `_page_shows_something` with the cover's
+/// href). Here no contents entry lands, so each other file is a chapter ("Section N").
+#[test]
+fn a_page_of_the_cover_alone_makes_no_chapter() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("book.epub");
+    let files = [
+        ("cover.xhtml", r#"<p><img src="cover.png" alt=""/></p>"#),
+        ("a.xhtml", "<p>Text.</p>"),
+    ];
+    let cover = png(40, 60);
+    book_with(
+        &path,
+        &files,
+        &[("Gone", "missing.xhtml")],
+        "",
+        Some(&cover),
+    );
+    let got = convert(&path, &ConvertOptions::default()).unwrap();
+    let titles: Vec<&str> = (chapters_of(&got).iter())
+        .map(|c| c.get("title").and_then(PyValue::as_str).unwrap())
+        .collect();
+    assert_eq!(titles, ["Section 2"]);
+    assert!(
+        got.model
+            .args
+            .get("cover_image")
+            .unwrap()
+            .as_bytes()
+            .is_some()
+    );
+}
+
+/// A chapter running from a horizontal page onto a vertical one (no entry names the vertical
+/// page, so it joins the chapter before) is cut where the writing mode changes, the second part
+/// left out of the contents with no title printed (`_split_by_writing_mode`).
+#[test]
+fn a_chapter_joining_a_vertical_page_is_cut_there() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("book.epub");
+    let files = [
+        ("a.xhtml", "<h1>One</h1><p>Text.</p>"),
+        (
+            "b.xhtml",
+            r#"<body style="writing-mode: vertical-rl"><p>Down.</p></body>"#,
+        ),
+        ("c.xhtml", "<h1>Two</h1><p>More.</p>"),
+    ];
+    book_of_pages(&path, &files, &[("One", "a.xhtml"), ("Two", "c.xhtml")]);
+    let got = convert(&path, &ConvertOptions::default()).unwrap();
+    let chapters = chapters_of(&got);
+    let texts: Vec<&str> = (chapters.iter())
+        .map(|c| c.get("text").and_then(PyValue::as_str).unwrap())
+        .collect();
+    assert_eq!(texts, ["One\n\nText.", "Down.", "Two\n\nMore."]);
+    assert_eq!(
+        chapters[1].get("_omit_from_toc"),
+        Some(&PyValue::Bool(true))
+    );
+    assert_eq!(
+        chapters[1].get("_omit_title_heading"),
+        Some(&PyValue::Bool(true))
+    );
+}
+
+/// A book whose contents listing must be printed is read twice (`listing_rerun`'s shape). The
+/// ruby's serial number runs on from the first pass, as kfxgen's counter does, so the one ruby
+/// of the book is numbered 1 in the model; and the warning about the entry that snaps is said
+/// once, the second pass's, not also the first's.
+#[test]
+fn the_second_pass_numbers_on_and_warns_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("book.epub");
+    let files = [
+        (
+            "opening.xhtml",
+            r#"<h1>Listing Rerun</h1><p>By Fixture Author</p><div class="toc"><p><a href="c1.xhtml">Chapter One</a></p><p><a href="c2.xhtml">Chapter Two</a></p></div>"#,
+        ),
+        (
+            "c1.xhtml",
+            "<h1>Chapter One</h1><p><ruby>漢<rt>かん</rt></ruby> first.</p>",
+        ),
+        ("c2.xhtml", "<h1>Chapter Two</h1><p>The second chapter.</p>"),
+    ];
+    let points = [
+        ("Opening", "opening.xhtml"),
+        ("Chapter One", "c1.xhtml"),
+        ("Gone", "c1.xhtml#nowhere"),
+        ("Chapter Two", "c2.xhtml"),
+    ];
+    book_of_pages(&path, &files, &points);
+    let got = convert(&path, &ConvertOptions::default()).unwrap();
+    // The listing is printed: the second pass made the model.
+    let opening = chapters_of(&got)[0]
+        .get("text")
+        .and_then(PyValue::as_str)
+        .unwrap();
+    assert!(opening.contains("Chapter One"), "{opening:?}");
+    let model = format!("{:?}", got.model.args);
+    assert!(
+        model.contains(r#"Tuple([Int(1), Str("かん")])"#),
+        "the ruby is not numbered 1"
+    );
+    let snaps = (got.warnings.iter())
+        .filter(|w| w.contains("TOC anchor #nowhere"))
+        .count();
+    assert_eq!(snaps, 1, "{:?}", got.warnings);
 }

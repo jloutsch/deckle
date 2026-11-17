@@ -11,7 +11,7 @@ use deckle_kfx::epub_zip::{EpubReader, InspectError, percent_decode};
 use deckle_limits::roxmltree::{Document, Node, ParsingOptions};
 use deckle_limits::{MAX_DOM_NODES, MAX_TAG_ATTRIBUTES, XmlError};
 
-use super::{Error, GuideRef, Item, Metadata, Package, SpineRef, oeb};
+use super::{Error, GuideRef, Item, Metadata, Package, oeb};
 
 pub(crate) const OPF2_NS: &str = "http://www.idpf.org/2007/opf";
 /// Dublin Core 1.1. Calibre also reads OPF 1 packages and DC 1.0 and 0.9 elements as these
@@ -1095,22 +1095,6 @@ pub fn read_package(zip: &mut EpubReader) -> Result<Package, Error> {
             })
         })
         .collect();
-    // The first item of each id.
-    let mut by_id: BTreeMap<&str, &Item> = BTreeMap::new();
-    for i in &manifest {
-        by_id.entry(i.id.as_str()).or_insert(i);
-    }
-    let spine = opf
-        .spine
-        .iter()
-        .filter_map(|r| {
-            let item = by_id.get(r.idref.as_deref()?)?;
-            Some(SpineRef {
-                href: item.href.clone(),
-                linear: is_linear(r.linear.as_deref()),
-            })
-        })
-        .collect();
     let guide = opf
         .guide
         .iter()
@@ -1142,7 +1126,6 @@ pub fn read_package(zip: &mut EpubReader) -> Result<Package, Error> {
         nav_text,
         ncx_text,
         manifest,
-        spine,
         guide,
         metadata: opf.raw.clone(),
         page_progression_direction: opf.ppds.first().cloned(),
