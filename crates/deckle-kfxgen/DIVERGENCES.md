@@ -848,8 +848,7 @@ decodes, scales and writes pictures with Qt through calibre; the port uses the `
   both).
 - Which pictures decode is `image`'s answer, not Qt's: a picture neither can read is left out
   with a warning in both, but Qt fills in a JPEG cut short and the port may not, and the two
-  disagree on other damaged files. A GIF frame over 50 MB as RGBA (12.5 megapixels) is refused
-  by the `gif` crate's own limit and left out; kfxgen converts it.
+  disagree on other damaged files.
 - A picture whose header states more than 100 megapixels (`deckle_limits::MAX_IMAGE_PIXELS`),
   or that needs more than `image`'s 512 MiB to decode, refuses the book (`Error::TooLarge`)
   before it is decoded. calibre lets Qt allocate up to 1,024 MB for a picture
