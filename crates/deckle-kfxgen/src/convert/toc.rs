@@ -249,14 +249,15 @@ mod tests {
         let s = spine(&[
             ("c.xhtml", true),
             ("B/x.xhtml", false),
-            ("A/x.xhtml", false),
             ("a/x.xhtml", false),
+            ("A/x.xhtml", false),
         ]);
         let entries = [entry("X", "B/x.xhtml", 0)];
-        // With an entry or without, the three tie in kfxgen; `a/x.xhtml` is `A/x.xhtml` up to
-        // case, so the first by href is kept.
-        assert_eq!(order(&s, &listed(&["c.xhtml"]), &entries), [0, 2, 1]);
-        assert_eq!(order(&s, &listed(&["c.xhtml"]), &[]), [0, 2, 1]);
+        // With an entry or without, the three tie in kfxgen. By href `A/x.xhtml` comes first,
+        // and of it and `a/x.xhtml`, one file up to case, it is the one kept, though the spine
+        // has `a/x.xhtml` first.
+        assert_eq!(order(&s, &listed(&["c.xhtml"]), &entries), [0, 3, 1]);
+        assert_eq!(order(&s, &listed(&["c.xhtml"]), &[]), [0, 3, 1]);
     }
 
     /// What `_respell_toc_hrefs` does with hrefs a crafted contents can write.

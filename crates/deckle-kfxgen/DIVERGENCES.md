@@ -918,8 +918,9 @@ contents entry naming each one's file name, then by file name, with a stable sor
 files of one file name in different folders sort alike whether or not an entry names that
 name, so kfxgen keeps Calibre's set order for them, which changes from run to run, and with it
 which of two spellings up to letter case it keeps. The port (`src/convert/toc.rs`) sorts them
-by href. Smallest input: a page linking to `A/x.xhtml` and `B/x.xhtml`, neither in the OPF's
-spine; the port gives `A/x.xhtml` first every time.
+by href, and of two spellings up to letter case keeps the first by href. Smallest input: a page
+linking to `A/x.xhtml` and `B/x.xhtml`, neither in the OPF's spine, with or without a contents
+entry naming `A/x.xhtml`; the port gives `A/x.xhtml` first every time.
 
 ## Note and link keys under a long path
 
