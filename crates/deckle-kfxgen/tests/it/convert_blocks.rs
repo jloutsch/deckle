@@ -1869,12 +1869,82 @@ fn widths_repeated_by_col_spans_are_charged() {
         "2,000 col spans of 1,000: {:?}, {bytes} bytes, {took:?}",
         got.as_ref().err()
     );
-    assert!(
-        matches!(got, Err(ItemError::Error(_))),
-        "{:?}",
-        got.map(|b| b.blocks.len())
-    );
+    assert!(is_over_budget(&got), "{:?}", got.map(|b| b.blocks.len()));
     assert!(took < COST_LIMIT, "{took:?}");
+}
+
+/// kfxgen's `_walk_cell` appends an id still waiting at a paragraph cell's end to its last
+/// block's `anchor_ids`; when that block is a rule, the list is the one `_EMPTY_BLOCK` shares
+/// with every rule in the process. The port puts the id on the cell's rule, which the cell's
+/// paragraphs then drop, so the id is nowhere and every rule keeps its own empty list
+/// (DIVERGENCES, "Tables").
+#[test]
+fn an_id_after_a_cell_s_last_rule_is_dropped() {
+    for cell in [
+        "<p>a</p><p>b</p><hr id=\"z\"/>",
+        "<p>a</p><p>b</p><hr/><a id=\"z\"></a>",
+    ] {
+        let file = page(
+            &format!("<hr/><table><tr><td>{cell}</td><td>c</td></tr></table><hr/>"),
+            "",
+        );
+        let got = extract(&file).unwrap_or_else(|e| panic!("{cell}: {e:?}"));
+        let rules: Vec<PyValue> = got
+            .blocks
+            .iter()
+            .map(|b| b.to_py())
+            .filter(|b| b.get("rule").is_some())
+            .collect();
+        assert_eq!(rules.len(), 2, "{cell}");
+        let table = got
+            .blocks
+            .iter()
+            .map(|b| b.to_py())
+            .find_map(|b| b.get("table").cloned())
+            .unwrap_or_else(|| panic!("{cell}: no table block"));
+        let cells = &table.get("rows").and_then(|r| r.as_list()).expect("rows")[0]
+            .get("cells")
+            .and_then(|c| c.as_list())
+            .expect("cells")
+            .to_vec();
+        let paragraphs = cells[0].get("paragraphs").and_then(|p| p.as_list());
+        assert_eq!(paragraphs.map(<[PyValue]>::len), Some(2), "{cell}");
+        for rule in &rules {
+            assert_eq!(
+                rule.get("anchor_ids"),
+                Some(&PyValue::List(Vec::new())),
+                "{cell}"
+            );
+        }
+        let model = format!(
+            "{:?}",
+            got.blocks.iter().map(|b| b.to_py()).collect::<Vec<_>>()
+        );
+        assert!(!model.contains("\"z\""), "{cell}: {model}");
+        assert!(!model.contains("#z"), "{cell}: {model}");
+    }
+}
+
+/// kfxgen copies a table holding an `<epub:switch>` before reading it (`_shown_tree`), which
+/// the port does not repeat: such a table is refused by name, whether the switch is in a cell
+/// or loose in the table (DIVERGENCES, "Tables").
+#[test]
+fn tables_holding_an_epub_switch_are_refused_by_name() {
+    let switch = "<epub:switch xmlns:epub=\"http://www.idpf.org/2007/ops\">\
+                  <epub:case required-namespace=\"urn:x\">c</epub:case>\
+                  <epub:default>d</epub:default></epub:switch>";
+    for body in [
+        format!("<table><tr><td>{switch}</td></tr></table>"),
+        format!("<table>{switch}<tr><td>a</td></tr></table>"),
+    ] {
+        let got = extract(&page(&body, ""));
+        assert!(
+            matches!(&got, Err(ItemError::Error(Error::Unsupported { feature, .. }))
+                if *feature == "tables holding an epub:switch"),
+            "{body}: {:?}",
+            got.map(|b| b.blocks.len())
+        );
+    }
 }
 
 /// `tables_more` (Task 17: three of its tables are written as rows) holds the only dumped

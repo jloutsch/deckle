@@ -1703,12 +1703,8 @@ impl Walker<'_, '_, '_, '_> {
                 widths.resize(col + span, PyValue::None);
             }
             if span == 1 {
-                // A cell `take` built has had its width read already.
-                let pct = match built.get(&cell) {
-                    Some(&pct) => pct,
-                    None => width_pct(dom, cell, self.resolve(cell)?.as_ref())?,
-                };
-                if let Some(pct) = pct {
+                // `take` built every cell `_cell_columns` yields and read its width.
+                if let Some(pct) = built.get(&cell).copied().flatten() {
                     widths[col] = PyValue::Float(pct);
                 }
             }

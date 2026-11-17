@@ -793,6 +793,18 @@ kfxgen's native tables (`src/convert/blocks/tables.rs`, at ad38ec8):
   of the table against a list of the table, its row groups and its rows, so its work grows
   with rows times cells: about 1.6 billion comparisons for 125,000 cells in rows of 10 (worked
   out from the code, not run).
+- An id still waiting at the end of a cell walked as paragraphs, when the cell's last block is
+  a drawn rule, is dropped. Smallest inputs: `<td><p>a</p><p>b</p><hr id="z"/></td>` and
+  `<td><p>a</p><p>b</p><hr/><a id="z"></a></td>` in a native table. kfxgen's `_walk_cell`
+  appends the id to that rule's `anchor_ids`, which is the one list `_EMPTY_BLOCK` shares with
+  every rule and space block in the calibre process (`{**_EMPTY_BLOCK, ...}` is a shallow
+  copy). From then on every rule, earlier ones too, holds `z`, and every rule in a file keyed
+  afterwards gets the key `<file>#z`, in this book and later books converted by the same
+  process. The port puts the id on the cell's rule, which the cell's paragraphs drop, so `z`
+  names nothing and every rule keeps an empty `anchor_ids`. A link to `#z` is written without
+  a link in the port (no block has the key, so the generator leaves the run unlinked); in
+  kfxgen it lands on the first rule its generator finds with the key (both read in the
+  generators' code, not run end to end).
 - A `<col span="N">` repeats its width N times (up to 1,000) in the model's column widths. Each
   repeat is charged to the file's style text budget before it is made, so a table whose `<col>`
   spans add up to about a million widths stops the file (`Error::Book`, "the CSS of this book
