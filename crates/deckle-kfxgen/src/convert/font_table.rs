@@ -14,9 +14,9 @@
 //! the file system. Every offset and length a font states is checked against its bytes. A
 //! WOFF's tables are inflated no further than the lengths they declare, which together stay
 //! within [`MAX_FONT_BYTES`] for a font (kfxgen's `_check_woff`) and [`MAX_BOOK_FONT_BYTES`]
-//! for the book, charged before inflating. A WOFF of 4,096 tables or more is skipped (fontTools
-//! cannot write its directory), so its directory, read once, stays under 1.3 MB. Each file is
-//! worked out once however often the book's rules name it.
+//! for the book, charged before inflating. A WOFF's directory holds at most 65,535 entries
+//! (1.3 MB); one naming 4,096 tables or more, or a tag that is not ASCII, is skipped, as
+//! fontTools cannot write it. Each file is worked out once however often the rules name it.
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, LazyLock};
@@ -39,7 +39,7 @@ const MAX_FONT_BYTES: usize = 50 * 1024 * 1024;
 
 /// The most bytes the book's WOFF tables may inflate to together, against a book of many
 /// fonts each just under [`MAX_FONT_BYTES`]; past it the book is refused. kfxgen has no such
-/// bound. A book's fonts rarely come to a tenth of it.
+/// bound.
 const MAX_BOOK_FONT_BYTES: u64 = 256 * 1024 * 1024;
 
 /// `parse_weight`: a CSS font-weight as a number, 400 for none or one `int()` can't read.
@@ -82,7 +82,7 @@ pub fn font_table(book: &Book, path: &Path, opts: &ConvertOptions) -> Result<PyV
     let mut sfnt_faces = HashSet::new();
     for rule in rules {
         for href in src_urls(field(rule, "src")) {
-            if fonts.kind(&href)? == Kind::Sfnt {
+            if let Some((_, Kind::Sfnt)) = fonts.src(&href)? {
                 sfnt_faces.insert(face_key(rule));
                 break;
             }
@@ -98,19 +98,18 @@ pub fn font_table(book: &Book, path: &Path, opts: &ConvertOptions) -> Result<PyV
         }
         let mut srcs = Vec::new();
         for href in src_urls(field(rule, "src")) {
-            let kind = fonts.kind(&href)?;
-            if kind != Kind::Neither {
-                srcs.push((href, kind));
+            if let Some((i, kind)) = fonts.src(&href)? {
+                srcs.push((href, i, kind));
             }
         }
-        if !srcs.iter().any(|(_, k)| *k == Kind::Sfnt) && sfnt_faces.contains(&face_key(rule)) {
+        if !srcs.iter().any(|(.., k)| *k == Kind::Sfnt) && sfnt_faces.contains(&face_key(rule)) {
             continue;
         }
         // TTF/OTF first, in the author's order; a WOFF only when none fits.
-        srcs.sort_by_key(|(_, k)| *k != Kind::Sfnt);
+        srcs.sort_by_key(|(.., k)| *k != Kind::Sfnt);
         let mut chosen = None;
-        for (href, _) in srcs {
-            if let Some(data) = fonts.embeds(&href)? {
+        for (href, i, _) in srcs {
+            if let Some(data) = fonts.embeds(i, &href)? {
                 chosen = Some((href, data));
                 break;
             }
@@ -300,13 +299,11 @@ fn obj(class: &str, state: Vec<(&str, PyValue)>) -> PyValue {
     }
 }
 
-/// What `faces_from_rules` keeps of a file a `src` names: `is_ttf_otf`, `is_woff` (WOFF or
-/// WOFF2), or neither (or no such file).
+/// A font file a `src` names: `is_ttf_otf`, or `is_woff` (WOFF or WOFF2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Sfnt,
     Woff,
-    Neither,
 }
 
 /// The book's font files: `build_manifest_lookup` over the archive, and what each file
@@ -319,7 +316,7 @@ struct Fonts<'a> {
     /// item kfxgen finds when two share a name varies from run to run; here it is the last in
     /// the OPF.
     by_base: HashMap<&'a str, usize>,
-    kinds: HashMap<usize, Kind>,
+    kinds: HashMap<usize, Option<Kind>>,
     embeds: HashMap<usize, Option<Arc<[u8]>>>,
     /// The bytes WOFF tables were allowed to inflate to so far, against
     /// [`MAX_BOOK_FONT_BYTES`].
@@ -370,30 +367,29 @@ impl<'a> Fonts<'a> {
         }
     }
 
-    fn kind(&mut self, href: &str) -> Result<Kind, Error> {
-        let Some(i) = self.lookup(href) else {
-            return Ok(Kind::Neither);
-        };
-        if let Some(k) = self.kinds.get(&i) {
-            return Ok(*k);
-        }
-        let magic = self.bytes(i)?.and_then(|d| d.get(..4).map(<[u8]>::to_vec));
-        let kind = match magic.as_deref() {
-            Some(b"\x00\x01\x00\x00" | b"OTTO" | b"true" | b"ttcf") => Kind::Sfnt,
-            Some(b"wOFF" | b"wOF2") => Kind::Woff,
-            _ => Kind::Neither,
-        };
-        self.kinds.insert(i, kind);
-        Ok(kind)
-    }
-
-    /// The TrueType/OpenType bytes the font `href` embeds as, None when kfxgen skips it: over
-    /// [`MAX_FONT_BYTES`], a WOFF that does not unpack, or a table directory `_check_sfnt`
-    /// refuses. A WOFF2 within the cap is refused.
-    fn embeds(&mut self, href: &str) -> Result<Option<Arc<[u8]>>, Error> {
+    /// The manifest item `href` names and its kind, None when it names none or one that is
+    /// no font.
+    fn src(&mut self, href: &str) -> Result<Option<(usize, Kind)>, Error> {
         let Some(i) = self.lookup(href) else {
             return Ok(None);
         };
+        if let Some(k) = self.kinds.get(&i) {
+            return Ok(k.map(|k| (i, k)));
+        }
+        let magic = self.bytes(i)?.and_then(|d| d.get(..4).map(<[u8]>::to_vec));
+        let kind = match magic.as_deref() {
+            Some(b"\x00\x01\x00\x00" | b"OTTO" | b"true" | b"ttcf") => Some(Kind::Sfnt),
+            Some(b"wOFF" | b"wOF2") => Some(Kind::Woff),
+            _ => None,
+        };
+        self.kinds.insert(i, kind);
+        Ok(kind.map(|k| (i, k)))
+    }
+
+    /// The TrueType/OpenType bytes the font of item `i` (named by `href`) embeds as, None when
+    /// kfxgen skips it: over [`MAX_FONT_BYTES`], a WOFF that does not unpack, or a table
+    /// directory `_check_sfnt` refuses. A WOFF2 within the cap is refused.
+    fn embeds(&mut self, i: usize, href: &str) -> Result<Option<Arc<[u8]>>, Error> {
         if let Some(e) = self.embeds.get(&i) {
             return Ok(e.clone());
         }
@@ -449,7 +445,7 @@ impl<'a> Fonts<'a> {
             entries.push((tag, offset, length, orig));
         }
         // fontTools reads only these, and its `SFNTWriter` cannot pack a `searchRange` past
-        // 65,535 (4,096 tables).
+        // 65,535 (4,096 tables) or a tag that is not ASCII.
         if !matches!(&data[4..8], b"\x00\x01\x00\x00" | b"OTTO" | b"true") {
             return Ok(None);
         }
@@ -457,7 +453,7 @@ impl<'a> Fonts<'a> {
         for (i, (tag, ..)) in entries.iter().enumerate() {
             last.insert(*tag, i);
         }
-        if last.len() >= 4096 {
+        if last.len() >= 4096 || last.keys().any(|t| !t.is_ascii()) {
             return Ok(None);
         }
         // Charged before inflating: `declared` bounds what the tables inflate to.
@@ -527,14 +523,19 @@ fn be32(data: &[u8], at: usize) -> u32 {
     u32::from_be_bytes(data[at..at + 4].try_into().expect("4 bytes"))
 }
 
-/// A zlib stream inflated to at most `orig + 1` bytes, and whether it reached its end; None
-/// when zlib refuses it.
+/// A zlib stream inflated no further than just past `orig` bytes, and whether it reached its
+/// end; None when zlib refuses it.
 fn inflate(raw: &[u8], orig: usize) -> Option<(Vec<u8>, bool)> {
     let mut z = Decompress::new(true);
-    let mut out = Vec::with_capacity(orig + 1);
+    let mut out = Vec::new();
     loop {
+        if out.len() == out.capacity() {
+            // Grown as the output comes: a small stream claiming a large table costs little.
+            let room = (orig + 1 - out.len()).min(out.len().max(64 * 1024));
+            out.reserve_exact(room);
+        }
         let before = (z.total_in(), out.len());
-        let input = &raw[usize::try_from(z.total_in()).ok()?..];
+        let input = &raw[z.total_in() as usize..];
         match z.decompress_vec(input, &mut out, FlushDecompress::None) {
             Ok(Status::StreamEnd) => return Some((out, true)),
             Ok(_) if out.len() <= orig && (z.total_in(), out.len()) != before => {}
@@ -713,4 +714,20 @@ fn write_sfnt(version: &[u8], tables: &BTreeMap<[u8; 4], &[u8]>) -> Vec<u8> {
     }
     out[..dir.len()].copy_from_slice(&dir);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Names;
+
+    /// As kfxgen's `emitted_name` gave them: a name another base took is passed over.
+    #[test]
+    fn a_name_another_base_took_is_passed_over() {
+        let mut names = Names::default();
+        let got: Vec<String> = [("a-400", 1), ("a", 400), ("a", 400), ("a", 400)]
+            .into_iter()
+            .map(|(f, w)| names.emitted_name(f, w, false))
+            .collect();
+        assert_eq!(got, ["a-400-1", "a-400", "a-400-2", "a-400-3"]);
+    }
 }

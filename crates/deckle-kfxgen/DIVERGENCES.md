@@ -877,3 +877,24 @@ decodes, scales and writes pictures with Qt through calibre; the port uses the `
 - When several manifest pictures have "cover" in their id or href and the book names no other
   cover, the port takes the first by href. calibre's manifest is a set, so which one kfxgen
   takes varies from run to run.
+
+## The book's fonts
+
+`convert::font_table` (`font_table.py`) differs here:
+
+- A WOFF2 face that would be embedded refuses the book (`Error::Unsupported`, "WOFF2 fonts"):
+  fontTools rebuilds a WOFF2's glyph tables with its own compiler, which the port does not
+  have. A WOFF2 over 50 MiB, or given after a TTF/OTF that is chosen, is skipped as in kfxgen.
+  Smallest input: `@font-face { font-family: F; src: url(f.woff2) }` with any `wOF2` file.
+- The WOFF tables a book inflates may declare 256 MiB together, charged per WOFF before it is
+  inflated, whether or not it is then embedded; the WOFF that passes it refuses the book
+  (`Error::TooLarge`). kfxgen has no such limit. Smallest input: six WOFFs each declaring
+  50 MiB of tables. Five WOFFs of 65,535 entries each inflating 49.8 MB, the most a WOFF may
+  ask for, took 3.3 s in a debug build before the sixth was refused.
+- A WOFF is unpacked to the bytes fontTools 4.60.1 writes, compared on the `fonts_woff` model
+  and on WOFFs made in the tests; the version calibre bundles was not read.
+- When two manifest files share a file name and a `src` names neither by href, the port takes
+  the last in the OPF. calibre's manifest is a set, so which one kfxgen takes varies from run
+  to run.
+- `KFXGEN_MAX_FONT_BYTES` is not read; the cap is its default, 50 MiB. kfxgen's warnings for a
+  skipped face are not reported.
