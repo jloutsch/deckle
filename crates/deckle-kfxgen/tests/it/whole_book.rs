@@ -8,7 +8,7 @@ use crate::load::model_dirs;
 
 /// Models made for the converter's tests (phase 3 plan, Task 2) whose books reach a generator
 /// feature not ported yet (plan Decision 6): each is refused, naming the first it meets.
-const NOT_PORTED: [(&str, &str); 4] = [
+pub(crate) const NOT_PORTED: [(&str, &str); 4] = [
     ("block_edges", "preformatted text"),
     ("css_quirks", "preformatted text"),
     ("tables_more", "block styles"),

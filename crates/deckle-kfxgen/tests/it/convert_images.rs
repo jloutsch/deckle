@@ -53,7 +53,7 @@ fn jpeg_components(b: &[u8]) -> Option<u8> {
 /// Where `ours` differs from kfxgen's `want` for a picture whose bytes in the EPUB are `raw`:
 /// bytes where kfxgen kept the EPUB's, else format, size and JPEG components, an oversize
 /// opaque PNG free to come out as either format (`DIVERGENCES.md`).
-fn compare(what: &str, ours: &[u8], want: &[u8], raw: &[u8]) -> Vec<String> {
+pub(crate) fn compare(what: &str, ours: &[u8], want: &[u8], raw: &[u8]) -> Vec<String> {
     if want == raw {
         return if ours == want {
             Vec::new()

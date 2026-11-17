@@ -4,6 +4,7 @@
 mod book;
 mod convert_args;
 mod convert_blocks;
+mod convert_book;
 mod convert_chapters;
 mod convert_fonts;
 mod convert_images;
@@ -14,6 +15,7 @@ mod convert_support;
 mod convert_toc;
 mod corpus;
 mod corpus_cascade;
+mod corpus_convert;
 mod css_cascade;
 mod css_flatten;
 mod css_normalize;

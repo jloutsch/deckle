@@ -60,7 +60,129 @@ pub use pictures::css_background_image;
 pub use resolver::{Resolved, Resolver, TextBudget};
 pub use toc::{TocEntry, respell_toc_hrefs, spine_in_order, toc_entries};
 
+use std::path::Path;
+
+use crate::load::Model;
+use crate::pyvalue::PyValue;
 use crate::{book, css};
+
+/// What [`convert`] gives: the arguments kfxgen's `convert_oeb_to_kfx` hands
+/// `generate_full_book`, and what kfxgen logs as a warning on the way.
+#[derive(Debug)]
+pub struct Converted {
+    pub model: Model,
+    pub warnings: Vec<String>,
+}
+
+/// kfxgen's `convert_oeb_to_kfx` up to the generator, on the EPUB at `path`, in its order:
+/// the metadata, the cover and pictures, the chapters (a second pass printing the contents
+/// listings when the first leaves the book no contents page), the split by writing mode, the
+/// fonts, then the notes, landmarks and page list. `display_dims` is always empty, as kfxgen
+/// passes it.
+///
+/// Errors: the book cannot be read ([`Error::Book`]), uses what the port refuses
+/// ([`Error::Unsupported`]), passes one of its limits ([`Error::TooLarge`]), or shows nothing
+/// ([`Error::NoContent`]).
+pub fn convert(path: &Path, opts: &ConvertOptions) -> Result<Converted, Error> {
+    let book = book::read_book(path).map_err(Error::Book)?;
+    let opf = CalibreOpf::new(&book).map_err(Error::Book)?;
+    let mut book_level = book_args(&book, &opf, opts);
+    let pictures = images(&book, path, opts)?;
+    let warnings = pictures.warnings;
+    let title = match book_level.iter().find(|(k, _)| k == "title") {
+        Some((_, PyValue::Str(t))) => t.clone(),
+        _ => unreachable!("book_args gives a title"),
+    };
+    let chapters = chapters(&book, &opf, opts, pictures.cover_href.as_deref(), &title)?;
+    let chapters = split_by_writing_mode(chapters);
+    let font_table = font_table(&book, path, opts)?;
+    let budgets: Vec<TextBudget> = book.files.iter().map(|_| TextBudget::new()).collect();
+    let footnotes = footnote_keys(&book, &budgets)?;
+
+    let bytes = |b: Vec<u8>| PyValue::Bytes(b.into());
+    let mut arg = |key: &str| {
+        let at = book_level.iter().position(|(k, _)| k == key);
+        at.map(|i| book_level.swap_remove(i).1)
+            .unwrap_or_else(|| unreachable!("book_args gives {key}"))
+    };
+    // `generate_full_book`'s parameters in its order, as the model holds them.
+    let args = vec![
+        ("title", arg("title")),
+        ("author", arg("author")),
+        (
+            "chapters",
+            PyValue::List(chapters.iter().map(Chapter::to_py).collect()),
+        ),
+        ("asin", PyValue::None),
+        ("cover_image", pictures.cover.map_or(PyValue::None, bytes)),
+        ("language", arg("language")),
+        ("rtl", arg("rtl")),
+        ("writing_mode", arg("writing_mode")),
+        ("publisher", arg("publisher")),
+        ("issue_date", arg("issue_date")),
+        ("authors", arg("authors")),
+        ("description", arg("description")),
+        (
+            "images",
+            PyValue::Dict(
+                (pictures.images.into_iter())
+                    .map(|(href, b)| (PyValue::Str(href), bytes(b)))
+                    .collect(),
+            ),
+        ),
+        ("font_table", font_table),
+        ("resolved_image_refs", arg("resolved_image_refs")),
+        ("display_dims", PyValue::Dict(Vec::new())),
+        (
+            "footnote_keys",
+            PyValue::Set(footnotes.into_iter().map(PyValue::Str).collect()),
+        ),
+        ("landmarks", arg("landmarks")),
+        ("page_list", arg("page_list")),
+        ("approximate_pages", arg("approximate_pages")),
+    ];
+    let args = args
+        .into_iter()
+        .map(|(k, v)| (PyValue::Str(k.to_owned()), v))
+        .collect();
+    Ok(Converted {
+        model: Model {
+            kfxgen_version: KFXGEN_VERSION.to_owned(),
+            kfxgen_commit: KFXGEN_COMMIT.to_owned(),
+            args: PyValue::Dict(args),
+        },
+        warnings,
+    })
+}
+
+/// The kfxgen release and commit the port follows, as a model names them.
+const KFXGEN_VERSION: &str = "5.24.0";
+const KFXGEN_COMMIT: &str = "ad38ec8";
+
+/// `extract_chapters_from_oeb` and its rerun (`_with_listings_kept`): the files' blocks
+/// assembled into chapters, read again printing the contents listings when dropping them
+/// leaves the book with no contents page, then the title page and the contents page made.
+/// The serial numbers run on across both passes, as kfxgen's do.
+fn chapters(
+    book: &book::Book,
+    opf: &CalibreOpf,
+    opts: &ConvertOptions,
+    cover_href: Option<&str>,
+    title: &str,
+) -> Result<Vec<Chapter>, Error> {
+    let mut serials = Serials::default();
+    let mut keep_nav_listings = false;
+    loop {
+        let (items, entries) = spine_items(book, opf, opts, &mut serials, keep_nav_listings)?;
+        let mut chapters = assemble(items, &entries, cover_href);
+        if listing_without_contents(&chapters, keep_nav_listings) {
+            keep_nav_listings = true;
+            continue;
+        }
+        replace_title_page(&mut chapters, title, keep_nav_listings)?;
+        return Ok(chapters);
+    }
+}
 
 /// Why a book cannot be converted.
 #[derive(Debug, thiserror::Error)]

@@ -130,6 +130,21 @@ fn an_unknown_chapter_key_is_refused_by_name() {
     refuses_surprise("minimal", |args| item(entry(args, "chapters"), 0));
 }
 
+/// A listing page of no blocks that the title-page step did not rebuild keeps its
+/// `_listing_keys` into the model; kfxgen's generator never reads the key, so the book comes
+/// out as without it.
+#[test]
+fn a_chapters_listing_keys_are_ignored() {
+    let mut model = load_model(&model_dir("minimal")).unwrap();
+    let plain = generate(&model).unwrap().bytes;
+    let PyValue::Dict(pairs) = item(entry(&mut model.args, "chapters"), 0) else {
+        panic!("not a dict")
+    };
+    let keys = PyValue::List(vec![PyValue::Str("c1.xhtml#toc".into())]);
+    pairs.push((PyValue::Str("_listing_keys".into()), keys));
+    assert!(generate(&model).unwrap().bytes == plain);
+}
+
 #[test]
 fn an_unknown_table_cell_key_is_refused_by_name() {
     refuses_surprise("table_parts", |args| {

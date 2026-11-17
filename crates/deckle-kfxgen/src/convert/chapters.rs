@@ -160,16 +160,13 @@ impl Chapter {
     }
 
     /// A chapter from its dict as a dump holds it, for tests that feed crafted chapters to the
-    /// title-page step; block ids numbered from `next`. None for a key no chapter holds (but
-    /// `_listing_keys`, which the title-page step reads), or for what is no dict.
+    /// title-page step; block ids numbered from `next`. None for a key no chapter holds, or for
+    /// what is no dict.
     pub fn from_py(v: &PyValue, next: &mut usize) -> Option<Chapter> {
         let PyValue::Dict(pairs) = v else {
             return None;
         };
-        let known = CHAPTER_KEYS
-            .iter()
-            .chain(&IGNORED_KEYS)
-            .chain(&["_listing_keys"]);
+        let known = CHAPTER_KEYS.iter().chain(&IGNORED_KEYS);
         let mut fields = Vec::with_capacity(pairs.len());
         for (k, v) in pairs {
             let k = k.as_str()?;

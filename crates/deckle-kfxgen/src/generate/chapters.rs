@@ -33,11 +33,12 @@ const BLOCK_UNPORTED: [(&str, &str); 7] = [
 /// Keys kfxgen's converter writes that no generator code reads, kept only so the model
 /// matches kfxgen's (phase 3 research, book §3 and blocks §2), at any level. `font_px` is a
 /// box block's own; its `box`'s is read.
-pub(crate) const IGNORED_KEYS: [&str; 13] = [
+pub(crate) const IGNORED_KEYS: [&str; 14] = [
     "_spine_file",
     "_from_spine",
     "_had_nav_listing",
     "_nav_listing_at",
+    "_listing_keys",
     "anchor_ids",
     "row",
     "front_matter",

@@ -64,6 +64,9 @@ const SOF_MARKERS: [u8; 13] = [
 #[derive(Debug, Default)]
 pub struct Images {
     pub cover: Option<Vec<u8>>,
+    /// Where the cover was found, even when its picture is left out: chapter assembly skips a
+    /// page that only shows it.
+    pub cover_href: Option<String>,
     /// Manifest href → bytes, a JPEG or a PNG each.
     pub images: BTreeMap<String, Vec<u8>>,
     pub warnings: Vec<String>,
@@ -135,6 +138,7 @@ pub fn images(book: &Book, path: &Path, opts: &ConvertOptions) -> Result<Images,
     }
     Ok(Images {
         cover: cover_result,
+        cover_href: cover.map(|(_, href)| href),
         images,
         warnings: p.warnings,
     })
