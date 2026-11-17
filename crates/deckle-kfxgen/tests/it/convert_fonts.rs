@@ -673,7 +673,12 @@ fn emitted_names_and_tables_are_kfxgens() {
             )
         })
         .collect();
-    // From kfxgen's `emitted_name` run on the same families.
+    // From kfxgen's `emitted_name` run on the same families. A non-ASCII family's `_slug` hashes
+    // `normalize_family(name)` (stripped of whitespace, then of `"` and `'`, then of whitespace,
+    // then `str.lower()`) as UTF-8: "명조" is `eb aa 85 ec a1 b0`, sha1 `47a9f002…`, and the
+    // slug is `font-` and the hash, as `[^a-z0-9]+` leaves nothing; "Ünï Sans" is
+    // `c3 bc 6e c3 af 20 73 61 6e 73` ("ünï sans"), sha1 `815b0374…`, after the ASCII left
+    // ("n-sans").
     assert_eq!(
         names,
         [
