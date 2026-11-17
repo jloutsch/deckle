@@ -917,8 +917,10 @@ kfxgen puts the files Calibre added to the spine (`_spine_in_order`) in the orde
 contents entry naming each one's file name, then by file name, with a stable sort. Two added
 files of one file name in different folders sort alike whether or not an entry names that
 name, so kfxgen keeps Calibre's set order for them, which changes from run to run, and with it
-which of two spellings up to letter case it keeps. The port (`src/convert/toc.rs`) sorts them
-by href, and of two spellings up to letter case keeps the first by href. Smallest input: a page
+which of two spellings up to letter case or percent-encoding it keeps. Names are compared
+decoded, a bad sequence decoded as U+FFFD, so `%FF%FE.xhtml` and `%C0%80.xhtml` are one name
+too. The port (`src/convert/toc.rs`) sorts them by href, and of two such spellings keeps the
+first by href. Smallest input: a page
 linking to `A/x.xhtml` and `B/x.xhtml`, neither in the OPF's spine, with or without a contents
 entry naming `A/x.xhtml`; the port gives `A/x.xhtml` first every time.
 
@@ -927,7 +929,9 @@ entry naming `A/x.xhtml`; the port gives `A/x.xhtml` first every time.
 `_note_pair_ids`, `_book_link_targets` and `_footnote_keys` (`src/convert/notes.rs`) make a
 key holding the file's path for each id or link they keep, and read the path again for each
 link they resolve. The port charges each key made, and each path read, to the file's style
-text budget, as the anchor keys are. For example, a file at a path of 2,000 characters with
+text budget, as the anchor keys are; the budget counts whole 64-byte units per charge, so keys
+under 64 bytes cost nothing and the book's node limit bounds the rest. Measured: 5 files of
+95,000 noteref links each held about 720 bytes a link (peak 761 MB, 6.3 s in a debug build). For example, a file at a path of 2,000 characters with
 40,000 note markers linking to notes that link back stops the conversion (`Error::Book`, "more
 than 500000 declarations") where kfxgen makes the book; at a path of 100 characters it
 converts.

@@ -6,9 +6,12 @@
 //! below or above, the text of the line round a marker, a hidden ancestor of a footnote), which
 //! is quadratic in a deep or wide file. Here each file is walked a fixed number of times, the
 //! answers kept per element, so the cost is linear in its elements and text. The keys built
-//! (`"<file>#<id>"`, link targets) repeat the file's path for every id or link, so each is
-//! charged to the file's [`TextBudget`] when it is made (its copies, three at most, are not),
-//! and a link's path read again before it is resolved.
+//! (`"<file>#<id>"`, link targets) repeat the file's path for every id or link. Each key made,
+//! and each read of the path before a link is resolved, is charged to the file's
+//! [`TextBudget`], which counts whole 64-byte units per charge: a key under 64 bytes, as most
+//! are, costs nothing, so what bounds the scans' memory is the book's node limit
+//! (`MAX_BOOK_DOM_NODES`), about 720 bytes a link (DIVERGENCES.md, "Note and link keys under a
+//! long path").
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -410,9 +413,10 @@ fn hidden_here_or_above(
 mod tests {
     use super::*;
 
-    /// kfxgen's `_note_target_ids` rules, read from `ad38ec8` (not run): a Markdown footnote
-    /// list's items, a note-marked element and its wrapper, markers pointing at them by an
-    /// encoded fragment, and nothing in or holding a heading.
+    /// kfxgen's `_note_target_ids` rules (`ad38ec8`; its function was run on this page in
+    /// review and gives this set): a Markdown footnote list's items, a note-marked element and
+    /// its wrapper, markers pointing at them by an encoded fragment, and nothing in or holding a
+    /// heading.
     #[test]
     fn note_targets_by_structure() {
         let page = br##"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>
