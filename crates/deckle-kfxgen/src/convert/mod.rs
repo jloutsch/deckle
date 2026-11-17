@@ -6,10 +6,12 @@
 //! re-exported here, as `css` and `dom` do.
 
 mod args;
+mod assemble;
 mod bidi;
 mod block_bidi;
 mod block_style;
 mod blocks;
+mod chapters;
 mod font_table;
 mod href;
 mod images;
@@ -30,11 +32,13 @@ mod toc;
 /// The page width kfxgen's `convert` sets round the extraction, for the dump tests.
 pub use crate::generate::page_scale::{HORIZONTAL_PT, PageWidth, VERTICAL_PT, page_width};
 pub use args::book_args;
+pub use assemble::assemble;
 pub use block_style::{StyleError, compute_block_style};
 pub use blocks::{
     BeforeSpacing, Block, BlockId, ExtractOptions, Field, FileBlocks, blocks_before_spacing,
     extract_blocks,
 };
+pub use chapters::{Chapter, SpineItem, spine_items, split_by_writing_mode};
 pub use font_table::{font_table, parse_style, parse_weight};
 pub use href::{
     external_target, is_unsafe, key_doc, normalize, resolve_doc_path, resolve_link_target, unquote,

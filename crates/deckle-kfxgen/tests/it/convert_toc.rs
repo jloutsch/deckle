@@ -147,7 +147,7 @@ fn footnote_keys_match_every_model() {
 /// `zip_of`'s book written to a temp file and read, with its Calibre OPF. A debug build's XML
 /// parser needs more than a test thread's stack for files nested near `MAX_DEPTH`, as in the
 /// other deep tests.
-fn book_of(opf: &str, files: &[(&str, &[u8])]) -> (Book, CalibreOpf) {
+pub(crate) fn book_of(opf: &str, files: &[(&str, &[u8])]) -> (Book, CalibreOpf) {
     let file = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(file.path(), crate::book::zip_of(opf.as_bytes(), files)).unwrap();
     let path = file.path().to_owned();

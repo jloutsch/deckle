@@ -6,7 +6,7 @@
 //! than coming out different from kfxgen's.
 mod block_styles;
 mod boxes;
-mod chapters;
+pub(crate) mod chapters;
 mod chunks;
 mod fonts;
 mod fragments;

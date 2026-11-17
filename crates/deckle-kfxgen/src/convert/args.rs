@@ -26,10 +26,7 @@ pub fn book_args(book: &Book, opf: &CalibreOpf, opts: &ConvertOptions) -> Vec<(S
     let str_ = |s: &str| PyValue::Str(s.to_owned());
     let opt = |s: Option<&String>| s.map_or(PyValue::None, |s| str_(s));
 
-    let language = m
-        .language
-        .first()
-        .map_or_else(|| "en".to_owned(), |l| kfx_language(l));
+    let language = language(book);
     // `_opf_raw_dates`: Calibre's own date only when its OPF can't be read, which the port's
     // always can.
     let issue_date = if m.date.is_empty() {
@@ -38,11 +35,7 @@ pub fn book_args(book: &Book, opf: &CalibreOpf, opts: &ConvertOptions) -> Vec<(S
         issue_date(opf.dates.first().map_or("", String::as_str))
     };
     let rtl = book.oeb.page_progression_direction.as_deref() == Some("rtl");
-    let writing_mode = if fixed_layout(book) {
-        "horizontal-tb"
-    } else {
-        book_writing_mode(&language, rtl)
-    };
+    let writing_mode = writing_mode(book, &language, rtl);
     let names = spine_names(book, opf);
     let tuple = |items: &[&str]| PyValue::Tuple(items.iter().map(|s| str_(s)).collect());
 
@@ -139,6 +132,31 @@ pub(crate) fn kfx_language(lang: &str) -> String {
         primary
     };
     format!("{primary}{rest}")
+}
+
+/// The book's `writing_mode` as `convert_oeb_to_kfx` sets it: `horizontal-tb` for a
+/// fixed-layout book, else [`book_writing_mode`]. `language` is [`kfx_language`]'s.
+fn writing_mode(book: &Book, language: &str, rtl: bool) -> &'static str {
+    if fixed_layout(book) {
+        "horizontal-tb"
+    } else {
+        book_writing_mode(language, rtl)
+    }
+}
+
+/// Whether kfxgen extracts the book's chapters against the page of a vertical book.
+pub(crate) fn is_vertical(book: &Book) -> bool {
+    let rtl = book.oeb.page_progression_direction.as_deref() == Some("rtl");
+    writing_mode(book, &language(book), rtl) == "vertical-rl"
+}
+
+/// `metadata["language"]`: the first language as [`kfx_language`] gives it, `en` with none.
+fn language(book: &Book) -> String {
+    book.oeb
+        .metadata
+        .language
+        .first()
+        .map_or_else(|| "en".to_owned(), |l| kfx_language(l))
 }
 
 /// `_book_writing_mode`: `vertical-rl` for a book whose pages turn right to left and whose

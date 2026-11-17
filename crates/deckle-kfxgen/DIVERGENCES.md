@@ -734,11 +734,15 @@ The picture tokens and the initial (`src/convert/pictures.rs`, `initial.rs`, at 
   the generator refuses `label_texts` anyway.
 - Each anchor key a block gets is a copy of the file's href and an id. The copies are charged to
   the file's style text budget, so a file with a very long href and very many ids is refused
-  where kfxgen makes the book.
+  where kfxgen makes the book. So are the keys the per-file loop makes (`src/convert/chapters.rs`)
+  for a file that shows nothing (one for each of its ids) and for the ids ending a file. A file
+  past its budget stops the conversion with `Error::TooLarge`, "<file>: converting this file
+  copies or reads more than 32000000 bytes of its text and styles" (the budget, 500,000 units
+  of 64 bytes, counts the text and styles the converter copies or reads, not only CSS).
 - An `<svg>`'s own ids go on each picture block it draws (`_emit_image_block`), twice a block;
   kfxgen copies them without a limit. The port charges the copies to the same budget before
   making them, so `<svg id="(1 MiB)">` with 200 `<image href="a"/>` stops the file
-  (`Error::Book`, "more than 500000 declarations") where kfxgen writes 200 blocks.
+  (`Error::TooLarge`, "more than 32000000 bytes") where kfxgen writes 200 blocks.
 
 ## Lists
 
@@ -764,8 +768,8 @@ kfxgen's boxes (`src/convert/blocks/boxes.rs`, at ad38ec8):
 - A box copies its blocks' texts and ids once more at each level of nesting (`_make_box`, as
   `_list_box`); the copies are charged to the file's style text budget. 32 bordered `<div>`s
   nested round one paragraph of 999,806 characters (32 is the deepest the generator writes) stop
-  the file (`Error::Book`, "the CSS of this book file gives its elements more than 500000
-  declarations"); 999,805 characters convert. kfxgen writes the 32 nested boxes, each holding the
+  the file (`Error::TooLarge`, "more than 32000000 bytes"); 999,805 characters convert. kfxgen
+  writes the 32 nested boxes, each holding the
   paragraph's whole text (about 32 MB in its model). At 64 levels the limit is 499,838
   characters, at 128 levels 249,854.
 - Each block a bordered, filled, sized or turned container looks at costs one unit of the same
@@ -789,8 +793,8 @@ kfxgen's native tables (`src/convert/blocks/tables.rs`, at ad38ec8):
 - Each cell of a table (`<td>` or `<th>` anywhere below the `<table>`, a nested table's cells
   too) is charged three units of the file's style text budget, counted from the tree before
   anything is resolved, on top of what reading the table charges (about one unit a cell of a
-  word). The file stops (`Error::Book`, "the CSS of this book file gives its elements more than
-  500000 declarations") for 166,667 cells or more before any cell is read, and for about
+  word). The file stops (`Error::TooLarge`, "more than 32000000 bytes") for 166,667 cells or more
+  before any cell is read, and for about
   125,000 cells of a word each once they are read (124,990 convert and 125,010 are refused, in
   rows of 10, measured). Smallest refused input: `<table><tbody>` with 12,500 rows
   of ten `<td>cell</td>`. kfxgen converts these tables. Its `_fostered_content` tests every element
@@ -822,13 +826,13 @@ kfxgen's native tables (`src/convert/blocks/tables.rs`, at ad38ec8):
 - Each paragraph a row holding a table writes (`_walk_split_row`) costs one unit of the file's
   style text budget, and again for each such row round it, which looks at it again (to mark it
   a row, and to make it bold in a header cell). Tables nested 62 deep in cells, the innermost
-  cell holding 10,000 paragraphs, stop the file (`Error::Book`, "the CSS of this book file
-  gives its elements more than 500000 declarations"); 5,000 paragraphs convert (317,759
+  cell holding 10,000 paragraphs, stop the file (`Error::TooLarge`, "more than 32000000 bytes");
+  5,000 paragraphs convert (317,759
   units). kfxgen converts both.
 - A `<col span="N">` repeats its width N times (up to 1,000) in the model's column widths. Each
   repeat is charged to the file's style text budget before it is made, so a table whose `<col>`
-  spans add up to about a million widths stops the file (`Error::Book`, "the CSS of this book
-  file gives its elements more than 500000 declarations"): 2,000 `<col span="1000">` are refused
+  spans add up to about a million widths stops the file (`Error::TooLarge`, "more than 32000000
+  bytes"): 2,000 `<col span="1000">` are refused
   after about 1,000 of them. kfxgen writes the two million widths.
 
 ## The book's pictures and cover
@@ -932,6 +936,6 @@ link they resolve. The port charges each key made, and each path read, to the fi
 text budget, as the anchor keys are; the budget counts whole 64-byte units per charge, so keys
 under 64 bytes cost nothing and the book's node limit bounds the rest. Measured: 5 files of
 95,000 noteref links each held about 720 bytes a link (peak 761 MB, 6.3 s in a debug build). For example, a file at a path of 2,000 characters with
-40,000 note markers linking to notes that link back stops the conversion (`Error::Book`, "more
-than 500000 declarations") where kfxgen makes the book; at a path of 100 characters it
+40,000 note markers linking to notes that link back stops the conversion (`Error::TooLarge`, "more
+than 32000000 bytes") where kfxgen makes the book; at a path of 100 characters it
 converts.

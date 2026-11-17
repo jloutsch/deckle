@@ -34,6 +34,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::inline::Walk;
 use super::{Error, ItemError};
+use crate::generate::chapters::{BLOCK_KEYS, IGNORED_KEYS};
 use crate::pyvalue::PyValue;
 
 /// A block's identity, Python's `id(block)`: unique within one file's extraction.
@@ -68,7 +69,7 @@ impl Block {
         })
     }
 
-    fn get_mut(&mut self, key: &str) -> Option<&mut PyValue> {
+    pub(in crate::convert) fn get_mut(&mut self, key: &str) -> Option<&mut PyValue> {
         self.fields.iter_mut().find_map(|(k, v)| match v {
             Field::Py(p) if *k == key => Some(p),
             _ => None,
@@ -76,14 +77,14 @@ impl Block {
     }
 
     /// The blocks a box holds, under `blocks`.
-    fn blocks(&self) -> Option<&[Block]> {
+    pub(in crate::convert) fn blocks(&self) -> Option<&[Block]> {
         self.fields.iter().find_map(|(k, v)| match v {
             Field::Blocks(b) if *k == "blocks" => Some(b.as_slice()),
             _ => None,
         })
     }
 
-    fn blocks_mut(&mut self) -> Option<&mut Vec<Block>> {
+    pub(in crate::convert) fn blocks_mut(&mut self) -> Option<&mut Vec<Block>> {
         self.fields.iter_mut().find_map(|(k, v)| match v {
             Field::Blocks(b) if *k == "blocks" => Some(b),
             _ => None,
@@ -121,7 +122,7 @@ impl Block {
     }
 
     /// `block[key] = value`: in place when the key is there, else at the end.
-    fn set(&mut self, key: &'static str, value: PyValue) {
+    pub(in crate::convert) fn set(&mut self, key: &'static str, value: PyValue) {
         match self.fields.iter_mut().find(|(k, _)| *k == key) {
             Some((_, v)) => *v = Field::Py(value),
             None => self.fields.push((key, Field::Py(value))),
@@ -129,7 +130,7 @@ impl Block {
     }
 
     /// `block.get("type")` as a string, None for a paragraph.
-    fn kind(&self) -> Option<&str> {
+    pub(in crate::convert) fn kind(&self) -> Option<&str> {
         self.get("type").and_then(PyValue::as_str)
     }
 
@@ -147,6 +148,31 @@ impl Block {
                 })
                 .collect(),
         )
+    }
+
+    /// A block from its dict as a dump holds it, for tests that feed kfxgen's recorded blocks
+    /// to later steps; ids numbered from `next`. None for a key no model block holds (the
+    /// generator's lists), or for what is no dict. A box's blocks are read by recursion, as
+    /// deep as the value already is.
+    pub(in crate::convert) fn from_py(v: &PyValue, next: &mut usize) -> Option<Block> {
+        let PyValue::Dict(pairs) = v else {
+            return None;
+        };
+        let id = BlockId(*next);
+        *next += 1;
+        let mut fields = Vec::with_capacity(pairs.len());
+        for (k, v) in pairs {
+            let k = k.as_str()?;
+            let key = *BLOCK_KEYS.iter().chain(&IGNORED_KEYS).find(|n| **n == k)?;
+            let field = if key == "blocks" {
+                let kids = v.as_list()?.iter().map(|b| Block::from_py(b, next));
+                Field::Blocks(kids.collect::<Option<_>>()?)
+            } else {
+                Field::Py(v.clone())
+            };
+            fields.push((key, field));
+        }
+        Some(Block { id, fields })
     }
 }
 
