@@ -856,6 +856,12 @@ decodes, scales and writes pictures with Qt through calibre; the port uses the `
   (`set_image_allocation_limit`), so kfxgen scales one of up to about 268 megapixels at 4
   bytes a pixel and leaves out a larger one (worked out from the code, not run). Smallest
   input: a PNG whose header says 10,001 × 10,000.
+- The pictures a book decodes may state 10 gigapixels together
+  (`deckle_limits::MAX_BOOK_IMAGE_PIXELS`), counted from each header before its decode, every
+  decode counted (a CMYK JPEG twice). The picture that passes it refuses the book
+  (`Error::TooLarge`). kfxgen has no such limit. Smallest input: 101 pictures whose headers
+  each say 10,000 × 10,000 (the 101st is refused). A book just under it (100 pictures of
+  10,000 × 10,000) took 29 s in a release build for RGB JPEGs and 9.5 s for grey PNGs.
 - An SVG file of the manifest, and an `<svg>` drawn only with shapes in a spine page (not in
   another `<svg>`, in a page that is not itself an SVG), refuse the book (`Error::Unsupported`,
   "SVG pictures"), even where no text shows it. kfxgen draws them with Qt.

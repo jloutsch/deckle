@@ -47,6 +47,12 @@ pub const MAX_FONTS_BYTES: u64 = 256 * MB;
 pub const MAX_MOBI_TEXT_BYTES: u64 = 256 * MB;
 /// Image decode, width × height, except comic pages.
 pub const MAX_IMAGE_PIXELS: u64 = 100_000_000;
+/// EPUB → KFX (deckle-kfxgen): width × height of every picture decoded for one book, together,
+/// as the headers state them. Without it, the time is bounded only by the archive: a 1 GB book
+/// of 100-megapixel pictures that compress well takes about 15 minutes of CPU, and with it
+/// about 1.5 minutes. Real books stay far under: 500 comic pages at 4 megapixels are 2
+/// gigapixels, 300 camera photos at 24 megapixels 7.2.
+pub const MAX_BOOK_IMAGE_PIXELS: u64 = 10_000_000_000;
 /// PDF: a rendered page, width × height in pixels. A page over it renders at a scale that fits.
 pub const MAX_PDF_RENDER_PIXELS: u64 = 100_000_000;
 /// PDF: page width or height in points, the PDF specification's own maximum.

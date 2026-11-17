@@ -397,6 +397,31 @@ fn unreadable_pictures_are_left_out_with_a_warning() {
 }
 
 #[test]
+fn a_book_past_its_pixel_budget_is_refused_from_the_headers() {
+    // 101 files of a few dozen bytes, each a grey PNG whose header claims 100 megapixels:
+    // the first 100 fill the book's 10 gigapixels (each charged, then failing to decode its
+    // missing data), the 101st passes them before it is decoded.
+    let mut png = encode(
+        &DynamicImage::ImageLuma8(image::GrayImage::new(8, 8)),
+        ImageFormat::Png,
+    );
+    png[16..20].copy_from_slice(&10_000u32.to_be_bytes());
+    png[20..24].copy_from_slice(&10_000u32.to_be_bytes());
+    fix_png_crc(&mut png, 8);
+    let names: Vec<String> = (0..101).map(|i| format!("p{i:03}.png")).collect();
+    let files: Vec<(&str, &[u8])> = names.iter().map(|n| (n.as_str(), png.as_slice())).collect();
+    let dir = tempfile::tempdir().unwrap();
+    let path = book_of(dir.path(), None, &files);
+    match images_of(&path, &ConvertOptions::default()) {
+        Err(Error::TooLarge { what }) => {
+            assert!(what.starts_with("p100.png:"), "{what}");
+            assert!(what.contains("10000 megapixels together"), "{what}");
+        }
+        other => panic!("{:?}", other.map(|i| i.images.len())),
+    }
+}
+
+#[test]
 fn a_picture_needing_more_than_512_mib_is_refused_before_decoding() {
     // 81 megapixels, within the pixel limit, but 16-bit RGBA: 648 MB decoded.
     let mut png = encode(&picture(8, 8), ImageFormat::Png);

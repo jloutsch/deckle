@@ -16,8 +16,9 @@
 //! Hostile input: a picture is only ever read from the archive, by its manifest href, through
 //! [`EpubReader`]'s limits; no path from the book reaches the file system. Every decode goes
 //! through [`Pictures::decode`], which reads the size the header states and refuses a picture
-//! over [`MAX_IMAGE_PIXELS`] before anything is decoded, and leaves `image`'s own allocation
-//! limit (512 MiB) in place for the rest. A picture that does not decode is left out with a
+//! over [`MAX_IMAGE_PIXELS`] before anything is decoded, charges its size to the book's
+//! [`MAX_BOOK_IMAGE_PIXELS`] (every decode: a CMYK JPEG is decoded twice), and
+//! leaves `image`'s own allocation limit (512 MiB) in place for the rest. A picture that does not decode is left out with a
 //! warning, as kfxgen leaves out one Qt can't read. Pictures are read, converted and dropped
 //! one at a time; only the results are kept.
 
@@ -26,7 +27,7 @@ use std::io::Cursor;
 use std::path::Path;
 
 use deckle_kfx::epub_zip::{EpubReader, InspectError};
-use deckle_limits::MAX_IMAGE_PIXELS;
+use deckle_limits::{MAX_BOOK_IMAGE_PIXELS, MAX_IMAGE_PIXELS};
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::{DynamicImage, ImageError, ImageReader};
@@ -71,6 +72,7 @@ pub fn images(book: &Book, path: &Path, opts: &ConvertOptions) -> Result<Images,
     let mut p = Pictures {
         zip,
         embed_original: opts.embed_original_images,
+        pixels: 0,
         warnings: Vec::new(),
     };
     let cover = p.cover_image(&book.oeb)?;
@@ -181,6 +183,8 @@ struct Pictures {
     zip: EpubReader,
     /// `kfxgen_embed_original_images`.
     embed_original: bool,
+    /// The pixels decoded so far, against [`MAX_BOOK_IMAGE_PIXELS`].
+    pixels: u64,
     warnings: Vec<String>,
 }
 
@@ -262,8 +266,9 @@ impl Pictures {
     }
 
     /// `image_from_data`: `data` decoded, None when `image` can't read it. The size the
-    /// header states is checked first: a picture over [`MAX_IMAGE_PIXELS`], or one that needs
-    /// more than `image`'s allocation limit, refuses the book.
+    /// header states is checked first: a picture over [`MAX_IMAGE_PIXELS`], one that takes
+    /// the book's decodes past [`MAX_BOOK_IMAGE_PIXELS`], or one that needs more than `image`'s
+    /// allocation limit, refuses the book.
     fn decode(&mut self, data: &[u8], href: &str) -> Result<Option<DynamicImage>, Error> {
         let reader = || {
             ImageReader::new(Cursor::new(data))
@@ -273,11 +278,22 @@ impl Pictures {
         let Ok((w, h)) = reader().and_then(|r| r.into_dimensions()) else {
             return Ok(None);
         };
-        if u64::from(w) * u64::from(h) > MAX_IMAGE_PIXELS {
+        let pixels = u64::from(w) * u64::from(h);
+        if pixels > MAX_IMAGE_PIXELS {
             return Err(Error::TooLarge {
                 what: format!(
                     "{href}: this picture is larger than {} megapixels",
                     MAX_IMAGE_PIXELS / 1_000_000
+                ),
+            });
+        }
+        // Charged before the decode it pays for.
+        self.pixels = self.pixels.saturating_add(pixels);
+        if self.pixels > MAX_BOOK_IMAGE_PIXELS {
+            return Err(Error::TooLarge {
+                what: format!(
+                    "{href}: this book's pictures are larger than {} megapixels together",
+                    MAX_BOOK_IMAGE_PIXELS / 1_000_000
                 ),
             });
         }
