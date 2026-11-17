@@ -12,6 +12,7 @@ mod block_bidi;
 mod block_style;
 mod blocks;
 mod chapters;
+mod contents_page;
 mod font_table;
 mod href;
 mod images;
@@ -39,6 +40,7 @@ pub use blocks::{
     extract_blocks,
 };
 pub use chapters::{Chapter, SpineItem, spine_items, split_by_writing_mode};
+pub use contents_page::{listing_without_contents, replace_title_page};
 pub use font_table::{font_table, parse_style, parse_weight};
 pub use href::{
     external_target, is_unsafe, key_doc, normalize, resolve_doc_path, resolve_link_target, unquote,

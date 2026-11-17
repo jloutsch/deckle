@@ -30,10 +30,11 @@ use crate::generate::py;
 use crate::pyvalue::{PyValue, truthy};
 
 /// `_CONTENTS_TITLES`.
-const CONTENTS_TITLES: [&str; 2] = ["contents", "table of contents"];
+pub(super) const CONTENTS_TITLES: [&str; 2] = ["contents", "table of contents"];
 
-/// `CONTENTS_SKIP_TITLES`: `TITLE_PAGE_TITLES`, `HALF_TITLE_TITLES` and the rest.
-const CONTENTS_SKIP_TITLES: [&str; 15] = [
+/// `CONTENTS_SKIP_TITLES`: `TITLE_PAGE_TITLES` and `HALF_TITLE_TITLES` (the first nine), and
+/// the rest.
+pub(super) const CONTENTS_SKIP_TITLES: [&str; 15] = [
     "title page",
     "title",
     "half title",
@@ -52,7 +53,7 @@ const CONTENTS_SKIP_TITLES: [&str; 15] = [
 ];
 
 /// `SMALL_TEXT_CHAPTERS`.
-const SMALL_TEXT_CHAPTERS: [&str; 12] = [
+pub(super) const SMALL_TEXT_CHAPTERS: [&str; 12] = [
     "copyright",
     "copyright page",
     "also by",
@@ -68,10 +69,10 @@ const SMALL_TEXT_CHAPTERS: [&str; 12] = [
 ];
 
 /// `LEADING_TITLE_FALLBACK`: kfxgen's own label for front matter with no title of its own.
-const LEADING_TITLE_FALLBACK: &str = "Front Matter";
+pub(super) const LEADING_TITLE_FALLBACK: &str = "Front Matter";
 
 /// `_LEADING_TITLE_MAX_LEN`.
-const LEADING_TITLE_MAX_LEN: usize = 60;
+pub(super) const LEADING_TITLE_MAX_LEN: usize = 60;
 
 /// The chapters kfxgen makes of the book's shown files before its title-page step: one per
 /// section of the contents entries (`_assemble_chapters_by_coordinate`), else, when no entry
@@ -638,7 +639,7 @@ fn ids(v: Option<&PyValue>) -> impl Iterator<Item = &str> {
 
 /// `_normalize_title`: words joined by one space, ASCII punctuation and white space taken off
 /// both ends, lower-cased.
-fn normalize_title(title: &str) -> String {
+pub(super) fn normalize_title(title: &str) -> String {
     words(title)
         .trim_matches(|c: char| c.is_ascii_punctuation() || " \t\n\r\x0b\x0c".contains(c))
         .to_lowercase()

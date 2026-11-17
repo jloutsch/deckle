@@ -50,7 +50,7 @@ pub(crate) const IGNORED_KEYS: [&str; 13] = [
 ];
 
 /// Every chapter key `read_chapter` reads, `CHAPTER_UNPORTED`'s included.
-const CHAPTER_KEYS: [&str; 15] = [
+pub(crate) const CHAPTER_KEYS: [&str; 15] = [
     "title",
     "text",
     "blocks",

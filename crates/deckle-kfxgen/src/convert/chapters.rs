@@ -28,6 +28,7 @@ use super::{
 use crate::book::{self, Book};
 use crate::css::{DEFAULT_PROFILE, TEXT_UNIT};
 use crate::dom::{Dom, NodeId};
+use crate::generate::chapters::{CHAPTER_KEYS, IGNORED_KEYS};
 use crate::generate::py;
 use crate::pyvalue::PyValue;
 
@@ -117,7 +118,7 @@ impl SpineItem {
 /// One of kfxgen's chapter dicts: its keys in insertion order, `blocks` holding blocks.
 #[derive(Debug)]
 pub struct Chapter {
-    fields: Vec<(&'static str, Field)>,
+    pub(super) fields: Vec<(&'static str, Field)>,
 }
 
 impl Chapter {
@@ -156,6 +157,49 @@ impl Chapter {
                 _ => None,
             })
             .unwrap_or(&[])
+    }
+
+    /// A chapter from its dict as a dump holds it, for tests that feed crafted chapters to the
+    /// title-page step; block ids numbered from `next`. None for a key no chapter holds (but
+    /// `_listing_keys`, which the title-page step reads), or for what is no dict.
+    pub fn from_py(v: &PyValue, next: &mut usize) -> Option<Chapter> {
+        let PyValue::Dict(pairs) = v else {
+            return None;
+        };
+        let known = CHAPTER_KEYS
+            .iter()
+            .chain(&IGNORED_KEYS)
+            .chain(&["_listing_keys"]);
+        let mut fields = Vec::with_capacity(pairs.len());
+        for (k, v) in pairs {
+            let k = k.as_str()?;
+            let key = *known.clone().find(|n| **n == k)?;
+            let field = if key == "blocks" {
+                let blocks = v.as_list()?.iter().map(|b| Block::from_py(b, next));
+                Field::Blocks(blocks.collect::<Option<_>>()?)
+            } else {
+                Field::Py(v.clone())
+            };
+            fields.push((key, field));
+        }
+        Some(Chapter { fields })
+    }
+
+    /// `ch.pop(key, None)`.
+    pub(super) fn remove(&mut self, key: &str) -> Option<Field> {
+        let at = self.fields.iter().position(|(k, _)| *k == key)?;
+        Some(self.fields.remove(at).1)
+    }
+
+    /// The chapter's blocks taken out, to be cut; [`Chapter::put_blocks`] puts some back.
+    pub(super) fn take_blocks(&mut self) -> Vec<Block> {
+        self.fields
+            .iter_mut()
+            .find_map(|(k, v)| match v {
+                Field::Blocks(b) if *k == "blocks" => Some(std::mem::take(b)),
+                _ => None,
+            })
+            .unwrap_or_default()
     }
 
     /// `ch["blocks"] = blocks`, in place: a planned chapter's blocks put in.
@@ -460,7 +504,7 @@ enum Part<'b> {
 
 /// `_drop_keys(blocks, keys)`: `keys` off every block, box block, table, row, cell and cell
 /// paragraph holding them, however deep the boxes nest (a stack, not recursion).
-fn drop_keys(blocks: &mut [Block], keys: &HashSet<String>) {
+pub(super) fn drop_keys(blocks: &mut [Block], keys: &HashSet<String>) {
     let mut stack: Vec<Part> = blocks.iter_mut().map(Part::Block).collect();
     while let Some(part) = stack.pop() {
         let (d, block) = match part {

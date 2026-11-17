@@ -1346,12 +1346,15 @@ pub fn parse_font_family(value: &str) -> Vec<String> {
 }
 
 /// `page_bidi`: the `bidi` of the first block whose block style, box or table has one,
-/// else None (#714).
-pub fn page_bidi(blocks: &[PyValue]) -> Option<&PyValue> {
+/// else None (#714). `get` is `block.get`, for blocks held as model values or as blocks.
+pub fn page_bidi<'b, B>(
+    blocks: &'b [B],
+    get: impl Fn(&'b B, &str) -> Option<&'b PyValue>,
+) -> Option<&'b PyValue> {
     blocks.iter().find_map(|b| {
         ["block_style", "box", "table"]
             .iter()
-            .filter_map(|key| b.get(key)?.get("bidi"))
+            .filter_map(|key| get(b, key)?.get("bidi"))
             .find(|v| v.is_truthy())
     })
 }
@@ -1611,9 +1614,12 @@ mod tests {
                 dict(vec![("bidi", dict(vec![("x", PyValue::Int(1))]))]),
             )]),
         ];
-        assert_eq!(page_bidi(&blocks), Some(&rtl));
+        assert_eq!(page_bidi(&blocks, PyValue::get), Some(&rtl));
         assert_eq!(
-            page_bidi(&[dict(vec![("block_style", PyValue::None)]), dict(vec![])]),
+            page_bidi(
+                &[dict(vec![("block_style", PyValue::None)]), dict(vec![])],
+                PyValue::get
+            ),
             None
         );
     }

@@ -943,3 +943,20 @@ under 64 bytes cost nothing and the book's node limit bounds the rest. Measured:
 40,000 note markers linking to notes that link back stops the conversion (`Error::TooLarge`, "more
 than 32000000 bytes") where kfxgen makes the book; at a path of 100 characters it
 converts.
+
+## Headings a contents page repeats
+
+When kfxgen rebuilds the book's contents page (`_rebuild_contents_page`), each heading on the
+page that is also a link the page gives more than once becomes a line of its own, a copy of
+that entry's line (its title included). A heading matches an entry when their words agree
+after `_normalize_title`, which joins runs of white space and strips punctuation from both
+ends, so a short heading can match a very long title, and the title is copied once for each
+such heading. The port (`src/convert/contents_page.rs`) counts the bytes of the titles these
+lines copy before it makes them, and past 33,554,432 bytes (`MAX_CONTENT_FILE_BYTES`, the size
+a content file may have) stops the conversion (`Error::TooLarge`, "the contents page repeats
+more than 33554432 bytes of contents entry titles") where kfxgen makes the book. A heading in a
+real book is about as long as the title it repeats, and the page's headings are in one file
+under that size, so only a crafted title reaches the limit. Smallest input: a contents entry
+titled `"!" * 10_000_000 + "A"` and a "Contents" page of a heading "Contents" and four
+headings "A", each a link: four copies, 40,000,004 bytes, are refused; with three headings the
+book converts.

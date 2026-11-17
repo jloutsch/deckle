@@ -2,14 +2,16 @@
 //! The chapters (plan Task 21): kfxgen's per-file loop and chapter assembly
 //! (`extract_chapters_from_oeb`, `_assemble_chapters_by_coordinate`) against the assembly dump
 //! (`convert/<name>/assembly.json.gz`, A): one record per pass, the files right before
-//! assembly and the chapters right before the title-page step.
+//! assembly and the chapters right before the title-page step. Plan Task 22: the contents
+//! page and the title page, which make the model's `chapters` of those.
 
 use deckle_kfx::fixtures;
 use deckle_kfxgen::book::{Book, read_book};
 use deckle_kfxgen::convert::{
     CalibreOpf, Chapter, ConvertOptions, Error, Serials, SpineItem, TocEntry, assemble,
-    spine_items, split_by_writing_mode,
+    listing_without_contents, replace_title_page, spine_items, split_by_writing_mode,
 };
+use deckle_kfxgen::load::load_model;
 use deckle_kfxgen::pyvalue::PyValue;
 
 use crate::convert_args::sources;
@@ -711,4 +713,254 @@ fn keys_of_what_shows_nothing_go_on_a_native_table_too() {
     let table = b.get("table").unwrap();
     let keys = strings(table.get("anchor_keys"));
     assert_eq!(keys[..2], ["a.xhtml", "a.xhtml#e"], "{keys:?}");
+}
+
+/// The source fixtures the plan names first for the final chapters.
+const FINAL_FIRST: [&str; 5] = [
+    "directions",
+    "navigation",
+    "page_list",
+    "vertical_contents",
+    "package_more",
+];
+
+/// For every source (the five the plan names first), A's chapters of each pass through
+/// kfxgen's last chapter steps give the model's `chapters`: on a pass whose dropped listing
+/// leaves the book with no contents page, `listing_without_contents` asks for the next pass
+/// (the one recorded after it); on the last pass, the title-page step and the split by writing
+/// mode give the chapters `generate_full_book` was called with.
+#[test]
+fn final_chapters_match_every_model() {
+    let mut names = sources();
+    assert_eq!(names.len(), 55, "the source fixtures");
+    names.sort_by_key(|n| !FINAL_FIRST.contains(&n.as_str()));
+    let (mut failures, mut chapters, mut reruns) = (Vec::new(), 0, 0);
+    for name in &names {
+        let entries = entries_of(name);
+        let model = load_model(&fixtures::kfxgen(&format!("models/{name}")))
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let title = model.args.get("title").and_then(PyValue::as_str).unwrap();
+        let passes = records(name);
+        for (p, record) in passes.iter().enumerate() {
+            let cover = record.get("cover_href").and_then(PyValue::as_str);
+            let mut got = assemble(items_of(record), &entries, cover);
+            let kept = p == 1;
+            let rerun = listing_without_contents(&got, kept);
+            if rerun != (p + 1 < passes.len()) {
+                failures.push(format!("{name} pass {p}: listing_without_contents {rerun}"));
+            }
+            if rerun {
+                reruns += 1;
+                continue;
+            }
+            replace_title_page(&mut got, title, kept).unwrap();
+            let got = split_by_writing_mode(got);
+            chapters += got.len();
+            let want = model.args.get("chapters").unwrap();
+            for d in model_diff(&chapters_py(&got), want) {
+                failures.push(format!("{name} pass {p} chapters{d}"));
+            }
+        }
+    }
+    for f in failures.iter().take(60) {
+        eprintln!("{f}");
+    }
+    assert!(failures.is_empty(), "{} differences", failures.len());
+    assert_eq!(reruns, 2, "listing_rerun and refused_selector");
+    assert!(chapters > 150, "{chapters} chapters compared");
+}
+
+/// kfxgen's own title-page step on crafted chapters (`tests/it/data/contents_page_probe.json`,
+/// which says how they were run), for what no fixture reaches: a listing's page rebuilt as the
+/// contents (the text above its listing split off, or the front matter below it; a page of no
+/// blocks whose keys come off every block), a "Contents" page whose other files and front
+/// matter are split off and whose headings are merged, placed and repeated as Previewer prints
+/// them, entries of the same words, two equal "Contents" pages (only the first rebuilt) and a
+/// first block's equal twin (printed), the second pass, the rerun, a book with no title, and
+/// the split by writing mode.
+#[test]
+fn contents_pages_of_crafted_books_match_kfxgen() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/it/data/contents_page_probe.json");
+    let probe: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let cases = probe["cases"].as_object().unwrap();
+    assert_eq!(cases.len(), 11);
+    let mut failures = Vec::new();
+    for (name, case) in cases {
+        let py = |key: &str| PyValue::from_json(&case[key], &path, name).unwrap();
+        let mut next = 0;
+        let mut chapters: Vec<Chapter> = py("chapters")
+            .as_list()
+            .unwrap()
+            .iter()
+            .map(|c| Chapter::from_py(c, &mut next).unwrap())
+            .collect();
+        let kept = case["kept"].as_bool().unwrap();
+        let rerun = listing_without_contents(&chapters, kept);
+        if rerun != case["rerun"].as_bool().unwrap() {
+            failures.push(format!("{name}: listing_without_contents {rerun}"));
+        }
+        if rerun {
+            continue;
+        }
+        replace_title_page(&mut chapters, case["title"].as_str().unwrap(), kept).unwrap();
+        let got = split_by_writing_mode(chapters);
+        for d in model_diff(&chapters_py(&got), &py("out")) {
+            failures.push(format!("{name}{d}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// A "Contents" page of `headings` headings "A", each a link, and a chapter titled
+/// `"!" * (title - 1) + "A"`, which each heading names once the title's edge punctuation is
+/// stripped; `title` is the title's length in bytes.
+fn page_repeating(title: usize, headings: usize) -> Vec<Chapter> {
+    let block = |text: &str, linked: bool, level: i64| {
+        let mut b = vec![(s("text"), s(text))];
+        if linked {
+            let flag = PyValue::Tuple(vec![s("link"), s("a.xhtml")]);
+            let span = PyValue::Tuple(vec![
+                PyValue::Int(0),
+                PyValue::Int(1),
+                PyValue::Set(vec![flag]),
+            ]);
+            b.push((s("spans"), PyValue::List(vec![span])));
+        }
+        b.push((s("heading"), PyValue::Bool(true)));
+        b.push((s("heading_level"), PyValue::Int(level)));
+        PyValue::Dict(b)
+    };
+    let mut blocks = vec![block("Contents", false, 1)];
+    blocks.extend((0..headings).map(|_| block("A", true, 2)));
+    let chapter = |title: String, blocks: Vec<PyValue>| {
+        PyValue::Dict(vec![
+            (s("title"), s(&title)),
+            (s("text"), s("")),
+            (s("blocks"), PyValue::List(blocks)),
+            (s("toc_level"), PyValue::Int(0)),
+        ])
+    };
+    let long = format!("{}A", "!".repeat(title - 1));
+    let x = PyValue::Dict(vec![(s("text"), s("x"))]);
+    let mut next = 0;
+    [chapter("Contents".into(), blocks), chapter(long, vec![x])]
+        .iter()
+        .map(|c| Chapter::from_py(c, &mut next).unwrap())
+        .collect()
+}
+
+/// The lines a contents page repeats copy their entry's title (kfxgen's `{**toc_links[at],
+/// …}`), which a heading names once its edge punctuation is stripped: past
+/// `MAX_CONTENT_FILE_BYTES` of copies the book is refused (DIVERGENCES, "Headings a contents
+/// page repeats"), before any copy is made; just under it, it converts.
+#[test]
+fn a_contents_page_repeating_long_titles_is_refused_before_it_copies_them() {
+    const TITLE: usize = 4_000_001;
+    let mut over = page_repeating(TITLE, 9);
+    let (got, bytes) = crate::support::allocated_by(|| replace_title_page(&mut over, "T", false));
+    match got {
+        Err(Error::TooLarge { what }) => assert_eq!(
+            what,
+            "the contents page repeats more than 33554432 bytes of contents entry titles"
+        ),
+        other => panic!("{other:?}"),
+    }
+    // 9 copies would be 36 MB; the page's own lines, its text and the title's words are about
+    // three titles.
+    assert!(bytes < 20 << 20, "{} MB allocated", bytes >> 20);
+
+    let mut under = page_repeating(TITLE, 8);
+    replace_title_page(&mut under, "T", false).unwrap();
+    let page = under[0].to_py();
+    let links = page.get("toc_links").and_then(PyValue::as_list).unwrap();
+    assert_eq!(links.len(), 9, "the entry and its 8 repeats");
+}
+
+/// What kfxgen's contents page does in time quadratic in entries or page lines, done here
+/// once each: 50,000 chapters of one title, each with two places of one title (150,000 entries
+/// of two words), and a page of 100,000 lines alternating a link and a heading of those words
+/// (kfxgen scans every entry for each line, every later line for each heading, and inserts
+/// each heading into the list), and 100,000 keys of a dropped listing taken off every block.
+#[test]
+fn a_contents_page_of_many_entries_and_lines_costs_little() {
+    const CHAPTERS: usize = 50_000;
+    const LINES: usize = 100_000;
+    let block = |text: &str, linked: bool, heading: bool, keys: Vec<PyValue>| {
+        let mut b = vec![(s("text"), s(text))];
+        if linked {
+            let flag = PyValue::Tuple(vec![s("link"), s("a.xhtml")]);
+            let span = PyValue::Tuple(vec![
+                PyValue::Int(0),
+                PyValue::Int(1),
+                PyValue::Set(vec![flag]),
+            ]);
+            b.push((s("spans"), PyValue::List(vec![span])));
+        }
+        if heading {
+            b.push((s("heading_level"), PyValue::Int(2)));
+        }
+        b.push((s("anchor_keys"), PyValue::List(keys)));
+        PyValue::Dict(b)
+    };
+    let sub = |t: &str| {
+        PyValue::Dict(vec![
+            (s("title"), s(t)),
+            (s("key"), PyValue::None),
+            (s("level"), PyValue::Int(1)),
+        ])
+    };
+    let mut blocks = vec![block("Contents", false, true, vec![])];
+    blocks.extend((0..LINES).map(|i| block("Introduction", i % 2 == 0, i % 2 == 1, vec![])));
+    let key = |i: usize| s(&format!("n.xhtml#k{i}"));
+    let mut chapters = vec![PyValue::Dict(vec![
+        (s("title"), s("Contents")),
+        (s("text"), s("")),
+        (s("blocks"), PyValue::List(blocks)),
+        (
+            s("_listing_keys"),
+            PyValue::List((0..LINES).map(key).collect()),
+        ),
+    ])];
+    chapters.extend((0..CHAPTERS).map(|i| {
+        PyValue::Dict(vec![
+            (s("title"), s("Introduction")),
+            (s("text"), s("x")),
+            (
+                s("blocks"),
+                PyValue::List(vec![block("x", false, false, vec![key(i), key(i + 1)])]),
+            ),
+            (s("toc_level"), PyValue::Int(0)),
+            (
+                s("sub_entries"),
+                PyValue::List(vec![sub("Introduction"), sub("Part")]),
+            ),
+        ])
+    }));
+    let mut next = 0;
+    let mut chapters: Vec<Chapter> = chapters
+        .iter()
+        .map(|c| Chapter::from_py(c, &mut next).unwrap())
+        .collect();
+    let start = std::time::Instant::now();
+    replace_title_page(&mut chapters, "T", false).unwrap();
+    let took = start.elapsed();
+    let page = chapters[0].to_py();
+    let links = page.get("toc_links").and_then(PyValue::as_list).unwrap();
+    eprintln!(
+        "{CHAPTERS} chapters, {LINES} lines: {} contents lines in {took:?}",
+        links.len()
+    );
+    // Every entry, and a line for each heading but the last, which names an entry no link
+    // names and so is that entry's line (kfxgen gives 199 for 50 chapters and 100 lines).
+    assert_eq!(links.len(), 3 * CHAPTERS + LINES / 2 - 1);
+    assert!(
+        chapters[1].blocks()[0]
+            .get("anchor_keys")
+            .unwrap()
+            .as_list()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(took < crate::support::COST_LIMIT, "{took:?}");
 }
