@@ -134,7 +134,7 @@ fn a_file_that_is_not_an_epub_is_an_error() {
 const CONTAINER: &[u8] = br#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
 
 /// The stored zip of an EPUB with `opf` at `content.opf` and `files`.
-fn zip_of(opf: &[u8], files: &[(&str, &[u8])]) -> Vec<u8> {
+pub(crate) fn zip_of(opf: &[u8], files: &[(&str, &[u8])]) -> Vec<u8> {
     let mut entries: Vec<(&str, &[u8], u64)> = vec![
         ("mimetype", b"application/epub+zip", 20),
         ("META-INF/container.xml", CONTAINER, CONTAINER.len() as u64),

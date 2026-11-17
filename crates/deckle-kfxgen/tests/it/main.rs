@@ -10,6 +10,7 @@ mod convert_inline;
 mod convert_inline_style;
 mod convert_resolver;
 mod convert_support;
+mod convert_toc;
 mod corpus;
 mod corpus_cascade;
 mod css_cascade;

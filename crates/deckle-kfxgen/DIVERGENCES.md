@@ -910,3 +910,23 @@ decodes, scales and writes pictures with Qt through calibre; the port uses the `
   `font-family: "\16EA0 x"`.
 - `KFXGEN_MAX_FONT_BYTES` is not read; the cap is its default, 50 MiB. kfxgen's warnings for a
   skipped face are not reported.
+
+## Added files of one name
+
+kfxgen puts the files Calibre added to the spine (`_spine_in_order`) in the order of the first
+contents entry naming each one's file name, then by file name, with a stable sort. Two added
+files of one file name in different folders sort alike whether or not an entry names that
+name, so kfxgen keeps Calibre's set order for them, which changes from run to run, and with it
+which of two spellings up to letter case it keeps. The port (`src/convert/toc.rs`) sorts them
+by href. Smallest input: a page linking to `A/x.xhtml` and `B/x.xhtml`, neither in the OPF's
+spine; the port gives `A/x.xhtml` first every time.
+
+## Note and link keys under a long path
+
+`_note_pair_ids`, `_book_link_targets` and `_footnote_keys` (`src/convert/notes.rs`) make a
+key holding the file's path for each id or link they keep, and read the path again for each
+link they resolve. The port charges each key made, and each path read, to the file's style
+text budget, as the anchor keys are. For example, a file at a path of 2,000 characters with
+40,000 note markers linking to notes that link back stops the conversion (`Error::Book`, "more
+than 500000 declarations") where kfxgen makes the book; at a path of 100 characters it
+converts.

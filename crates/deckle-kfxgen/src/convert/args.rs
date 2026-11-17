@@ -11,6 +11,7 @@ use regex::Regex;
 use super::href::{key_doc, unquote};
 use super::options::ConvertOptions;
 use super::package::{CalibreOpf, NavLink};
+use super::toc::spine_in_order;
 use crate::book::Book;
 use crate::generate::py;
 use crate::pyvalue::PyValue;
@@ -178,45 +179,13 @@ fn fixed_layout(book: &Book) -> bool {
     pages > 0 && sized * 2 > pages
 }
 
-/// `posixpath.basename(unquote(href.split("#")[0]))`, the `file` of `_spine_in_order`.
-fn file_name(href: &str) -> String {
-    let path = unquote(href.split('#').next().unwrap_or(""));
-    path.rsplit('/').next().unwrap_or("").to_owned()
-}
-
 /// The names `_respelled` matches keys against: `unquote(href)` of each file of
-/// `_spine_in_order(oeb_book, [])`. That is Calibre's spine with, of the non-linear files at
-/// its end that its OPF's spine does not list (the ones it added), only the first of each
-/// spelling up to letter case, taken in order of file name.
+/// `_spine_in_order(oeb_book, [])`.
 fn spine_names(book: &Book, opf: &CalibreOpf) -> BTreeSet<String> {
-    let spine = &book.oeb.spine;
-    let tail = spine.len() - spine.iter().rev().take_while(|s| !s.linear).count();
-    let (head, end) = spine.split_at(tail);
-    let folded = |href: &str| unquote(href.split('#').next().unwrap_or("")).to_lowercase();
-    let own: Vec<&str> = head
-        .iter()
-        .map(|s| s.href.as_str())
-        .chain(
-            end.iter()
-                .filter(|s| opf.listed.contains(&file_name(&s.href)))
-                .map(|s| s.href.as_str()),
-        )
-        .collect();
-    let mut seen: BTreeSet<String> = own.iter().map(|h| folded(h)).collect();
-    let mut added: Vec<(String, &str)> = end
-        .iter()
-        .filter(|s| !opf.listed.contains(&file_name(&s.href)))
-        .map(|s| (file_name(&s.href), s.href.as_str()))
-        .collect();
-    // With no contents entries every file sorts by its name alone; the sort is stable.
-    added.sort_by(|a, b| a.0.cmp(&b.0));
-    let mut names: BTreeSet<String> = own.iter().map(|h| unquote(h)).collect();
-    for (_, href) in added {
-        if seen.insert(folded(href)) {
-            names.insert(unquote(href));
-        }
-    }
-    names
+    spine_in_order(book, opf, &[])
+        .into_iter()
+        .map(|i| unquote(&book.oeb.spine[i].href))
+        .collect()
 }
 
 /// `_respelled`: each key whose file part names a spine file only up to letter case, in the

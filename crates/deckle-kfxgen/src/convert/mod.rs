@@ -19,11 +19,13 @@ mod inline;
 #[allow(dead_code)]
 mod inline_style;
 pub(crate) mod marks;
+mod notes;
 mod options;
 mod package;
 mod pictures;
 mod quotes;
 mod resolver;
+mod toc;
 
 /// The page width kfxgen's `convert` sets round the extraction, for the dump tests.
 pub use crate::generate::page_scale::{HORIZONTAL_PT, PageWidth, VERTICAL_PT, page_width};
@@ -44,11 +46,13 @@ pub use inline_style::{
     Flag, Flags, Raised, Segment, Span, css_letter_spacing, css_link_colour, css_rgb,
     css_text_colour, normalize_runs_with_anchors, parse_css_length, parse_vertical_align,
 };
+pub use notes::{book_link_targets, footnote_keys, note_pair_ids, note_target_ids};
 pub use options::ConvertOptions;
 pub use package::{CalibreOpf, Nav, NavLink, Ncx};
 pub(crate) use package::{item_path, kfxgen_paths};
 pub use pictures::css_background_image;
 pub use resolver::{Resolved, Resolver, TextBudget};
+pub use toc::{TocEntry, respell_toc_hrefs, spine_in_order, toc_entries};
 
 use crate::{book, css};
 
