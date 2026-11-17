@@ -735,6 +735,10 @@ The picture tokens and the initial (`src/convert/pictures.rs`, `initial.rs`, at 
 - Each anchor key a block gets is a copy of the file's href and an id. The copies are charged to
   the file's style text budget, so a file with a very long href and very many ids is refused
   where kfxgen makes the book.
+- An `<svg>`'s own ids go on each picture block it draws (`_emit_image_block`), twice a block;
+  kfxgen copies them without a limit. The port charges the copies to the same budget before
+  making them, so `<svg id="(1 MiB)">` with 200 `<image href="a"/>` stops the file
+  (`Error::Book`, "more than 500000 declarations") where kfxgen writes 200 blocks.
 
 ## Lists
 
@@ -807,11 +811,14 @@ kfxgen's native tables (`src/convert/blocks/tables.rs`, at ad38ec8):
   kfxgen it lands on the first rule its generator finds with the key (both read in the
   generators' code, not run end to end).
 - The same holds for an empty anchor after a row (`_walk_container`'s `follow`) when the row's
-  first block is a space block, as a row holding only a no-break space makes. Smallest input:
-  `<table><tr style="display: none"><td>h</td></tr><tr><td>&#160;</td></tr><a id="x"></a><tr>
-  <td>b</td></tr><a id="z"></a></table>`. kfxgen appends `x` to the list every rule and space
-  block shares; the port puts it on that space block, which spacing takes out, so `x` names
-  nothing.
+  first block is a space or rule block. kfxgen appends the id to the list every rule and space
+  block shares. A space block comes from a row holding only a no-break space: `<table><tr
+  style="display: none"><td>h</td></tr><tr><td>&#160;</td></tr><a id="x"></a><tr><td>b</td>
+  </tr><a id="z"></a></table>`; the port puts `x` on that space block, which spacing takes out,
+  so `x` names nothing. A rule block comes from a row holding a table whose cell opens with a
+  rule: `<table><tr><td><hr/><table><tr><td>i</td></tr></table></td></tr><a id="x"></a><tr>
+  <td>b</td></tr><a id="z"></a></table><hr/><p>after</p>`; the port keeps `x` on that one rule,
+  and the second rule has none (in kfxgen every rule carries it).
 - Each paragraph a row holding a table writes (`_walk_split_row`) costs one unit of the file's
   style text budget, and again for each such row round it, which looks at it again (to mark it
   a row, and to make it bold in a header cell). Tables nested 62 deep in cells, the innermost

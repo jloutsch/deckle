@@ -818,7 +818,7 @@ impl Walker<'_, '_, '_, '_> {
 
     /// The table branch of `_walk_element` with `native_tables` set: false when kfxgen writes
     /// the table as rows instead (it is not native, or is a notes table). A contents entry
-    /// naming the table past its start is the rows path too, refused once its rows are built.
+    /// naming the table past its start is the rows path too.
     pub(super) fn table(&mut self, elem: NodeId, depth: usize) -> Result<bool, ItemError> {
         // Not in kfxgen: each cell below the table, nested tables' cells too, costs
         // `CELL_UNITS` of the file's style text budget, counted from the tree before anything

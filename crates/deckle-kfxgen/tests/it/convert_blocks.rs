@@ -2615,3 +2615,29 @@ fn an_anchor_after_a_row_of_space_is_dropped() {
         assert!(!format!("{:?}", b.to_py()).contains("\"x\""));
     }
 }
+
+/// An `<svg>`'s own id goes on each picture block it draws (`_emit_image_block`), twice a
+/// block: the copies are charged before they are made, so a 1 MiB id on 200 `<image>`s is
+/// refused by the walk, and a short id on 200 converts.
+#[test]
+fn an_svg_s_id_copied_onto_each_picture_is_charged() {
+    let walk = |id: &str| {
+        let images = "<image href=\"a\"/>".repeat(200);
+        let file = page(&format!("<svg {SVG} id=\"{id}\">{images}</svg>"), "");
+        let budget = TextBudget::new();
+        let resolver = Resolver::new(&file, &DEFAULT_PROFILE, &budget);
+        let mut serials = Serials::default();
+        let none = HashSet::new();
+        let opts = ExtractOptions {
+            native_tables: true,
+            toc_targets: &none,
+            link_targets: &none,
+            keep_nav_listings: false,
+        };
+        blocks_before_spacing(&mut Walk::new(&file, &resolver, &mut serials), &opts)
+            .map(|b| b.blocks.len())
+    };
+    let got = walk(&"i".repeat(1 << 20));
+    assert!(is_over_budget(&got), "{got:?}");
+    assert_eq!(walk("s").unwrap(), 200);
+}

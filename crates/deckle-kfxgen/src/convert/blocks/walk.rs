@@ -1212,6 +1212,10 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         if refs.iter().any(|href| is_data_uri(href)) {
             return Err(self.unsupported(DATA_URI));
         }
+        // Each picture block holds the `<svg>`'s own ids twice (`anchor_ids`, `anchor_offsets`).
+        let own: usize = own_anchor_ids(dom, svg).map(str::len).sum();
+        self.resolver
+            .charge(refs.len().saturating_mul(own.saturating_mul(2)))?;
         let mut drew_picture = !refs.is_empty();
         for href in refs {
             self.resolver.charge(href.len())?;
