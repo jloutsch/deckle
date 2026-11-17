@@ -560,3 +560,25 @@ fn chapters_cost_in_a_release_build() {
     let opf = CalibreOpf::new(&book).unwrap();
     measure("page_list", &book, &opf);
 }
+
+/// The key of an id ending a file whose last block is a native table leaves the table, its
+/// rows, cells and cell paragraphs too, and goes on to the next shown file.
+#[test]
+fn keys_of_ids_ending_a_file_leave_its_table() {
+    let (book, opf) = book_of_pages(
+        &[
+            (
+                "a.xhtml",
+                r#"<p>One.</p><table><tr><td><p>x</p></td></tr></table><p><a id="t"></a></p>"#,
+            ),
+            ("b.xhtml", "<p>Two.</p>"),
+        ],
+        "",
+    );
+    let (items, _) = run(&book, &opf).unwrap();
+    let a = PyValue::List(items[0].blocks.iter().map(|b| b.to_py()).collect());
+    assert!(!format!("{a:?}").contains("a.xhtml#t"), "{a:?}");
+    assert!(format!("{a:?}").contains("\"t\""), "the id stays: {a:?}");
+    let b = items[1].blocks[0].to_py();
+    assert_eq!(strings(b.get("anchor_keys")), ["a.xhtml#t", "b.xhtml"]);
+}
