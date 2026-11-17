@@ -13,6 +13,11 @@
 //! are the constants here. An SVG, as a file of the manifest or drawn with shapes in a page,
 //! is refused: kfxgen draws it with Qt, which this port does not.
 //!
+//! So what only SVG drawing needs is left out: `display_dims` (only an SVG drawn larger than
+//! it shows fills it, so the caller writes `{}`), `_pictures_in_table_cells` (it picks the
+//! scale an SVG is drawn at) and the sha1 of `_svg_picture_href`. [`images`] and [`Images`]
+//! are public for the integration tests.
+//!
 //! Hostile input: a picture is only ever read from the archive, by its manifest href, through
 //! [`EpubReader`]'s limits; no path from the book reaches the file system. Every decode goes
 //! through [`Pictures::decode`], which reads the size the header states and refuses a picture
@@ -555,6 +560,10 @@ mod tests {
         assert_eq!(fit_image(1920, 1920, 1920, 1920), None);
         assert_eq!(qt_keep_aspect(1921, 7, 1920, 6), (1646, 6));
         assert_eq!(qt_keep_aspect(2400, 1200, 1920, 960), (1920, 960));
+        assert_eq!(qt_keep_aspect(2000, 10, 1920, 9), (1800, 9));
+        // Its shape is wider than the box's: the width fills the box, the height is floored.
+        assert_eq!(qt_keep_aspect(10, 10, 5, 8), (5, 5));
+        assert_eq!(qt_keep_aspect(7, 3, 5, 8), (5, 2));
     }
 
     #[test]
