@@ -740,9 +740,10 @@ The picture tokens and the initial (`src/convert/pictures.rs`, `initial.rs`, at 
   not the budget, bounds how many there are. A file past its budget stops the conversion with
   `Error::TooLarge`, "<file>: converting this file copies or reads more than 32000000 bytes of
   its text and styles" (the budget, 500,000 units of 64 bytes, counts the text and styles the
-  converter copies or reads, not only CSS). Each pass of the loop (kfxgen's second prints the
-  contents listings) charges a new budget for each file, so the second pass refuses only what
-  the first would.
+  converter copies or reads, not only CSS). Each pass of the loop has its own budget for each
+  file: what the first pass charged does not count on the second. The second pass (kfxgen's,
+  printing the contents listings) also reads the listings the first left out, so a file with a
+  very large listing can be refused there when the first pass was not.
 - An `<svg>`'s own ids go on each picture block it draws (`_emit_image_block`), twice a block;
   kfxgen copies them without a limit. The port charges the copies to the same budget before
   making them, so `<svg id="(1 MiB)">` with 200 `<image href="a"/>` stops the file

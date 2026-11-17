@@ -8,10 +8,11 @@ Date: 2026-11-17. Branch `feat/native-kfx-converter` (not pushed). Plan:
 ## Result
 
 - `deckle_kfxgen::convert::convert(path, opts)` reads an EPUB (`book::read_book`, phase 2) and
-  runs every ported stage of kfxgen's `convert_oeb_to_kfx` in its order: the metadata, the cover
-  and pictures, the chapters (with kfxgen's second pass when dropping the contents listings
-  leaves the book no contents page), the title page and contents page, the split by writing
-  mode, the fonts, the footnotes, the landmarks and the page list. It returns `Converted`: the
+  runs every ported stage of kfxgen's `convert_oeb_to_kfx`: the metadata (with the landmarks
+  and page list, which kfxgen works out last, in its call to the generator; neither can fail or
+  log, so the order does not show), the cover and pictures, the chapters (with kfxgen's second
+  pass when dropping the contents listings leaves the book no contents page), the title page and
+  contents page, the split by writing mode, the fonts and the footnotes. It returns `Converted`: the
   `Model` (`generate_full_book`'s arguments, the input the phase 1 generator takes) and the
   warnings kfxgen logs on the way.
 - It does not write a KFX: the caller passes the model to `generate::generate`. It does not run
@@ -31,6 +32,8 @@ Date: 2026-11-17. Branch `feat/native-kfx-converter` (not pushed). Plan:
   re-encoded cover put in: each cover is over 1,920 px on its long side, 2,726 and 2,366 px, so
   both scale it, and the port's encoder makes other bytes).
 - Warnings: kfxgen's log-only warnings are collected into `Converted::warnings` (list below).
+- `docs/books.md`'s size limits table lists the phase 3 limits a book's owner could meet (six
+  "EPUB to KFX" rows), as phase 2 listed its own before anything user-facing called them.
 
 ## Timings
 
@@ -127,7 +130,10 @@ feature or the limit; kfxgen (through Calibre) makes the book. Details are in
 | Pictures above 100 megapixels | a PNG whose header says 10,001 × 10,000 | Bounds decode memory; calibre lets Qt allocate up to 1,024 MB (about 268 megapixels). Pictures. |
 | JPEGs above about 48.8 megapixels (59.7 for grey) | a baseline RGB JPEG of 7,000 × 7,000 (worked out, not run) | zune-jpeg keeps coefficient planes outside `image`'s allocation limit; 8 bytes a pixel are taken off it. Pictures. |
 | More than 10 gigapixels of pictures in a book | 101 pictures of 10,000 × 10,000 | Bounds decode time (100 such pictures took 29 s in a release build). Pictures. |
-| Pictures embedded as `data:` URIs ("pictures embedded as data: URIs") | `<img src="data:image/png;base64,…"/>` (ran) | calibre's `DataURL` step, which turns them into files before kfxgen, is not ported; it needs a recorded fixture. Pictures in text. |
+| Pictures embedded as `data:` URIs ("pictures embedded as data: URIs") in an `<img>` | `<img src="data:image/png;base64,…"/>` (ran) | calibre's `DataURL` step, which turns them into files before kfxgen, is not ported; it needs a recorded fixture. Pictures in text. |
+| `data:` sources calibre does not turn into files: an SVG `<image>`'s href, a CSS background's `url()`, an `<img>` source calibre cannot decode (same refusal) | `<svg><image href="data:image/png;base64,…"/></svg>` | kfxgen writes the URI into the picture token and the generator finds no picture by that name, so the picture is lost but the book is made; the port refuses before copying the URI. Pictures in text. |
+| Contents nested more than 32 levels deep (generator, "contents nested more than 32 levels deep") | contents entries nested 33 levels deep (kfxgen writes up to 162) | The generator writes contents recursively; a debug build overflowed a 2 MiB thread at 80 levels. Contents nested more than 32 levels deep. |
+| Boxes nested more than 32 levels deep (generator, "boxes nested more than 32 levels deep") | 33 bordered `<div>`s nested (kfxgen writes up to 245) | The generator reads and writes boxes recursively; a debug build overflowed a 2 MiB thread at about 60 levels. Boxes nested more than 32 levels deep. |
 | SVG pictures: an SVG file in the manifest, or an inline `<svg>` drawn only with shapes ("SVG pictures") | `<svg><rect width="1" height="1"/></svg>` in a page (ran) | kfxgen draws them with Qt; no SVG renderer is ported (follow-up jloutsch/deckle#96, plan decision 2). Pictures. |
 | MathML ("math") | `<p>a <math><mi>x</mi></math></p>`, shown or not (ran) | Plan decision 2; the generator does not write equations either. The block walk. |
 | WOFF2 fonts ("WOFF2 fonts"), when one is tried | `@font-face { src: url(f.woff2) }` used by the text | fontTools rebuilds WOFF2 glyph tables with its own compiler; not ported (follow-up jloutsch/deckle#97). Fonts. |
@@ -178,10 +184,26 @@ From this phase's ledger (`GATE` lines):
    not measured, against it.
 10. **JPEG decode memory outside this crate** (Task 18): not checked in this phase; the owner
     has the note. Open.
-11. Closed in this phase: the SVG-root spine page (Calibre's reader drops it, as `read_book`
+11. **The model is built by copying every chapter** (`Chapter::to_py` while the chapters are
+    alive): 8 files of 20,000 paragraphs peak at 854 MB through `convert` against 522 MB for the
+    chapters alone (review, ran). A consuming conversion would move the values. Joins the phase
+    2 item "the limits add up". Open.
+12. **Warnings have no size cap.** A contents entry's title is copied, escaped, into the
+    "dropped: not in spine" warning: a 20 MB NCX gave 70 MB of warnings (review, ran), up to
+    about 224 MB at `CalibreOpf`'s 64 MiB (worked out). Cutting the title in the warning would
+    bound it. Open.
+13. **Warnings are lost with an error.** `convert` returns only the error, so a book whose only
+    shown file kfxgen raises on gives `NoContent` ("the book shows nothing") without the "Spine
+    item N parse failed" line kfxgen logs first. Phase 4 should return the warnings with the
+    error or put the reason in it. Open.
+14. Closed in this phase: the SVG-root spine page (Calibre's reader drops it, as `read_book`
     does; Task 21), the 929 MB for a 20,000-paragraph file (total allocation, not peak: 137 MB
     peak; Task 21), the 20,000-paragraph walk time (1.04 s in a release build in Task 21, 1.17 s at load 22
-    here).
+    here); a page's file name copied once for each table written as rows (fix round 1 keeps
+    the file's index); and, in phase 2's `read_package`, the item's href copied once for each
+    spine entry naming it (fix round 1 drops the unread `Package::spine` field: 5,000 entries
+    of a 20,000-character name allocated 102 MB in `read_package` and now take under 20 MB
+    through `oeb_view`).
 
 The phase 2 note's seven items ("Before phase 4 calls `read_book`") still stand; phase 3 changed
 none of them and did not re-measure them:
@@ -194,6 +216,9 @@ none of them and did not re-measure them:
 5. The limits add up: decide the peak memory the app accepts and lower the limits to it.
 6. The OPF has no size check of its own.
 7. The attribute scan can refuse a file Calibre reads.
+
+Still before the final port ships (from phase 1's note, carried by phase 2's): test #88 in the
+running desktop app.
 
 ## Warnings
 
@@ -228,7 +253,9 @@ From the ledger, none of them a difference a fixture or the corpus shows:
 - Task 2: `convert_dump.py` docstring clause order for `inline/`; no hook test that a differing
   later resolver fails the dump.
 - Task 4: `dom/structure.rs` `at_start` does `ancestors.contains` per node; comments before or
-  after the root element are not kept.
+  after the root element are not kept; `Dom::index_in_parent` is reached only by tests, and
+  `Dom::ancestors` and `Dom::qualified` had no caller but tests then.
+- Task 7: `compile.rs` keeps its own `py_space` beside `dom::py_space`.
 - Task 6: generated-NCX nesting is unit-tested only; `CalibreOpf::new` reads the nav only when
   `nav_path` is set; the OPF 3 empty-date case is unrecorded.
 - Task 8: `TextBudget::new` duplicates `Default`; `TextBudget::charged` is public for a test;
@@ -250,9 +277,18 @@ From the ledger, none of them a difference a fixture or the corpus shows:
   box `bidi.set_here` value has no dump or Python confirmation; `Block::remove`'s unreachable
   `Field::Blocks` arm.
 - Task 18: the cover-sharing test proves equal bytes, not one encoding; the cover is cloned (up
-  to 256 MB) instead of moved; the warning order differs from kfxgen's phases.
+  to 256 MB) instead of moved; the warning order differs from kfxgen's phases. Re-review: the
+  GIF unit test uses only a 2-colour table; the JPEG test does not pin the multiplier between 3
+  and 7; worst-case GIF decode memory is about 637 MB (worked out, not run).
 - Task 19 (M5): unreached code in `font_table.rs` (the bare-`src` branch of `src_urls`, the
   `MissingFile` arm of `Fonts::bytes`, an `unwrap_or_default`).
+- Task 21 re-review: R1, the book's-last-block tail write has no cost test; R2, subtracting
+  note ids from the contents targets is pinned by no test; R3, a wrong `DIVERGENCES.md`
+  sentence about the second pass's budget (corrected in this task's fix round 1).
+- Task 22 (M7): `split_by_writing_mode` splits only blocks held as `Field::Blocks`.
+- Task 23 review: M1, M2 and M3 (gates 11 to 13); M6, the picture comparison reads no pixels,
+  so a picture both re-encode to the right size and format with wrong pixels passes (a mean
+  per-channel difference after decoding both would catch it).
 
 ## Code no test reaches (deletion candidates)
 
@@ -274,4 +310,7 @@ From the ledger, none of them a difference a fixture or the corpus shows:
   by reading.
 - Calibre's own wording for the spine items its reader leaves out.
 - Timings on a quiet machine.
+- The SVG-words check in a crafted file: 240 nested `<svg>`s round a `<text>` of 100,000
+  `<tspan>`s took 1.48 s for the walk and the check together (review, release; depth × nodes,
+  as kfxgen).
 - Peak memory of `convert` on the corpus.
