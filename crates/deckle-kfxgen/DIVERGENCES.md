@@ -792,7 +792,8 @@ kfxgen's native tables (`src/convert/blocks/tables.rs`, at ad38ec8):
   of ten `<td>cell</td>`. kfxgen converts these tables. Its `_fostered_content` tests every element
   of the table against a list of the table, its row groups and its rows, so its work grows
   with rows times cells: about 1.6 billion comparisons for 125,000 cells in rows of 10 (worked
-  out from the code, not run).
+  out from the code, not run). A table inside a table already counted is not counted again:
+  kfxgen reads each nested table's whole tree again when the rows path reaches it.
 - An id still waiting at the end of a cell walked as paragraphs, when the cell's last block is
   a drawn rule, is dropped. Smallest inputs: `<td><p>a</p><p>b</p><hr id="z"/></td>` and
   `<td><p>a</p><p>b</p><hr/><a id="z"></a></td>` in a native table. kfxgen's `_walk_cell`
@@ -805,6 +806,18 @@ kfxgen's native tables (`src/convert/blocks/tables.rs`, at ad38ec8):
   a link in the port (no block has the key, so the generator leaves the run unlinked); in
   kfxgen it lands on the first rule its generator finds with the key (both read in the
   generators' code, not run end to end).
+- The same holds for an empty anchor after a row (`_walk_container`'s `follow`) when the row's
+  first block is a space block, as a row holding only a no-break space makes. Smallest input:
+  `<table><tr style="display: none"><td>h</td></tr><tr><td>&#160;</td></tr><a id="x"></a><tr>
+  <td>b</td></tr><a id="z"></a></table>`. kfxgen appends `x` to the list every rule and space
+  block shares; the port puts it on that space block, which spacing takes out, so `x` names
+  nothing.
+- Each paragraph a row holding a table writes (`_walk_split_row`) costs one unit of the file's
+  style text budget, and again for each such row round it, which looks at it again (to mark it
+  a row, and to make it bold in a header cell). Tables nested 62 deep in cells, the innermost
+  cell holding 10,000 paragraphs, stop the file (`Error::Book`, "the CSS of this book file
+  gives its elements more than 500000 declarations"); 5,000 paragraphs convert (317,759
+  units). kfxgen converts both.
 - A `<col span="N">` repeats its width N times (up to 1,000) in the model's column widths. Each
   repeat is charged to the file's style text budget before it is made, so a table whose `<col>`
   spans add up to about a million widths stops the file (`Error::Book`, "the CSS of this book

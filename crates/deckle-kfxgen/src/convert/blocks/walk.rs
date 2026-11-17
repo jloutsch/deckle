@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! The tree walk of `extract_blocks_from_html`: its closures `_walk`, `_walk_flow`,
-//! `_walk_element`, `_walk_container` (with `_flush_inline`), `_holds_blocks`,
-//! `_is_block_at_body`, `_discard_listing`, `_emit_image_block`, `_inline_picture_parts`, and
-//! the module helpers they call (`_is_nav_listing`, `_is_front_matter`, `_page_breaks`,
-//! `_clear_side`, `_pictures_among_words`, `_lone_block_picture`, `_is_spacer`,
-//! `_anchors_follow_rows`, `_dedupe_keep_order`), at kfxgen `ad38ec8`. Lists are `lists.rs`,
-//! tables `tables.rs`.
+//! `_walk_element`, `_walk_container` (with `_flush_inline` and `follow`), `_holds_blocks`,
+//! `_is_block_at_body`, `_discard_listing`, `_emit_image_block`, `_emit_svg_blocks`,
+//! `_walk_split_row`, `_inline_picture_parts`, and the module helpers they call
+//! (`_is_nav_listing`, `_is_front_matter`, `_page_breaks`, `_clear_side`,
+//! `_pictures_among_words`, `_lone_block_picture`, `_is_spacer`, `_anchors_follow_rows`,
+//! `_row_align`, `_dedupe_keep_order`), at kfxgen `ad38ec8`. Lists are `lists.rs`, tables
+//! `tables.rs`.
 //!
 //! kfxgen recurses once per nested element (`_walk` → `_walk_flow` → `_walk_element` →
 //! `_walk_container` → `_walk`, and `_discard_listing`); here each open call is a [`Frame`] on
 //! a stack, and an element more than `MAX_DEPTH` below the `<body>` stops the file with
 //! [`Error::TooLarge`]. `read_book` refuses any element deeper than `MAX_DEPTH` below the root,
 //! so no tree it gives reaches that.
-//!
-//! Branches later tasks port stop the file with [`Error::Unsupported`] naming the task.
 
 use std::collections::{HashMap, HashSet};
 

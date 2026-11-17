@@ -14,9 +14,11 @@
 //! the ordinary block walk (`_walk_cell`), and the table then walks what sits outside its cells
 //! and its caption the same way. Here the table being built is a [`TableJob`] on the walk's
 //! stack ([`Frame::Table`], [`Frame::CellEnd`]), so no walk recurses on the book's nesting. A
-//! native table holds no table (`_table_is_native`), so a cell's walk never starts another.
+//! native table holds no table (`_table_is_native`), so a cell's walk never starts another; a
+//! table written as rows can hold one, which the rows walk reaches as any block (`walk.rs`).
 //!
-//! Work is linear in the table: every cell is built once, its subtree read once for what
+//! Work is linear in the table: its cells are counted once (a nested table's with the table
+//! round it), every cell is built once, its subtree read once for what
 //! `build_cell` and `_table_is_native` count in it (kept per node, [`Counts`]), and the walks up
 //! from a cell (`_cell_valign`, a header cell's `inherit`) are kept per element. Spans are
 //! clamped to 1 to 1,000 as kfxgen clamps them, and a native table is at most 24 columns wide,

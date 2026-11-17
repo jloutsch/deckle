@@ -730,6 +730,12 @@ fn what_kfxgen_raises_on_in_the_walk_is_raised() {
             ".m { text-align: match-parent }",
             "KeyError",
         ),
+        // `_walk_split_row`: `int()` of a weight `isdigit` takes and `int()` does not read.
+        (
+            "<table><tr><td class=\"w\">a<table><tr><td>i</td></tr></table></td></tr></table>",
+            ".w { font-weight: \u{b2} }",
+            "ValueError",
+        ),
     ] {
         match extract(&page(body, css)) {
             Err(ItemError::Raised(r)) => assert_eq!(r.exception, exception, "{css}"),
@@ -2406,5 +2412,206 @@ fn cells_are_aligned_as_kfxgen_aligns_them() {
             .collect();
         let want: Vec<String> = want.iter().map(|a| format!("'{a}'")).collect();
         assert_eq!(aligns, want, "{body}");
+    }
+}
+
+/// The blocks of a walk that kfxgen would leave the spine item out of, or the port refuses.
+fn walk_error(file: &deckle_kfxgen::book::File) -> ItemError {
+    match extract(file) {
+        Err(e) => e,
+        Ok(b) => panic!("converted: {} blocks", b.blocks.len()),
+    }
+}
+
+/// What no dump holds of the rows path, each value read from the pinned `_walk_split_row`,
+/// `_row_align`, `_walk_container`'s `follow` and `_emit_svg_blocks` for the style the port
+/// resolves (not run: they are closures of `extract_blocks_from_html`). A hidden row keeps a
+/// table from being native.
+#[test]
+fn rows_no_dump_holds_are_written_as_kfxgen_writes_them() {
+    // A row holding a table: each cell walked as the body is, the row's and the cell's ids
+    // on its first paragraph, a header cell's bold on its paragraphs, the inner table a
+    // block of its own, and the row's alignment (its own: the cells disagree, an empty cell
+    // not counted) where a paragraph sets none.
+    let b = before_spacing(
+        "<table><tbody><tr id=\"r\"><th id=\"h\">Head<table><tbody><tr><td>in</td></tr>\
+         </tbody></table>tail</th><td class=\"odd\">Side</td><td></td></tr></tbody></table>",
+        "tr { text-align: right } .odd { text-align: middle }",
+    );
+    assert_eq!(b.len(), 4);
+    assert_eq!(
+        keys_at(&b, 0, ""),
+        [
+            "text",
+            "spans",
+            "block_style",
+            "anchor_ids",
+            "anchor_offsets",
+            "row"
+        ]
+    );
+    for (i, text, style) in [
+        (0, "'Head'", "{'align': 'right', 'bold': True}"),
+        (2, "'tail'", "{'align': 'right', 'bold': True}"),
+        (3, "'Side'", "{'align': 'right'}"),
+    ] {
+        assert_eq!(at(&b, i, "text"), text);
+        assert_eq!(at(&b, i, "block_style"), style, "{text}");
+        assert_eq!(at(&b, i, "row"), "True");
+    }
+    assert_eq!(at(&b, 0, "anchor_ids"), "List([Str(\"r\"), Str(\"h\")])");
+    assert_eq!(at(&b, 2, "anchor_ids"), "List([])");
+    assert_eq!(at(&b, 1, "type"), "'table'");
+    assert_eq!(at(&b, 1, "row"), "absent");
+
+    // A cell's weight of digits: 600 is bold, 599 is not.
+    let b = before_spacing(
+        "<table><tr><td style=\"font-weight: 600\">a<table><tr><td>i</td></tr></table></td>\
+         <td style=\"font-weight: 599\">b</td></tr></table>",
+        "",
+    );
+    assert_eq!(at(&b, 0, "block_style"), "{'bold': True}");
+    assert_eq!(at(&b, 2, "text"), "'b'");
+    assert_eq!(at(&b, 2, "block_style"), "None");
+
+    // A row written as one paragraph takes its cells' alignment when every cell showing
+    // something agrees (a picture shows; an empty or blank cell does not), else its own.
+    let b = before_spacing(
+        "<table><tr style=\"display: none\"><td>h</td></tr>\
+         <tr><td class=\"c\">a</td><td class=\"c\">b</td><td></td></tr>\
+         <tr><td class=\"c\">c</td><td>d</td></tr>\
+         <tr><td class=\"c\"><img src=\"p.png\"/></td><td class=\"l\"> </td></tr></table>",
+        "tr { text-align: right } .c { text-align: center } .l { text-align: left }",
+    );
+    assert_eq!(b.len(), 3);
+    for (i, align) in ["'center'", "'right'", "'center'"].into_iter().enumerate() {
+        assert_eq!(at(&b, i, "block_style.align"), align, "row {i}");
+        assert_eq!(at(&b, i, "row"), "True");
+    }
+
+    // Empty anchors after a row name that row; after a row that made no block they carry to
+    // the next.
+    let b = before_spacing(
+        "<table><tr><td>a</td></tr><a id=\"x1\"></a><tr style=\"display: none\"><td>h</td>\
+         </tr><a id=\"x2\"></a><tr><td>b</td></tr><a id=\"x3\"></a><a id=\"x4\"></a></table>",
+        "",
+    );
+    assert_eq!(b.len(), 2);
+    assert_eq!(at(&b, 0, "anchor_ids"), "List([Str(\"x1\")])");
+    assert_eq!(at(&b, 0, "anchor_offsets"), "{'x1': Int(0)}");
+    assert_eq!(
+        at(&b, 1, "anchor_ids"),
+        "List([Str(\"x2\"), Str(\"x3\"), Str(\"x4\")])"
+    );
+    assert_eq!(
+        at(&b, 1, "anchor_offsets"),
+        "{'x2': Int(0), 'x3': Int(0), 'x4': Int(0)}"
+    );
+    // A row that opens with a native table: the table and its own ids take the anchor.
+    let b = before_spacing(
+        "<table><tr><td><table><tr><td>in</td></tr></table>after</td></tr><a id=\"y\"></a>\
+         <tr><td>z</td></tr><a id=\"w\"></a></table>",
+        "",
+    );
+    assert_eq!(b.len(), 3);
+    assert_eq!(at(&b, 0, "type"), "'table'");
+    assert_eq!(at(&b, 0, "anchor_ids"), "List([Str(\"y\")])");
+    assert_eq!(at(&b, 0, "anchor_offsets"), "{'y': Int(0)}");
+    assert_eq!(at(&b, 0, "table.anchor_ids"), "List([Str(\"y\")])");
+    assert_eq!(at(&b, 1, "anchor_ids"), "List([])");
+    assert_eq!(at(&b, 2, "anchor_ids"), "List([Str(\"w\")])");
+}
+
+const SVG: &str =
+    "xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\"";
+
+/// What no dump holds of `_emit_svg_blocks`: each `<image>` a picture block (the ids carried
+/// to the `<svg>` on the first, its own on each), then each `<text>` a paragraph with its
+/// ids (the `<svg>`'s and those carried on the first when no picture took them); in a
+/// contents listing too. One that draws only shapes, and one with a `data:` picture, are
+/// refused as in text.
+#[test]
+fn svg_blocks_are_written_as_kfxgen_writes_them() {
+    let token = |href: &str| format!("'\0IMG\u{1}{href}\u{1}\u{1}h=100%\0'");
+    let b = before_spacing(
+        &format!(
+            "<p id=\"p0\"></p><svg {SVG} id=\"s\"><image xlink:href=\"a.png\"/>\
+             <image href=\"b.png\"/><text id=\"t\">Hello <tspan>world</tspan></text></svg>\
+             <p>after</p>"
+        ),
+        "",
+    );
+    assert_eq!(b.len(), 4);
+    assert_eq!(at(&b, 0, "text"), token("a.png"));
+    assert_eq!(at(&b, 0, "anchor_ids"), "List([Str(\"p0\"), Str(\"s\")])");
+    assert_eq!(
+        keys_at(&b, 0, ""),
+        [
+            "text",
+            "spans",
+            "block_style",
+            "anchor_ids",
+            "anchor_offsets"
+        ]
+    );
+    assert_eq!(at(&b, 1, "text"), token("b.png"));
+    assert_eq!(at(&b, 1, "anchor_ids"), "List([Str(\"s\")])");
+    assert_eq!(at(&b, 2, "text"), "'Hello world'");
+    assert_eq!(at(&b, 2, "block_style"), "None");
+    assert_eq!(at(&b, 2, "anchor_ids"), "List([Str(\"t\")])");
+    assert_eq!(at(&b, 2, "anchor_offsets"), "{'t': Int(0)}");
+
+    let b = before_spacing(
+        &format!(
+            "<p id=\"p0\"></p><svg {SVG} id=\"s\"><text>One</text><text id=\"t2\">Two</text></svg>"
+        ),
+        "",
+    );
+    assert_eq!(b.len(), 2);
+    assert_eq!(at(&b, 0, "anchor_ids"), "List([Str(\"p0\"), Str(\"s\")])");
+    assert_eq!(at(&b, 1, "text"), "'Two'");
+    assert_eq!(at(&b, 1, "anchor_ids"), "List([Str(\"t2\")])");
+
+    let b = before_spacing(
+        &format!(
+            "<div class=\"toc\"><p>Contents</p><svg {SVG}><image href=\"a.png\"/></svg></div>"
+        ),
+        "",
+    );
+    assert_eq!(b.len(), 1);
+    assert_eq!(at(&b, 0, "text"), token("a.png"));
+
+    for (body, feature) in [
+        (
+            format!("<svg {SVG}><rect width=\"1\" height=\"1\"/></svg>"),
+            "SVG pictures",
+        ),
+        (
+            format!("<svg {SVG}><image href=\"data:image/png;base64,AA\"/></svg>"),
+            "pictures embedded as data: URIs",
+        ),
+    ] {
+        match walk_error(&page(&body, "")) {
+            ItemError::Error(Error::Unsupported { feature: f, .. }) => assert_eq!(f, feature),
+            other => panic!("{body}: {other:?}"),
+        }
+    }
+}
+
+/// An anchor after a row whose first block is space (a row of only a no-break space) goes on
+/// that space block, which spacing takes out: the id names nothing (DIVERGENCES, "Tables";
+/// kfxgen appends it to the one list every rule and space block shares).
+#[test]
+fn an_anchor_after_a_row_of_space_is_dropped() {
+    let body = "<table><tr style=\"display: none\"><td>h</td></tr><tr><td>\u{a0}</td></tr>\
+                <a id=\"x\"></a><tr><td>b</td></tr><a id=\"z\"></a></table><hr/><p>after</p>";
+    let walked = before_spacing(body, "");
+    assert_eq!(at(&walked, 0, "type"), "'space'");
+    assert_eq!(at(&walked, 0, "anchor_ids"), "List([Str(\"x\")])");
+    let got = extract(&page(body, "")).unwrap();
+    assert_eq!(got.blocks.len(), 3);
+    assert_eq!(at(&got.blocks, 0, "anchor_ids"), "List([Str(\"z\")])");
+    for b in &got.blocks {
+        assert!(!format!("{:?}", b.to_py()).contains("\"x\""));
     }
 }

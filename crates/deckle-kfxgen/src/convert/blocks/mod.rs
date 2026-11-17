@@ -17,9 +17,10 @@
 //! blocks' anchor keys and the ids at the file's end; rules (Task 14, `rules.rs`), with the
 //! border reading boxes share; boxes (Task 15, `boxes.rs`): bordered, filled, sized and
 //! turned containers; native tables (Task 16, `tables.rs`), a cell of several blocks walked as
-//! the body is.
-//! Each branch a later task ports stops the file with [`Error::Unsupported`] naming that task
-//! (`walk.rs`), so a book that needs one cannot be converted by accident.
+//! the body is; tables written as rows, rows split round the tables they hold, pictures drawn
+//! as a background or by an `<svg>` (Task 17). What the port refuses (MathML, SVG drawn only
+//! with shapes, `data:` pictures, a table holding an `<epub:switch>`) stops the file with
+//! [`Error::Unsupported`].
 
 mod anchors;
 mod boxes;
