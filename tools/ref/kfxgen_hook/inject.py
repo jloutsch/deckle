@@ -1,14 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Put the dump hooks into an export of kfxgen: python3 inject.py <kfxgen_tree>
 
-Copies model_dump.py and book_dump.py into plugin/kfxgen/ and adds three calls:
+Copies model_dump.py, book_dump.py and convert_dump.py into plugin/kfxgen/ and adds six calls:
 
 - at the top of generate_full_book (the call kfxgen's 55082ec had), so KFXGEN_DUMP_MODEL=<dir>
   dumps the generator's arguments;
 - right after _ensure_oeb_opts in convert_oeb_to_kfx, so KFXGEN_DUMP_BOOK=<dir> dumps the book
   view, trees and styles kfxgen receives;
 - at the start of the plugin's specialize_css_for_output, which calibre calls on each file
-  before it flattens the CSS, so the same dump holds the first-pass rules.
+  before it flattens the CSS, so the same dump holds the first-pass rules;
+- for KFXGEN_DUMP_CONVERT=<dir>: right after _ensure_oeb_opts in convert_oeb_to_kfx, which
+  puts in convert_dump's wrappers; in extract_chapters_from_oeb right before chapter
+  assembly, which keeps that pass's files; and at the end of convert_oeb_to_kfx, once the
+  book is made, which writes the dumps.
 
 Stops if an anchor line is not exactly once in its function.
 """
@@ -47,6 +51,32 @@ FIRST_PASS_CALL = """        # Deckle: the first-pass rules, before kfxgen marks
         note_first_pass(item, stylizer)
 """
 
+CONVERT_CALL = """
+    # Deckle: dumps of kfxgen's styles, runs, blocks, contents and chapters.
+    from .convert_dump import install as _deckle_install_convert_dump
+
+    _deckle_install_convert_dump(oeb_book)
+"""
+
+ASSEMBLY_ANCHOR = (
+    "    if toc_entries:\n"
+    "        chapters = _assemble_chapters_by_coordinate(\n"
+)
+ASSEMBLY_CALL = """    # Deckle: this pass's files, before chapter assembly changes them.
+    from .convert_dump import note_assembly as _deckle_note_assembly
+
+    _deckle_note_assembly(spine_items_ordered, cover_href)
+
+"""
+
+WRITE_ANCHOR = "    if os.path.isfile(output_path):\n"
+WRITE_CALL = """    # Deckle: the dumps of this conversion, once the book is made.
+    from .convert_dump import write_if_asked as _deckle_write_convert_dump
+
+    _deckle_write_convert_dump()
+
+"""
+
 
 def insert(path, function, anchor, call, after):
     """Put ``call`` before (or ``after``) the one ``anchor`` line inside ``function``."""
@@ -79,6 +109,27 @@ def main(tree):
         after=True,
     )
     insert(
+        plugin / "kfxgen" / "converter.py",
+        "def convert_oeb_to_kfx(",
+        BOOK_ANCHOR,
+        CONVERT_CALL,
+        after=True,
+    )
+    insert(
+        plugin / "kfxgen" / "converter.py",
+        "def extract_chapters_from_oeb(",
+        ASSEMBLY_ANCHOR,
+        ASSEMBLY_CALL,
+        after=False,
+    )
+    insert(
+        plugin / "kfxgen" / "converter.py",
+        "def convert_oeb_to_kfx(",
+        WRITE_ANCHOR,
+        WRITE_CALL,
+        after=False,
+    )
+    insert(
         plugin / "__init__.py",
         "    def specialize_css_for_output(",
         FIRST_PASS_ANCHOR,
@@ -88,6 +139,7 @@ def main(tree):
     here = Path(__file__).parent
     shutil.copy(here / "model_dump.py", plugin / "kfxgen" / "model_dump.py")
     shutil.copy(here / "book_dump.py", plugin / "kfxgen" / "book_dump.py")
+    shutil.copy(here / "convert_dump.py", plugin / "kfxgen" / "convert_dump.py")
 
 
 if __name__ == "__main__":

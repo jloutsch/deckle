@@ -26,12 +26,14 @@ fn nonzero(n: Option<f64>) -> Option<f64> {
     n.filter(|&n| n != 0.0)
 }
 
-/// `_is_frame` (:726): a floated paragraph's frame, a horizontal block in vertical text with
-/// no border or fill (#247), or a wrapper's width round a picture with no border, fill or
-/// float (#382).
+/// `_is_frame` (a8b9683): a floated paragraph's frame, a horizontal block in vertical text or
+/// a vertical block in that with no border or fill (#247), or a wrapper's width round a
+/// picture with no border, fill or float (#382).
 pub(crate) fn is_frame(b: &BoxSpec) -> bool {
+    // Also a list with no markers (#768, 7511ea5): Previewer's `$269` round its items.
     b.float_wrapper
-        || b.horizontal && !(b.border.is_some() || b.background.is_some())
+        || b.plain
+        || (b.horizontal || b.vertical) && !(b.border.is_some() || b.background.is_some())
         || nonzero(b.width).is_some()
             && !(b.border.is_some()
                 || b.background.is_some()

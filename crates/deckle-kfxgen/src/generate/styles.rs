@@ -8,6 +8,7 @@ use deckle_kfx::ion::Value;
 
 use super::block_styles::Length;
 use super::boxes::{BoxStyle, RuleStyle, build_box_style_157, build_rule_style_157};
+use super::chunks::{Mode, innermost_mode};
 use super::table_styles::{
     CellStyle, PartStyle, TableStyle, align_symbol, build_cell_style_157, build_part_style_157,
     build_table_style_157,
@@ -102,8 +103,8 @@ pub(crate) enum StyleArgs {
     Rule(RuleStyle),
     /// A run's direction keys alone (#710).
     Direction,
-    /// A picture's plain container's alignment symbol (#247).
-    PictureBox(&'static str),
+    /// A picture's plain container's alignment symbol and text-indent (#247).
+    PictureBox(Option<&'static str>, Option<Length>),
 }
 
 impl From<Style157> for StyleArgs {
@@ -124,13 +125,14 @@ pub(crate) enum Rotation {
 }
 
 impl Rotation {
-    /// `_rotation_for` (0bc705d :983), `horizontal` whether each open container is a
-    /// horizontal block.
-    pub(crate) fn of(vertical: bool, horizontal: &[bool]) -> Self {
-        match (vertical, horizontal.iter().any(|&h| h)) {
+    /// `_rotation_for` (a8b9683), `modes` the mode each open container opens: in a
+    /// horizontal block, where the book puts them; in a vertical block in that, moved again
+    /// (PSB R01-R07).
+    pub(crate) fn of(vertical: bool, modes: &[Option<Mode>]) -> Self {
+        match (vertical, innermost_mode(modes)) {
             (false, _) => Rotation::None,
-            (true, false) => Rotation::Vertical,
-            (true, true) => Rotation::Horizontal,
+            (true, Some(Mode::Horizontal)) => Rotation::Horizontal,
+            (true, _) => Rotation::Vertical,
         }
     }
 }
@@ -217,11 +219,21 @@ impl Styles {
                 g.local(&name);
                 st([("$173", sym(&name))])
             }
-            // `build_picture_box_style_157` (0bc705d :4108): only its alignment, as Kindle
-            // Previewer 4.0.3 writes `text-align` there (P247k K07).
-            StyleArgs::PictureBox(align) => {
+            // `build_picture_box_style_157` (a1ba662): only its alignment, as Kindle
+            // Previewer 4.0.3 writes `text-align` there (P247k K07), and its paragraph's
+            // text-indent (PVA H02).
+            StyleArgs::PictureBox(align, indent) => {
                 g.local(&name);
-                st([("$173", sym(&name)), ("$34", sym(align))])
+                let Value::Struct(mut v) = st([("$173", sym(&name))]) else {
+                    unreachable!()
+                };
+                if let Some(align) = align {
+                    v.insert("$34", sym(align));
+                }
+                if let Some(indent) = indent {
+                    v.insert("$36", length(indent));
+                }
+                Value::Struct(v)
             }
         };
         if let Value::Struct(v) = &mut value {

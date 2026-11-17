@@ -30,7 +30,9 @@ python3 -m venv /tmp/kfxvenv && /tmp/kfxvenv/bin/pip install lxml pillow pypdf b
 | `kfxgen_models.sh` | Rebuilds `fixtures/kfxgen/models` from kfxgen (see `fixtures/kfxgen/README.md`) |
 | `kfxgen_models.sh --cascade` | Rebuilds `fixtures/kfxgen/cascade`: Calibre's book view, element trees, styles and first-pass rules, dumped inside a kfxgen conversion |
 | `make_css_quirks_epub.py OUT.epub` | Builds `fixtures/kfxgen/sources/css_quirks.epub`, one file per group of Calibre CSS quirks (`--cascade` runs it) |
+| `kfxgen_models.sh --convert` | Rebuilds `fixtures/kfxgen/convert`: kfxgen's resolver, runs, blocks, contents and chapters, dumped inside a kfxgen conversion of each source (run it after the models) |
+| `make_convert_epubs.py OUT_DIR` | Builds the small sources of the converter's dumps (`text_edges`, `block_edges`, `tables_more`, `pictures_more`, `fonts_woff`, `package_more`, `listing_rerun`, `marks`) in `fixtures/kfxgen/sources` (the models run runs it, with kfxgen's Python) |
 | `make_cascade_epubs.py OUT_DIR` | Builds `package_quirks.epub`, `no_toc.epub`, `fake_margins.epub` and `malformed.epub` in `fixtures/kfxgen/sources` (`--cascade` runs it) |
-| `kfxgen_hook/` | The dump hooks put into an export of kfxgen (`inject.py`); tests: `python3 -m pytest kfxgen_hook/test_model_dump.py`, `python3 kfxgen_hook/test_book_dump.py` |
+| `kfxgen_hook/` | The dump hooks put into an export of kfxgen (`inject.py`); tests: `python3 -m pytest kfxgen_hook/test_model_dump.py`, `python3 kfxgen_hook/test_book_dump.py`, and with kfxgen's Python `KFXGEN=<kfxgen> python kfxgen_hook/test_convert_dump.py` |
 
 Run with `python -I` from outside the clone directory.

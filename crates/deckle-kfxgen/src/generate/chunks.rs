@@ -2,17 +2,17 @@
 //! A chapter's entries: [`Chunk`], one per paragraph, picture or contents line, and
 //! `_emit_paragraph`'s dispatch.
 
-use super::block_styles::{BlockStyle, HeadingStyle, keep_space};
-use super::boxes::{BoxOpen, RuleStyle};
+use super::block_styles::{BlockStyle, HeadingStyle, Length, keep_space};
+use super::boxes::{BoxOpen, ListItem, RuleStyle};
 use super::chapters::Block;
-use super::images::{Images, Picture};
+use super::images::{Images, Picture, Place};
 use super::inline::{self, Anchors, Span};
 use super::inline_picture_entries::InlinePicture;
 use super::inline_pictures;
 use super::styles::LINE_EM;
 use super::table_chunks::{CellInfo, TableOpen};
 use super::tables::Border;
-use super::writing::{Bidi, Tcy};
+use super::writing::{Bidi, Tcy, Turn};
 use super::{GenerateError, frames, py};
 
 /// `_ASCII_SPACE` (:1061): a paragraph's edges are trimmed of these only.
@@ -30,6 +30,8 @@ pub(crate) struct Chunk {
     pub pictures: Vec<InlinePicture>,
     /// Its 縦中横, each one placeholder of its text (#247).
     pub tcys: Vec<Tcy>,
+    /// Its text set the other way, each one placeholder of its text (#247, b067638).
+    pub turns: Vec<Turn>,
     pub rule: Option<RuleStyle>,
     pub marker: Option<Marker>,
     /// A text entry in a table cell.
@@ -41,6 +43,8 @@ pub(crate) struct Chunk {
     pub space_below: Option<f64>,
     /// kfxgen's heading: what prints in it of the book's own (#490).
     pub heading: HeadingStyle,
+    /// A text entry that is a list item of one paragraph, a `$277` (#768, 7511ea5).
+    pub list_item: Option<ListItem>,
 }
 
 /// A table container's (#219) `open`, which takes a position, or `close`, which takes none.
@@ -63,24 +67,42 @@ pub(crate) enum Node {
     Link(LinkOpen),
 }
 
+/// The writing mode a block opens in vertical text (#247).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Mode {
+    Horizontal,
+    Vertical,
+}
+
 impl Node {
-    /// `_opens_horizontal` (0bc705d :974): a horizontal-tb box or table, as in vertical text
-    /// (P247h, #247).
-    pub(crate) fn opens_horizontal(&self) -> bool {
+    /// `_opens_mode` (a8b9683): `Horizontal` for a horizontal-tb box or table, as in vertical
+    /// text (P247h, #247), `Vertical` for a vertical-rl box inside one (PSB R01-R07).
+    pub(crate) fn opens_mode(&self) -> Option<Mode> {
         match self {
-            Node::Box(b) => b.spec.horizontal,
-            Node::Table(t) => t.horizontal,
-            _ => false,
+            Node::Box(b) if b.spec.horizontal => Some(Mode::Horizontal),
+            Node::Box(b) if b.spec.vertical => Some(Mode::Vertical),
+            Node::Table(t) if t.horizontal => Some(Mode::Horizontal),
+            _ => None,
         }
     }
 }
 
+/// `_innermost_mode` (a8b9683): the mode of the innermost open block that sets one.
+pub(crate) fn innermost_mode(modes: &[Option<Mode>]) -> Option<Mode> {
+    modes.iter().rev().find_map(|m| *m)
+}
+
 /// A picture's container (0bc705d :5900): its link's target, if any; whether it is a plain
-/// one in a horizontal block of vertical text, and its block's alignment there (#247).
+/// one in vertical text or a horizontal block of it, and its block's alignment and its
+/// paragraph's text-indent there (#247, a1ba662).
 pub(crate) struct LinkOpen {
     pub target: Option<String>,
     pub plain: bool,
     pub align: Option<String>,
+    pub indent: Option<Length>,
+    /// A block picture's container: its block's alignment, first-line indent and side
+    /// margins and its boxes' (#769, f605dd6).
+    pub place: Option<Box<Place>>,
 }
 
 /// The chapter being written (0bc705d :5489): where its chunks start, whether it is
@@ -90,11 +112,13 @@ pub(crate) struct ChapterNow {
     pub start: usize,
     pub vertical: bool,
     pub vertical_book: bool,
+    /// kfxgen's own cover page (f605dd6): its picture stays centred.
+    pub cover: bool,
 }
 
 impl ChapterNow {
-    /// `_in_horizontal_block` (0bc705d :5491): whether a chunk appended now is inside a
-    /// horizontal block of a vertical-rl chapter.
+    /// `_in_horizontal_block` (a8b9683): whether a chunk appended now is inside a horizontal
+    /// block of a vertical-rl chapter; inside a vertical block in it, vertical text again.
     pub(crate) fn in_horizontal_block(&self, chunks: &[Chunk]) -> bool {
         if !self.vertical {
             return false;
@@ -102,14 +126,14 @@ impl ChapterNow {
         let mut open = Vec::new();
         for c in &chunks[self.start..] {
             match &c.marker {
-                Some(Marker::Open(node)) => open.push(node.opens_horizontal()),
+                Some(Marker::Open(node)) => open.push(node.opens_mode()),
                 Some(Marker::Close) => {
                     open.pop();
                 }
                 None => {}
             }
         }
-        open.contains(&true)
+        innermost_mode(&open) == Some(Mode::Horizontal)
     }
 }
 
@@ -117,6 +141,7 @@ impl ChapterNow {
 pub(crate) enum AmongWords<'a> {
     Picture(&'a InlinePicture),
     Tcy(&'a Tcy),
+    Turn(&'a Turn),
 }
 
 impl AmongWords<'_> {
@@ -124,21 +149,18 @@ impl AmongWords<'_> {
         match self {
             AmongWords::Picture(p) => p.at,
             AmongWords::Tcy(t) => t.at,
+            AmongWords::Turn(t) => t.at,
         }
     }
 
-    pub(crate) fn eid(&self) -> i64 {
+    /// Its ids and `_item_widths` (b067638): a picture takes a position, 縦中横 one per
+    /// character; a turned text's container one, its paragraph one per character, as
+    /// Previewer's position map counts them (PSB S01).
+    pub(crate) fn eids(&self) -> Vec<(i64, i64)> {
         match self {
-            AmongWords::Picture(p) => p.eid,
-            AmongWords::Tcy(t) => t.eid,
-        }
-    }
-
-    /// `_item_widths` (:1592): a picture takes a position, 縦中横 one per character.
-    pub(crate) fn width(&self) -> i64 {
-        match self {
-            AmongWords::Picture(_) => 1,
-            AmongWords::Tcy(t) => py::len(&t.text) as i64,
+            AmongWords::Picture(p) => vec![(p.eid, 1)],
+            AmongWords::Tcy(t) => vec![(t.eid, py::len(&t.text) as i64)],
+            AmongWords::Turn(t) => vec![(t.eids.0, 1), (t.eids.1, py::len(&t.turned.text) as i64)],
         }
     }
 }
@@ -160,6 +182,7 @@ impl Chunk {
             picture: None,
             pictures: Vec::new(),
             tcys: Vec::new(),
+            turns: Vec::new(),
             rule: None,
             marker: None,
             in_cell: None,
@@ -167,6 +190,7 @@ impl Chunk {
             space_above: None,
             space_below: None,
             heading: HeadingStyle::default(),
+            list_item: None,
         }
     }
 
@@ -191,7 +215,9 @@ impl Chunk {
     pub(crate) fn among_words(&self) -> Vec<AmongWords<'_>> {
         let mut items: Vec<AmongWords> = self.pictures.iter().map(AmongWords::Picture).collect();
         items.extend(self.tcys.iter().map(AmongWords::Tcy));
-        // Stable, as Python's sort: a picture before a 縦中横 at the same place.
+        items.extend(self.turns.iter().map(AmongWords::Turn));
+        // Stable, as Python's sort: a picture before a 縦中横 at the same place, and a 縦中横
+        // before a turned text.
         items.sort_by_key(AmongWords::at);
         items
     }

@@ -1,0 +1,18 @@
+<?xml version="1.0"  encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="u">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="u">s726kfxgen</dc:identifier>
+    <dc:title>S726 kfxgen - Link runs</dc:title>
+    <dc:creator>kfxgen tests</dc:creator>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="f0" href="links.xhtml" media-type="application/xhtml+xml"/>
+    <item id="f1" href="targets.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="f0"/>
+    <itemref idref="f1"/>
+  </spine>
+</package>

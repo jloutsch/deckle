@@ -239,7 +239,11 @@ fn inline_key(
     }
     if pct_h.is_none() && axis == Some("w") {
         match unit.as_str() {
-            "em" => (w_em, fill) = (number, true),
+            // An em width is in the base em, divided by the paragraph's font size, alone or
+            // beside a px height; beside an em height both stay as written, as Previewer
+            // writes them (#766 QA, probe PEM E01, E05, E06; QA's Q766G Z81; bd68f30).
+            "em" if given_unit == Some("em") => (w_em, fill) = (number, true),
+            "em" => (w_em, fill) = (number / or_one(font_size), true),
             "%" => w_em = number / 100.0 * column_px() / scale,
             u => w_em = number * if u == "px" { 0.45 } else { 1.0 } / 12.0 / or_one(font_size),
         }
@@ -251,6 +255,10 @@ fn inline_key(
         && let Some(m) = m
     {
         h_em = length_em(m, font_size)?;
+        if unit == "em" {
+            // In the base em too (#766 QA, probe PEM E02-E04; bd68f30).
+            h_em /= or_one(font_size);
+        }
         w_em = h_em * width / height;
     }
     let va = extras.get("va").copied();
@@ -398,6 +406,7 @@ impl InlineStyles {
             out.push(match item {
                 AmongWords::Picture(p) => self.entry(g, p)?,
                 AmongWords::Tcy(t) => writing::tcy_entry(g, t),
+                AmongWords::Turn(t) => writing::turn_entry(g, t),
             });
             last = k + 1;
         }
@@ -437,9 +446,12 @@ pub(crate) fn place_among_words(
             // resumes it.
             entries.push((base, pos, k, true));
         }
-        entries.push((base, item.eid(), 0, true));
-        located.push((item.eid(), item.width(), 0));
-        let at = base + item.width();
+        let mut at = base;
+        for (eid, width) in item.eids() {
+            entries.push((at, eid, 0, true));
+            located.push((eid, width, 0));
+            at += width;
+        }
         done = k + 1;
         if done < len {
             entries.push((at, pos, done, true));

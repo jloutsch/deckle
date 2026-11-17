@@ -1,0 +1,28 @@
+<?xml version="1.0"  encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="u">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="u">urn:kfxgen:s770k</dc:identifier>
+    <dc:title>S770 kfxgen - Block picture margins</dc:title>
+    <dc:creator>kfxgen tests</dc:creator>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="x0" href="c1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="x1" href="c2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="i0" href="c1.jpg" media-type="image/jpeg"/>
+    <item id="i1" href="c2.jpg" media-type="image/jpeg"/>
+    <item id="i2" href="c3.jpg" media-type="image/jpeg"/>
+    <item id="i3" href="c4.jpg" media-type="image/jpeg"/>
+    <item id="i4" href="c5.jpg" media-type="image/jpeg"/>
+    <item id="i5" href="c6.jpg" media-type="image/jpeg"/>
+    <item id="i6" href="c7.jpg" media-type="image/jpeg"/>
+    <item id="i7" href="c8.jpg" media-type="image/jpeg"/>
+    <item id="i8" href="c9.jpg" media-type="image/jpeg"/>
+    <item id="i9" href="c10.jpg" media-type="image/jpeg"/>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="x0"/>
+    <itemref idref="x1"/>
+  </spine>
+</package>

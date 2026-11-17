@@ -58,16 +58,14 @@ fn top(dom: &Dom, tag: &str) -> Vec<NodeId> {
 
 /// "Lower case all tag and attribute names" for an HTML 4 DOCTYPE, an un-namespaced `HTML`
 /// root, or a root whose last child has a `LANG` or `DIR`. lxml's last child (`root[-1]`) can be
-/// a comment, which has neither; the tree keeps no comments, so the parse records whether the
-/// root ends in one. The root's attributes stay.
+/// a comment, which has neither. The root's attributes stay.
 fn lower_case(dom: &mut Dom, has_html4_doctype: bool) {
     let root = dom.root;
-    let last_lang_dir = !dom.root_ends_in_comment
-        && dom.children(root).last().is_some_and(|&c| {
-            [dom.attr(c, "LANG"), dom.attr(c, "DIR")]
-                .into_iter()
-                .any(|v| v.is_some_and(|v| !v.is_empty()))
-        });
+    let last_lang_dir = dom.children(root).last().is_some_and(|&c| {
+        [dom.attr(c, "LANG"), dom.attr(c, "DIR")]
+            .into_iter()
+            .any(|v| v.is_some_and(|v| !v.is_empty()))
+    });
     let upper_root = dom.namespace(root).is_none() && dom.tag(root) == "HTML";
     if !(has_html4_doctype || upper_root || last_lang_dir) {
         return;
@@ -99,12 +97,13 @@ fn lower_case(dom: &mut Dom, has_html4_doctype: bool) {
 }
 
 /// "does not appear to be (X)HTML": a new un-namespaced `<html>`, with a `<body>` unless the
-/// old root has a `body` child, and every element of the old tree, the root first, moved under
-/// it one after another in document order, each with its text and tail and no children.
+/// old root has a `body` child, and every node of the old tree (`data.iter()`: comments too),
+/// the root first, moved under it one after another in document order, each with its text and
+/// tail and no children.
 fn wrap_root(dom: &mut Dom) {
     let old = dom.root;
     let has_body = dom.children(old).iter().any(|&c| dom.tag(c) == "body");
-    let order: Vec<NodeId> = dom.descendants().collect();
+    let order: Vec<NodeId> = dom.subtree(old).collect();
     let html = dom.alloc("html", None, Vec::new());
     dom.root = html;
     let parent = if has_body {

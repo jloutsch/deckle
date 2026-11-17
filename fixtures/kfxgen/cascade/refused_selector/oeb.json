@@ -1,0 +1,63 @@
+{
+ "spine": [
+  {
+   "href": "OEBPS/refused.xhtml",
+   "linear": true
+  },
+  {
+   "href": "OEBPS/plain.xhtml",
+   "linear": true
+  }
+ ],
+ "page_progression_direction": null,
+ "manifest": [
+  {
+   "id": "plain",
+   "href": "OEBPS/plain.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "refused",
+   "href": "OEBPS/refused.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "page_css",
+   "href": "page_styles.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "css",
+   "href": "stylesheet.css",
+   "media_type": "text/css"
+  }
+ ],
+ "toc": [
+  {
+   "title": "a link",
+   "href": "OEBPS/plain.xhtml",
+   "children": []
+  }
+ ],
+ "auto_generated_toc": true,
+ "guide": [],
+ "metadata": {
+  "title": [
+   "Refused Selector"
+  ],
+  "creator": [
+   "Fixture Author"
+  ],
+  "description": [],
+  "language": [
+   "eng"
+  ],
+  "publisher": [],
+  "date": [],
+  "cover": []
+ },
+ "raw": {
+  "opfname": "OEBPS/content.opf",
+  "sha256": "ac1f4ee58193e126c8e56fa34032c318dd6110cf8594dde1af8b3aed76b49fba"
+ }
+}

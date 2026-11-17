@@ -6,22 +6,22 @@
 //! than coming out different from kfxgen's.
 mod block_styles;
 mod boxes;
-mod chapters;
+pub(crate) mod chapters;
 mod chunks;
 mod fonts;
 mod fragments;
 mod frames;
-mod images;
+pub(crate) mod images;
 mod inline;
 mod inline_picture_entries;
 mod inline_pictures;
 mod metadata;
 mod nav;
 mod notes;
-mod page_scale;
+pub(crate) mod page_scale;
 mod pages;
 mod positions;
-mod py;
+pub(crate) mod py;
 mod skeleton;
 mod standard_symbols;
 mod styles;
@@ -30,7 +30,7 @@ mod table_styles;
 mod tables;
 mod text;
 mod title;
-mod typography;
+pub(crate) mod typography;
 mod writing;
 
 use deckle_kfx::container::ContainerError;

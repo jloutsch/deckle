@@ -1,0 +1,16 @@
+<?xml version="1.0"  encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+<dc:identifier id="id">urn:uuid:00000000-0000-4000-8000-000000001583</dc:identifier>
+<dc:title>Refused Selector</dc:title><dc:creator opf:role="aut">Fixture Author</dc:creator>
+<dc:language>en</dc:language>
+</metadata>
+<manifest>
+<item id="refused-css" href="OEBPS/refused.css" media-type="text/css"/>
+<item id="plain-css" href="OEBPS/plain.css" media-type="text/css"/>
+<item id="refused" href="OEBPS/refused.xhtml" media-type="application/xhtml+xml"/>
+<item id="plain" href="OEBPS/plain.xhtml" media-type="application/xhtml+xml"/>
+</manifest>
+<spine><itemref idref="refused"/><itemref idref="plain"/></spine>
+
+</package>

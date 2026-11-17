@@ -1,0 +1,10 @@
+{
+ "font_face": [],
+ "rules": [
+  [1, "html", {"writing-mode": "vertical-rl", "-webkit-writing-mode": "vertical-rl"}, [], [1, 0, 0, 0, 1, 83]],
+  [1, "p", {"margin-top": "1em"}, [], [1, 0, 0, 0, 1, 84]],
+  [1, "p.pad", {"padding-left": "2em"}, [], [1, 0, 0, 1, 1, 85]],
+  [1, "a:link", {"color": "red"}, [], [1, 0, 0, 1, 1, 86]]
+ ],
+ "ua_rules": 180
+}

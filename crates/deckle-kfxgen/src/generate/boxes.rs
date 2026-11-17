@@ -6,18 +6,19 @@
 use std::borrow::Borrow;
 use std::collections::HashSet;
 
-use deckle_kfx::ion::Value;
+use deckle_kfx::ion::{Struct, Value};
 
-use super::block_styles::{keep_space, number};
-use super::chapters::{Block, read_block};
+use super::block_styles::{keep_space, number, unit_symbol};
+use super::chapters::{Block, known_keys, read_block};
 use super::chunks::{ChapterNow, Chunk, Marker, Node, emit_paragraph};
 use super::frames;
 use super::images::{IMG_TOKEN, Images};
 use super::inline;
+use super::page_scale::{em_percent, page_pt};
 use super::styles::{LINE_EM, g6};
 use super::table_chunks::{emit_table_chunks, link_target_index};
 use super::table_styles::{apply_border, border_style_symbol, padding_values, side_keys};
-use super::tables::{self, Border, Padding, read_border, read_padding, read_sides};
+use super::tables::{self, Border, Pad, Padding, read_border, read_padding, read_sides};
 use super::title::opens_with_title;
 use super::writing::Bidi;
 use super::{GenerateError, Generator, measure, model_err, py, st, sym};
@@ -117,7 +118,16 @@ pub(crate) fn read_rule(b: &PyValue, at: &str) -> Result<RuleStyle, GenerateErro
                 | "border" | "fill" | "height",
             ) => {}
             Some("clear") => return Err(Unsupported("clearing floats")),
-            _ => return Err(Unsupported("a rule's look")),
+            Some(k) => {
+                return Err(model_err(format!(
+                    "a model key the port does not know: {at}.{k}"
+                )));
+            }
+            None => {
+                return Err(model_err(format!(
+                    "a model key the port does not know: {at}: {k:?}"
+                )));
+            }
         }
     }
     // `rule["space_above"]`: kfxgen reads both as there.
@@ -166,6 +176,101 @@ pub(crate) struct BoxSpec {
     pub float_wrapper: bool,
     /// A horizontal-tb block in vertical text (#247).
     pub horizontal: bool,
+    /// A vertical-rl block inside a horizontal one (#247, a8b9683), and its space before and
+    /// after it, in ems of the main size.
+    pub vertical: bool,
+    pub start: f64,
+    pub end: f64,
+    /// A horizontal block's share of a vertical list's margins (#247, 3b514d1).
+    pub list_sides: ListSides,
+    /// A list with no markers: Previewer's plain container round its items (#768, 7511ea5).
+    pub plain: bool,
+    /// A list, written as Previewer's `$276` (#768, 7511ea5).
+    pub list: Option<ListSpec>,
+    /// A list item holding several blocks, or none: a `$277` container (#768, 7511ea5).
+    pub item: Option<ListItem>,
+}
+
+/// A list's `list` (7511ea5): its marker style (a KFX symbol), its start, and whether its
+/// markers are inside.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ListSpec {
+    pub kind: String,
+    pub start: Option<i64>,
+    pub inside: bool,
+}
+
+/// A list item's `list_item` or a box's `item` (7511ea5): its number in its list, the
+/// number written for it, and whether it is empty.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct ListItem {
+    pub n: Option<i64>,
+    pub value: Option<i64>,
+    pub empty: bool,
+    /// Its dict holds a key: Python's `if item`. kfxgen asks `is not None` of a paragraph's
+    /// `list_item` but `if item` of a box's `item`, so `{}` is an item only on a paragraph.
+    pub truthy: bool,
+}
+
+impl ListItem {
+    /// A block's `list_item` or a box's `item`: None for none.
+    pub(crate) fn read(v: Option<&PyValue>, at: &str) -> Result<Option<Self>, GenerateError> {
+        let Some(d) = v.filter(|v| !matches!(v, PyValue::None)) else {
+            return Ok(None);
+        };
+        let int = |key: &str| opt_key(d, key, at, "an int", PyValue::as_int);
+        if !matches!(d, PyValue::Dict(_)) {
+            return Err(model_err(format!("{at}: a dict")));
+        }
+        Ok(Some(ListItem {
+            n: int("n")?,
+            value: int("value")?,
+            empty: truthy(d.get("empty")),
+            truthy: d.is_truthy(),
+        }))
+    }
+
+    /// `_list_entry_keys` of an item (7511ea5): its number, where the Kindle's count would
+    /// differ (S768 L9).
+    pub(crate) fn entry_keys(&self, out: &mut Struct) {
+        if let Some(value) = self.value {
+            out.insert("$104", Value::Int(value));
+        }
+    }
+}
+
+impl BoxSpec {
+    /// `_list_entry_keys` (7511ea5): a list's or an item's own entry keys, the marker style,
+    /// a start or a value, the marker inside, as Previewer writes them (S768 L7, L9, L11).
+    pub(crate) fn list_entry_keys(&self, out: &mut Struct) {
+        if let Some(list) = &self.list {
+            out.insert("$100", sym(&list.kind));
+            if let Some(start) = list.start {
+                out.insert("$104", Value::Int(start));
+            }
+            if list.inside {
+                out.insert("$551", sym("$552"));
+            }
+        }
+        if let Some(item) = &self.item {
+            item.entry_keys(out);
+        }
+    }
+}
+
+/// A horizontal block given a vertical list's margins (PQ4, QA's P749 Q04; 3b514d1), in ems:
+/// its space before and after, the padding of a wrapper it took with the margins inside it
+/// (`_fixed`) and the margins outside it (`_inner`), and the list's top and bottom.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct ListSides {
+    pub before: f64,
+    pub after: f64,
+    pub before_fixed: f64,
+    pub after_fixed: f64,
+    pub before_inner: f64,
+    pub after_inner: f64,
+    pub over: f64,
+    pub under: f64,
 }
 
 /// A box block (#238): its look and the blocks in it.
@@ -176,6 +281,38 @@ pub(crate) struct BoxBlock {
     /// Opened before kfxgen's heading, which it draws round (#646).
     pub opened: bool,
 }
+
+/// Every key of a box's `box` that `read_box` reads, those it refuses included.
+const BOX_KEYS: [&str; 28] = [
+    "float_wrapper",
+    "clear",
+    "border",
+    "background",
+    "padding",
+    "font_px",
+    "margin_left",
+    "margin_right",
+    "bidi",
+    "width",
+    "width_px",
+    "float",
+    "centred",
+    "horizontal",
+    "vertical",
+    "start",
+    "end",
+    "plain",
+    "list",
+    "item",
+    "before",
+    "after",
+    "before_fixed",
+    "after_fixed",
+    "before_inner",
+    "after_inner",
+    "over",
+    "under",
+];
 
 /// A box block's `box` and `blocks`; `depth` is 1 for a box in no other.
 pub(crate) fn read_box(b: &PyValue, at: &str, depth: usize) -> Result<BoxBlock, GenerateError> {
@@ -189,6 +326,7 @@ pub(crate) fn read_box(b: &PyValue, at: &str, depth: usize) -> Result<BoxBlock, 
         Some(d @ PyValue::Dict(_)) => d,
         _ => return Err(model_err(format!("{at_box}: a dict"))),
     };
+    known_keys(d, &BOX_KEYS, &at_box)?;
     // A floated paragraph's frame is kfxgen's own (:5673), which the converter never writes.
     if truthy(d.get("float_wrapper")) {
         return Err(Unsupported("a box marked as a float's frame"));
@@ -212,11 +350,33 @@ pub(crate) fn read_box(b: &PyValue, at: &str, depth: usize) -> Result<BoxBlock, 
         centred: truthy(d.get("centred")),
         float_wrapper: false,
         horizontal: truthy(d.get("horizontal")),
+        vertical: truthy(d.get("vertical")),
+        start: opt_key(d, "start", &at_box, "a number", number)?.unwrap_or(0.0),
+        end: opt_key(d, "end", &at_box, "a number", number)?.unwrap_or(0.0),
+        plain: truthy(d.get("plain")),
+        list: read_list(d, &at_box)?,
+        item: ListItem::read(d.get("item"), &format!("{at_box}.item"))?.filter(|i| i.truthy),
+        list_sides: {
+            let em = |key: &str| -> Result<f64, GenerateError> {
+                Ok(opt_key(d, key, &at_box, "a number", number)?.unwrap_or(0.0))
+            };
+            ListSides {
+                before: em("before")?,
+                after: em("after")?,
+                before_fixed: em("before_fixed")?,
+                after_fixed: em("after_fixed")?,
+                before_inner: em("before_inner")?,
+                after_inner: em("after_inner")?,
+                over: em("over")?,
+                under: em("under")?,
+            }
+        },
     };
+    // An empty list item is an empty `$277` (Q771 X26).
     let blocks = b
         .get("blocks")
         .and_then(PyValue::as_list)
-        .filter(|l| !l.is_empty())
+        .filter(|l| !l.is_empty() || spec.item.is_some())
         .ok_or_else(|| model_err(format!("{at}.blocks: a list of blocks")))?
         .iter()
         .enumerate()
@@ -227,6 +387,25 @@ pub(crate) fn read_box(b: &PyValue, at: &str, depth: usize) -> Result<BoxBlock, 
         blocks,
         opened: false,
     })
+}
+
+/// A box's `list` (7511ea5): `{"type": symbol, "start": int or None, "inside": bool}`.
+fn read_list(d: &PyValue, at: &str) -> Result<Option<ListSpec>, GenerateError> {
+    let Some(l) = d.get("list").filter(|v| !matches!(v, PyValue::None)) else {
+        return Ok(None);
+    };
+    let at = format!("{at}.list");
+    let kind = match l.get("type") {
+        Some(t) => unit_symbol(t)
+            .ok_or_else(|| model_err(format!("{at}.type: a KFX symbol")))?
+            .to_owned(),
+        None => return Err(model_err(format!("{at}.type: a KFX symbol"))),
+    };
+    Ok(Some(ListSpec {
+        kind,
+        start: opt_key(l, "start", &at, "an int", PyValue::as_int)?,
+        inside: truthy(l.get("inside")),
+    }))
 }
 
 /// The deepest boxes the port writes, as for contents (`nav.rs`).
@@ -303,6 +482,10 @@ pub(crate) fn emit_box_chunks(
         )))));
     }
     let mut pending = own;
+    // A list's count as the Kindle keeps it (#768, 7511ea5): an item whose number differs,
+    // from a `value` or after an item that made no entry, writes it as its `$104`. 0 counts
+    // (Q771 X27).
+    let mut count = b.spec.list.as_ref().map(|l| l.start.unwrap_or(1));
     for kid in &b.blocks {
         let first = chunks.len();
         // A table or a box inside is nested in it, as Kindle Previewer nests them (#310).
@@ -316,9 +499,37 @@ pub(crate) fn emit_box_chunks(
             return Err(Unsupported("a rule in a box"));
         } else {
             let unplaced = emit_paragraph(kid, false, now, images, chunks)?;
+            if let Some(item) = &kid.list_item {
+                mark_list_item(chunks, first, item);
+            }
             frames::size_pictures_in_box(&b.spec, &mut chunks[first..])?;
             unplaced
         };
+        let item = kid
+            .list_item
+            .as_ref()
+            .or_else(|| kid.boxed.as_ref().and_then(|bx| bx.spec.item.as_ref()));
+        if let (Some(n), Some(item)) = (count.as_mut(), item)
+            && (chunks[first..].iter().any(Chunk::is_content) || item.empty)
+            && let Some(number) = item.n
+        {
+            let value = (number != *n).then_some(number);
+            *n = number
+                .checked_add(1)
+                .ok_or_else(|| model_err(format!("a list item numbered {number}")))?;
+            // On the entry made of the item: its paragraph's, or its container's.
+            for c in &mut chunks[first..] {
+                let made = match &mut c.marker {
+                    None => c.list_item.as_mut(),
+                    Some(Marker::Open(Node::Box(bx))) => bx.spec.item.as_mut(),
+                    _ => None,
+                };
+                if let Some(made) = made {
+                    made.value = value;
+                    break;
+                }
+            }
+        }
         if !pending.is_empty() && chunks[first..].iter().any(Chunk::is_content) {
             let at = link_target_index(chunks, first);
             chunks[at].anchors.attach(&pending);
@@ -328,6 +539,36 @@ pub(crate) fn emit_box_chunks(
     }
     chunks.push(Chunk::marker(Marker::Close));
     Ok(pending)
+}
+
+/// `_mark_list_item` (7511ea5): the chunks of a one-paragraph list item. One text chunk is
+/// the `$277` itself; anything else (a picture beside its words, a cut) goes in an item
+/// container.
+fn mark_list_item(chunks: &mut Vec<Chunk>, first: usize, item: &ListItem) {
+    let made: Vec<usize> = (first..chunks.len())
+        .filter(|&i| chunks[i].marker.is_none())
+        .collect();
+    match made[..] {
+        [] => {}
+        [only] if chunks[only].rule.is_none() && chunks[only].picture.is_none() => {
+            chunks[only].list_item = Some(item.clone());
+        }
+        _ => {
+            let open = BoxOpen {
+                spec: BoxSpec {
+                    item: Some(item.clone()).filter(|i| i.truthy),
+                    ..BoxSpec::default()
+                },
+                space_above: 0.0,
+                space_below: 0.0,
+            };
+            chunks.insert(
+                first,
+                Chunk::marker(Marker::Open(Node::Box(Box::new(open)))),
+            );
+            chunks.push(Chunk::marker(Marker::Close));
+        }
+    }
 }
 
 /// `_block_keys` (:1110): every anchor key a block holds, in a box or a table included.
@@ -356,6 +597,10 @@ pub(crate) struct BoxStyle {
     pub float_side: Option<String>,
     pub centred: bool,
     pub horizontal: bool,
+    /// A vertical block's (a8b9683): the flag, its space before and after.
+    pub vertical: Option<(f64, f64)>,
+    /// A horizontal block's, zero on any other box (3b514d1).
+    pub list_sides: ListSides,
 }
 
 impl BoxStyle {
@@ -385,6 +630,16 @@ impl BoxStyle {
             float_side: open.spec.float.clone(),
             centred: open.spec.centred,
             horizontal: open.spec.horizontal,
+            // In the main size already (`_margin_em`; QA's U14, U15).
+            vertical: open
+                .spec
+                .vertical
+                .then_some((open.spec.start, open.spec.end)),
+            list_sides: if open.spec.horizontal {
+                open.spec.list_sides.clone()
+            } else {
+                ListSides::default()
+            },
         }
     }
 }
@@ -406,9 +661,91 @@ pub(crate) fn build_box_style_157(g: &mut Generator, name: &str, s: &BoxStyle) -
         for (key, value) in values {
             v.insert(key, value);
         }
+        if s.vertical.is_some() {
+            // A vertical block's padding by its own axes, as Previewer writes it (QA's Q763
+            // T02): top and bottom along the line, in em; left and right across it, in line
+            // heights (a8b9683).
+            let side = |name: &str| p.iter().find(|(s, _)| s == name).map(|(_, v)| *v);
+            for (name, key) in [("top", "$52"), ("bottom", "$54")] {
+                match side(name) {
+                    // A % stays a % (QA's U08).
+                    Some(Pad::Pct(n)) => v.insert(key, g6(n, "$314")),
+                    Some(Pad::Em(em)) if em != 0.0 => v.insert(key, g6(em, "$308")),
+                    _ => {}
+                }
+            }
+            for (name, key) in [("left", "$53"), ("right", "$55")] {
+                let em = match side(name) {
+                    // A % of the page, in ems (U08: 5% is 2em).
+                    Some(Pad::Pct(n)) => n * page_pt() / 1200.0,
+                    Some(Pad::Em(em)) => em,
+                    None => 0.0,
+                };
+                if em != 0.0 {
+                    v.insert(key, g6(em / LINE_EM, "$310"));
+                }
+            }
+        }
+    }
+    if let Some((start, end)) = s.vertical {
+        // A vertical block's space before and after it, its right and left, in line heights
+        // (PSB R06; QA's Q763 T01).
+        for (key, em) in [("$50", start), ("$48", end)] {
+            if em != 0.0 {
+                v.insert(key, g6(em / LINE_EM, "$310"));
+            }
+        }
+    }
+    // A horizontal block given a vertical list's margins (PQ4, QA's P749 Q04; 3b514d1): its
+    // space before and after on its right and left, in line heights; the list's top and
+    // bottom on its top and bottom, in em. Sides whose own margin went into the sum: written
+    // there, even when it comes to 0 (QA's Q764E W51, W54), not again below.
+    let l = &s.list_sides;
+    let mut summed = Vec::new();
+    for (key, (run, fixed, inner), own) in [
+        (
+            "$50",
+            (l.before, l.before_fixed, l.before_inner),
+            s.margin_right,
+        ),
+        (
+            "$48",
+            (l.after, l.after_fixed, l.after_inner),
+            s.margin_left,
+        ),
+    ] {
+        let taken = run != 0.0 || fixed != 0.0;
+        if taken {
+            summed.push(key);
+        }
+        // Its own side margin, in vertical text the space before or after it too, meets the
+        // margins next to it: the list's (PQ4 L08), or inside a padding the ones inside it,
+        // the padding and the margins outside it adding (QA's W21, W30, W41).
+        let own = match own {
+            Some(own) if own != 0.0 && taken => own / em_percent(),
+            _ => 0.0,
+        };
+        // Touching margins: the largest positive plus the most negative, as the converter's
+        // `_collapse`.
+        let meet = |a: f64, b: f64| 0.0f64.max(a).max(b) + 0.0f64.min(a).min(b);
+        let em = if fixed != 0.0 {
+            meet(inner, own) + fixed + run
+        } else {
+            meet(run, own)
+        };
+        if em != 0.0 {
+            v.insert(key, g6(em / LINE_EM, "$310"));
+        }
+    }
+    for (key, em) in [("$47", l.over), ("$49", l.under)] {
+        if em != 0.0 {
+            v.insert(key, g6(em, "$308"));
+        }
     }
     for (key, pct) in [("$48", s.margin_left), ("$50", s.margin_right)] {
-        if let Some(pct) = pct.filter(|&p| p != 0.0) {
+        if let Some(pct) = pct.filter(|&p| p != 0.0)
+            && !summed.contains(&key)
+        {
             v.insert(key, g6(pct, "$314"));
         }
     }
@@ -433,6 +770,14 @@ pub(crate) fn build_box_style_157(g: &mut Generator, name: &str, s: &BoxStyle) -
         // #247, 0bc705d :3913): horizontal-tb, the page's width, and its two fit flags.
         v.insert("$560", sym("$557"));
         v.insert("$56", measure(py::decimal("100"), "$314"));
+        v.insert("$478", Value::Bool(true));
+        v.insert("$784", Value::Bool(true));
+    }
+    if s.vertical.is_some() {
+        // A vertical-rl block inside a horizontal one, as Kindle Previewer 4.0.3 writes it
+        // (PSB R01-R07, QA's P749 Q09c): vertical-rl, the page's height, and the two fit flags.
+        v.insert("$560", sym("$559"));
+        v.insert("$57", measure(py::decimal("100"), "$314"));
         v.insert("$478", Value::Bool(true));
         v.insert("$784", Value::Bool(true));
     }

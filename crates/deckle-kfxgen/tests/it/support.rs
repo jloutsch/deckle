@@ -13,24 +13,81 @@ use deckle_kfxgen::dom::{Dom, NodeId};
 use deckle_kfxgen::epub::read_package;
 use serde_json::Value;
 
+/// The test binary's allocator: the system's, counting the bytes each thread asks for, so a
+/// cost test can bound the memory a call copies ([`allocated_by`]) without timing it.
+struct Counting;
+
+thread_local! {
+    static ALLOCATED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+fn count(bytes: usize) {
+    // `try_with`: a thread being torn down has no counter left; its bytes are not counted.
+    let _ = ALLOCATED.try_with(|c| c.set(c.get().saturating_add(bytes as u64)));
+}
+
+// SAFETY: every call goes straight to `System` with the same arguments; counting touches only
+// a thread-local `Cell`, which does not allocate.
+unsafe impl std::alloc::GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+        count(layout.size());
+        // SAFETY: the caller's contract for `alloc`, passed on.
+        unsafe { std::alloc::System.alloc(layout) }
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
+        count(layout.size());
+        // SAFETY: the caller's contract for `alloc_zeroed`, passed on.
+        unsafe { std::alloc::System.alloc_zeroed(layout) }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new: usize) -> *mut u8 {
+        count(new.saturating_sub(layout.size()));
+        // SAFETY: the caller's contract for `realloc`, passed on.
+        unsafe { std::alloc::System.realloc(ptr, layout, new) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+        // SAFETY: the caller's contract for `dealloc`, passed on.
+        unsafe { std::alloc::System.dealloc(ptr, layout) }
+    }
+}
+
+#[global_allocator]
+static COUNTING: Counting = Counting;
+
+/// `f()`, and the bytes this thread allocated while it ran (frees not subtracted).
+pub fn allocated_by<T>(f: impl FnOnce() -> T) -> (T, u64) {
+    let before = ALLOCATED.with(std::cell::Cell::get);
+    let got = f();
+    (got, ALLOCATED.with(std::cell::Cell::get) - before)
+}
+
 /// Every book under `fixtures/kfxgen/cascade/`.
 /// How long a cost test may take. Debug builds run several times slower and share the machine
 /// with other test threads; 30 s still fails a quadratic loop (the ones found took 19 to 106 s).
 pub const COST_LIMIT: std::time::Duration =
     std::time::Duration::from_secs(if cfg!(debug_assertions) { 30 } else { 5 });
 
-pub const BOOKS: [&str; 13] = [
+pub const BOOKS: [&str; 20] = [
+    "comments_in_tree",
     "css_quirks",
     "directions",
     "fake_margins",
     "fonts",
     "frames",
+    "horizontal_blocks",
+    "link_colours",
+    "link_greys",
     "lists",
     "malformed",
+    "marks",
     "navigation",
     "no_toc",
     "notes",
+    "package_more",
     "package_quirks",
+    "refused_selector",
     "rtl",
     "vertical",
 ];
@@ -98,11 +155,22 @@ pub fn path_of(v: &Value) -> Vec<u32> {
         .collect()
 }
 
-/// The element at `path` (element-child indexes from the root), if there is one.
+/// The element at `path` (element-child indexes from the root, comments not counted), if there
+/// is one.
 pub fn find(dom: &Dom, path: &[u32]) -> Option<NodeId> {
     let mut n = dom.root();
     for &i in path {
-        n = *dom.children(n).get(i as usize)?;
+        let i = i as usize;
+        let kids = dom.children(n);
+        n = match kids.get(i) {
+            // No comment before it.
+            Some(&c) if !dom.is_comment(c) && dom.index_in_parent(c) == i => c,
+            _ => kids
+                .iter()
+                .copied()
+                .filter(|&c| !dom.is_comment(c))
+                .nth(i)?,
+        };
     }
     Some(n)
 }

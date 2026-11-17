@@ -579,12 +579,6 @@ pub(crate) fn from_xml(doc: &Document) -> Dom {
     let r = dom.root;
     let attrs = xml_attrs(&mut dom, &root);
     dom.el_mut(r).attrs = attrs;
-    // lxml's `root[-1]`: the last child that is not text.
-    dom.root_ends_in_comment = root
-        .children()
-        .rev()
-        .find(|c| !c.is_text())
-        .is_some_and(|c| c.is_comment() || c.is_pi());
     // roxmltree's node index → the element made for it.
     let mut made: Vec<Option<NodeId>> = Vec::new();
     let set = |made: &mut Vec<Option<NodeId>>, n: Node, id: NodeId| {
@@ -609,11 +603,14 @@ pub(crate) fn from_xml(doc: &Document) -> Dom {
             set(&mut made, n, id);
         } else if let Some(t) = n.text().filter(|_| n.is_text()) {
             dom.append_text(parent, t);
-        } else if n.is_comment() && !calibre_isspace(n.text().unwrap_or(""))
-            || n.pi()
-                .is_some_and(|pi| !calibre_isspace(pi.value.unwrap_or("")))
-        {
-            dom.note_comment(parent);
+        } else if n.is_comment() || n.is_pi() {
+            // lxml's `text` of a processing instruction is its value.
+            let text = match n.pi() {
+                Some(pi) => pi.value.unwrap_or(""),
+                None => n.text().unwrap_or(""),
+            };
+            let id = dom.alloc_comment(text);
+            dom.attach(parent, id);
         }
     }
     dom
@@ -692,12 +689,8 @@ enum Kind {
         mathml_annotation_xml_integration_point: bool,
     },
     Text(String),
-    /// A comment or processing instruction: not kept in the tree, but linked, so the parse can
-    /// tell whether `<html>` ends in one, and whether its text is blank
-    /// ([`calibre_isspace`]).
-    Dropped {
-        content: bool,
-    },
+    /// A comment or processing instruction, and its text (a processing instruction's value).
+    Comment(String),
 }
 
 struct SinkNode {
@@ -711,7 +704,7 @@ struct SinkNode {
 }
 
 /// An `html5ever` tree sink with linked children, so moving a node costs the same whatever its
-/// siblings. Comments, processing instructions and the DOCTYPE are not kept.
+/// siblings. The DOCTYPE is not kept.
 ///
 /// Past its budget an element is only a name in `over` (its handle `OVER + index`), which
 /// keeps `html5ever`'s stack and formatting list consistent while it finishes the piece of
@@ -903,10 +896,6 @@ impl Sink {
         let r = dom.root;
         let attrs = html_attrs(&mut dom, &nodes[html].kind, &declared);
         dom.el_mut(r).attrs = attrs;
-        dom.root_ends_in_comment = children(html)
-            .filter(|&c| !matches!(nodes[c].kind, Kind::Text(_)))
-            .last()
-            .is_some_and(|c| matches!(nodes[c].kind, Kind::Dropped { .. }));
         let mut stack = vec![(html, r, 0usize)];
         while let Some((s, d, depth)) = stack.pop() {
             for c in children(s) {
@@ -922,8 +911,11 @@ impl Sink {
                         dom.attach(d, id);
                         stack.push((c, id, depth + 1));
                     }
-                    Kind::Dropped { content: true } => dom.note_comment(d),
-                    Kind::Document | Kind::Dropped { .. } => {}
+                    Kind::Comment(t) => {
+                        let id = dom.alloc_comment(t);
+                        dom.attach(d, id);
+                    }
+                    Kind::Document => {}
                 }
             }
         }
@@ -1036,18 +1028,16 @@ impl TreeSink for Sink {
     }
 
     fn create_comment(&self, text: StrTendril) -> usize {
-        let content = !calibre_isspace(&text);
         self.push(
             QualName::new(None, ns!(), local_name!("")),
-            Kind::Dropped { content },
+            Kind::Comment(text.to_string()),
         )
     }
 
     fn create_pi(&self, _target: StrTendril, data: StrTendril) -> usize {
-        let content = !calibre_isspace(&data);
         self.push(
             QualName::new(None, ns!(), local_name!("")),
-            Kind::Dropped { content },
+            Kind::Comment(data.to_string()),
         )
     }
 

@@ -1,12 +1,13 @@
 # Where the port differs from kfxgen
 
-Deliberate differences between `deckle-kfxgen` and kfxgen `0bc705d`, each with why. Line
-citations are at `4b81651`, the previous pin, unless a section names another commit.
+Deliberate differences between `deckle-kfxgen` and kfxgen `ad38ec8`, each with why. Line
+citations are at `4b81651`, an earlier pin, unless a section names another commit.
 
 ## Unicode version of Python's character classes
 
 kfxgen reads characters through Python: `str.isspace`, `isalpha`, `isalnum`, `isdigit`,
-`lower` and `unicodedata.east_asian_width`, for instance when it checks that a chapter's text
+`lower`, `unicodedata.east_asian_width`, `bidirectional` and `decimal` (what `\d`, `int()` and
+`float()` read as a digit), for instance when it checks that a chapter's text
 opens with its title as whole words (`_opens_with_title`). Their answers follow the Unicode
 version of the Python running kfxgen.
 
@@ -169,6 +170,22 @@ keeps the style apart, writes a colour of another type as that Ion type, and rai
 spacings it can't unpack. A run carrying two values of one kind is
 `GenerateError::Unsupported`: kfxgen would take the first in set order. A drop cap whose
 initial is so large that its line count passes 2^63 is a model error, where kfxgen writes
+Python's unbounded int.
+
+## Turned text, lists and picture places of another shape
+
+The converter writes text set the other way from its line as `("turn", (serial, mode, text,
+spans))`, an int, `"horizontal"` or `"vertical"`, a string and runs (`make_turn_flag`,
+`inline_style.py:407` at ad38ec8); a list's `list` as a `type` that is one of KFX's own
+symbols, a `start` int or None and an `inside` flag (`converter.py:6580`), an item's
+`list_item` or `item` as `n` and `value` ints or None and an `empty` flag (:6627); and a block's
+`picture_boxes` as `(left, right)` pairs, each a block style's `(magnitude, unit)` length or
+None (:7400). The port reads exactly those; anything else is a `GenerateError::Model` naming the
+key or the runs, where kfxgen raises on a mode it has no style for and on most shapes it can't
+unpack, writes a list type of another name as a symbol (which can be one the book already has,
+as for units), and writes a start or value of another type as that Ion type. A run carrying two
+turned texts is `GenerateError::Unsupported`: kfxgen would take the first in set order. An item
+numbered 2^63 − 1, whose next number passes an i64, is a model error, where kfxgen counts on in
 Python's unbounded int.
 
 ## Contents nested more than 32 levels deep
@@ -368,13 +385,10 @@ records the cost; the outcome note's "Before phase 4" lists the options.
 
 ## Calibre steps the element tree leaves out
 
-- Comments and processing instructions are dropped and the text around them joined. Calibre
-  keeps them in the tree; no path or style counts them. The two rules that read one are told
-  what they need: the lower-casing check on the root's last child, whether that child was a
-  comment; `DetectStructure`'s `at_start` (`dom::mark_chapters`), where one whose text is not
-  blank stood (in an element's text or tail). Where a later clean-up step moves text from one
-  element to another, that record stays with the element; and a comment made only of dashes
-  counts as text, where Calibre's HTML 4 fallback parser strips the dashes first.
+- Comments and processing instructions are kept as child nodes, as lxml keeps them, but both
+  are one kind of node: the tree does not say which, and a processing instruction keeps its
+  value, not its target. A comment made only of dashes keeps them, where Calibre's HTML 4
+  fallback parser strips the dashes first.
 - `HTMLPreProcessor`'s rule sets for Baen books, Book Designer and calibre's own pdftohtml
   output, and the user's search and replace, are not run.
 - A document whose root is `<ncx>` is kept as parsed; Calibre parses it again as XML
@@ -509,9 +523,9 @@ so only an attribute value or an escaped name in the selector can differ.
 ## Numbers in :nth-child() and the like
 
 Calibre reads the `an+b` of `:nth-*()` with Python's `int()` and tests a position with true
-division. The port holds a number as an i128 that stops at ±2^125, refuses non-ASCII decimal
-digits (Python reads `٣` as 3), and divides as f64, which is Python's result when both numbers
-are below 2^53 and can round differently past it. Calibre's `int()` refuses more than 4300
+division. The port holds a number as an i64 that stops at ±(2^63 − 1) (`py::py_int`), and
+divides as f64, which is Python's result when both numbers are below 2^53 and can round
+differently past it. Calibre's `int()` refuses more than 4300
 digits, as the port does. A unicode escape naming a surrogate code point is read as U+FFFD,
 where Python keeps the surrogate.
 
@@ -589,10 +603,7 @@ line height (`Style.lineHeight`, inherited from the parent where the element set
 negative number of points and the element is not a drop cap. The port decides that from the
 sign of the value as written (a number, or a length `unit_convert` reads), taking the font size
 as positive and finite: where an element's font size is 0, infinite or NaN (`font-size: 0`,
-`1e999pt`), Calibre leaves the line height and the port sets it. The port reads numbers as
-Python's `float()` does but for `_` between digits and digits outside ASCII, which it does not
-read; and it counts an element's children without the comments lxml counts when it tests a drop
-cap.
+`1e999pt`), Calibre leaves the line height and the port sets it.
 
 ## Values the flattener writes back
 
@@ -609,11 +620,406 @@ then lacks. The port works out again the styles of the elements the flattener ga
 An element the flattener does not walk, whose own `class` attribute happens to name a class the
 flattener made and edited, keeps the margin in the port.
 
-## Numbers and names in style values
+## Property names in style values
 
-`css::Styles` reads a number in a style value as Python's `float()` does, but for `_` between
-digits and digits outside ASCII, which it does not read (the same reader as "A negative line
-height"): where Calibre reads `1_0` as 10 pixels, the port gives the text back. And it answers a
-property by its CSS name only. Calibre's `Style[name]` first turns the name into a Python
-attribute name (`_toDOMname`), so `fontSize` or `font-Size` also reach the font size; kfxgen asks
-by CSS names.
+`css::Styles` answers a property by its CSS name only. Calibre's `Style[name]` first turns the
+name into a Python attribute name (`_toDOMname`), so `fontSize` or `font-Size` also reach the
+font size; kfxgen asks by CSS names.
+
+## The nav and NCX kfxgen reads beside Calibre's OPF
+
+kfxgen opens the nav and the NCX that Calibre's rewritten OPF names with lxml's XML parser
+(`converter.py` `_container_parser`, entities left unresolved). The port reads them only when
+they are UTF-8 (a file in another encoding counts as missing, as elsewhere in phase 2), refuses an
+entity holding markup and a file past `deckle_limits`' node or attribute limits by treating it as
+missing, as kfxgen treats a file lxml cannot parse, and expands an entity of plain text, where
+lxml's `itertext` gives the reference as written (`&e;`, checked with lxml 6.0.2). An NCX item written with the misspelt
+`mediatype` attribute counts as an NCX; kfxgen's XPath asks for `media-type` only. kfxgen logs
+each href it rejects to its security log; the port has no such log.
+
+## Run flags and numbers in the inline helpers
+
+`inline_style.py`'s helpers read Python values, and the port holds them in Rust ones
+(`src/convert/inline_style.rs`, `src/convert/font_table.rs`, at ad38ec8):
+
+- A font weight past an i64 (`parse_weight`, `int()` of up to 4,300 digits) is `i64::MAX` or
+  `i64::MIN`; Python keeps the whole number. Whether a run is bold comes out the same.
+- A run's flags are a set kept sorted, so two are equal when their members are. Python compares
+  frozensets by `==`, where `-0.0` equals `0.0` and a NaN only itself; the port compares floats
+  by bits. kfxgen puts no zero and no NaN in a flag: sizes are above 0, colours are ints.
+- Of two flags of one kind on a run (`flag_value`), kfxgen takes whichever its set's hash
+  order gives first, which changes from run to run; the port takes the smaller.
+- An anchor mark is read only with a string id; kfxgen reads any value but None, and only
+  ever makes string ones (`make_anchor_mark`).
+- A nested shift whose depth is a digit `isdigit()` takes and `int()` refuses (`"sub@²"`)
+  is no nested shift, where kfxgen raises. kfxgen writes the depth itself, in ASCII.
+
+Where kfxgen raises on a value from the book, the helper returns `Raised` naming the exception:
+a length unit whose "i" is U+0130 or U+0131 (`KeyError`), and a colour function whose number
+`float()` or `int()` refuses (`ValueError`: two points, a channel of more than 4,300 digits, a
+percentage too big for a float). This is no difference by itself: kfxgen catches these higher
+up, and its callers' handling is what the port's callers follow. Raised inside the style
+resolver's `resolve` (`converter.py` `_build_style_resolver`, a box's or cell's fill), the
+element resolves to None; raised anywhere else in a spine item's extraction, the item is left
+out with a warning (`extract_chapters_from_oeb`'s `except Exception`, "Spine item parse
+failed"), and the book is still made.
+
+## The inline walk
+
+`_walk_inline` and its helpers (`src/convert/inline.rs`, `quotes.rs`, `bidi.rs`, at ad38ec8):
+
+- kfxgen recurses once per nested element, and past Python's recursion limit raises
+  `RecursionError`, which leaves the spine item out. The port walks with a stack of its own
+  and refuses an element nested more than 256 levels inside a paragraph (`Error::TooLarge`).
+  `read_book` refuses a file nested that deep first, so only a tree built by hand gets there.
+- A run's flags are one set object that kfxgen's segments share; the port copies them into
+  each element and each segment, and charges the text in each copy (link targets, rubies'
+  readings, languages) to the file's style text budget, as it charges the resolver's reads. A
+  file whose flags hold long text over many runs (a 1 MiB link target around 2,000 words) is
+  refused where kfxgen makes the book. So is a file whose tate-chu-yoko are nested so that their
+  text is read over and over (each is read once more for every one around it).
+- A CSS escape of a surrogate code point in a `<q>`'s `quotes` or `content` (`"\D800"`) is
+  U+FFFD; Python's `chr` gives a lone surrogate.
+- `_turned_parts` takes the `data-kfxgen-horizontal` and `-vertical` marks off every element
+  inside a turned element, in the tree, for good. The port keeps that in the walk of the file
+  (`Walk`), so the walk's output is the same. kfxgen's style resolver reads one of the marks
+  (`_vertical_box`, a vertical element's margins and paddings) and a second pass walks the same
+  tree: the port's resolver and a second pass's new `Walk` still see the marks. The inline walk
+  reads no margins or paddings. The spacing steps of the block walk read the styles of block
+  elements, their ancestors and those ancestors' children only, never an element inside a
+  turned one, so they see no difference either; later steps are not checked.
+
+## Pictures in text and initials
+
+The picture tokens and the initial (`src/convert/pictures.rs`, `initial.rs`, at ad38ec8):
+
+- An inline `<svg>` that draws shapes and nothing kfxgen takes from it (no `<image>`, no
+  `<text>`, not hidden by its own style or attributes) is refused (`Error::Unsupported`, "SVG
+  pictures"). kfxgen draws it with Qt as a picture of its own and names it by a hash of lxml's
+  text of it (plan decision 2). An `<svg>` kfxgen leaves out (hidden, or its shapes only inside
+  definitions or a nested `<svg>`) is left out here too.
+- A picture source that is a `data:` URI (an `<img>`'s `src`, an SVG `<image>`'s href, a
+  background picture's `url()`; `data:` in any case, nothing before it) is refused
+  (`Error::Unsupported`, "pictures embedded as data: URIs") before it is copied, until
+  calibre's `DataURL` step is ported. calibre's conversion runs that step before kfxgen
+  (`ebooks/oeb/transforms/data_url.py`, from `plumber.py`): an `<img src="data:image/…">` it can
+  decode becomes a file of the manifest, so kfxgen writes a token naming that file.
+  `read_book` has no such step. An SVG `<image>` or CSS background `data:` source, and an
+  `<img>` one calibre cannot decode, reach kfxgen as they are, and kfxgen writes the URI into
+  the token (the generator then finds no picture by that name); the port refuses those too.
+- The text a token copies out of the book (an `<img>`'s `src` and `alt`, an SVG `<image>`'s
+  href) is charged to the file's style text budget. A file whose pictures' sources pass it
+  (about 32 MB) is refused where kfxgen makes the book.
+- kfxgen's SVG helpers and `_leading_float` recurse once per level, and past Python's
+  recursion limit raise `RecursionError`, which leaves the spine item out. The port uses loops.
+  `read_book` refuses a file nested deep enough for either, so only a tree built by hand gets
+  there.
+
+## The block walk
+
+`extract_blocks_from_html`'s walk (`src/convert/blocks/`, `block_bidi.rs`, at ad38ec8):
+
+- kfxgen recurses four calls per nested container (`_walk`, `_walk_flow`, `_walk_element`,
+  `_walk_container`), and past Python's recursion limit raises `RecursionError`, which leaves
+  the spine item out. The pinned `extract_blocks_from_html`, called from a script under Python
+  3.14's default limit (1,000) with lxml 6.0.2 and no style resolver, raises at 249 `<div>`s
+  nested in the `<body>`; inside a calibre conversion its stack starts deeper, so it raises a
+  little sooner (not run). `read_book` lets a file through up to 256 levels below the root, so a
+  file nested about 245 to 254 levels deep is left out by kfxgen and converted here. The port
+  walks with a stack of its own and refuses an element more than 256 levels below the body
+  (`Error::TooLarge`), which only a tree built by hand reaches.
+- A block holding a MathML `<math>` that is not shown (hidden, or in a part the walk leaves
+  out) is refused (`Error::Unsupported`, "math"), as a shown one is (plan decision 2). kfxgen
+  writes the block with `label_texts`, its equations' text for matching a contents label;
+  the generator refuses `label_texts` anyway.
+- Each anchor key a block gets is a copy of the file's href and an id. The copies are charged to
+  the file's style text budget, so a file with a very long href and very many ids is refused
+  where kfxgen makes the book. The keys the per-file loop makes (`src/convert/chapters.rs`) for
+  a file that shows nothing (one for each of its ids) and for the ids ending a file are charged
+  too, but in whole 64-byte units, so a key under 64 bytes costs nothing: the book's node limit,
+  not the budget, bounds how many there are. A file past its budget stops the conversion with
+  `Error::TooLarge`, "<file>: converting this file copies or reads more than 32000000 bytes of
+  its text and styles" (the budget, 500,000 units of 64 bytes, counts the text and styles the
+  converter copies or reads, not only CSS). Each pass of the loop has its own budget for each
+  file: what the first pass charged does not count on the second. The second pass (kfxgen's,
+  printing the contents listings) also reads the listings the first left out, so a file with a
+  very large listing can be refused there when the first pass was not.
+- The budgets of all a book's files also count together in each pass, and in the footnote
+  scan: past 2,000,000 units (`deckle_limits::MAX_BOOK_TEXT_BUDGET`, 128,000,000 bytes) the
+  book is refused at the charge that passes it (`Error::TooLarge`, "converting this book copies
+  or reads more than 128000000 bytes of its text and styles"), where kfxgen, which shares the
+  strings the port copies, makes the book. Smallest input: 20 files, each a link to an id of
+  32,000 letters round 240 words in `<i>` (each word's run copies the target); 5 such files
+  convert. The nine Gutenberg books charge at most 5,409 units in a pass.
+- A pass that makes more than 500,000 blocks (`deckle_limits::MAX_BOOK_BLOCKS`) is refused after
+  the file that passes it (`Error::TooLarge`, "this book has more than 500000 paragraphs and
+  other blocks"); kfxgen makes the book, however long it takes. Smallest input: 8 files of
+  125,000 `<p>x</p>` (refused after the fifth, in 34 s, release build). The nine Gutenberg books
+  make at most 3,450 blocks.
+- An `<svg>`'s own ids go on each picture block it draws (`_emit_image_block`), twice a block;
+  kfxgen copies them without a limit. The port charges the copies to the same budget before
+  making them, so `<svg id="(1 MiB)">` with 200 `<image href="a"/>` stops the file
+  (`Error::TooLarge`, "more than 32000000 bytes") where kfxgen writes 200 blocks.
+
+## Lists
+
+kfxgen's list code (`src/convert/blocks/lists.rs`, at ad38ec8):
+
+- Python's int has no bound, so an `<ol start>` or `<li value>` of any length up to 4,300 digits
+  is a number to kfxgen. The port reads it exactly within an i128. A typed marker past that, or
+  a native list's `start`, an item's `value` or its number past an i64 (the model's integers),
+  stops the file (`Error::Unsupported`, "list numbers too large"), where kfxgen writes the
+  number. A number that is only read, never written (an item that spells out its own marker, a
+  marker no text takes), changes nothing.
+- To tell whether a list's items type their own markers, kfxgen joins each item's whole text,
+  once for each list round the item. The port reads only the first characters it needs, and
+  charges each node it reads to the file's style text budget, so lists nested deep whose items
+  hold many elements and no text are refused where kfxgen makes the book.
+- A nested list's box copies its items' texts and ids once more at each level (`_list_box`); the
+  copies are charged to the same budget.
+
+## Boxes
+
+kfxgen's boxes (`src/convert/blocks/boxes.rs`, at ad38ec8):
+
+- A box copies its blocks' texts and ids once more at each level of nesting (`_make_box`, as
+  `_list_box`); the copies are charged to the file's style text budget. 32 bordered `<div>`s
+  nested round one paragraph of 999,806 characters (32 is the deepest the generator writes) stop
+  the file (`Error::TooLarge`, "more than 32000000 bytes"); 999,805 characters convert. kfxgen
+  writes the 32 nested boxes, each holding the
+  paragraph's whole text (about 32 MB in its model). At 64 levels the limit is 499,838
+  characters, at 128 levels 249,854.
+- Each block a bordered, filled, sized or turned container looks at costs one unit of the same
+  budget. A container that draws no box round its blocks (a width round no picture, a contents
+  entry naming a block past the first) leaves them for each such container round it to look at
+  again, so a file is refused where kfxgen makes the book only past 500,000 such looks (with the
+  file's other charges).
+
+## Tables
+
+kfxgen's native tables (`src/convert/blocks/tables.rs`, at ad38ec8):
+
+- A table holding an `<epub:switch>` anywhere in it stops the file (`Error::Unsupported`,
+  "tables holding an epub:switch") when native tables are on. kfxgen's `_shown_tree` deep-copies
+  such a table (or cell) to drop the switch's cases, then asks the style resolver whether each
+  row, cell and caption of the copy is hidden, and `_is_nav_listing` whether it is a contents
+  listing; calibre never styled the copies, and the copy's root has no `data-kfxgen-source`, so
+  what kfxgen decides there is not known here. Smallest input: `<table><tr><td><epub:switch>
+  <epub:case required-namespace="…">…</epub:case><epub:default>x</epub:default></epub:switch>
+  </td></tr></table>`; kfxgen writes a native table (or rows, if its copy reads as hidden).
+- Each cell of a table (`<td>` or `<th>` anywhere below the `<table>`, a nested table's cells
+  too) is charged three units of the file's style text budget, counted from the tree before
+  anything is resolved, on top of what reading the table charges (about one unit a cell of a
+  word). The file stops (`Error::TooLarge`, "more than 32000000 bytes") for 166,667 cells or more
+  before any cell is read, and for about
+  125,000 cells of a word each once they are read (124,990 convert and 125,010 are refused, in
+  rows of 10, measured). Smallest refused input: `<table><tbody>` with 12,500 rows
+  of ten `<td>cell</td>`. kfxgen converts these tables. Its `_fostered_content` tests every element
+  of the table against a list of the table, its row groups and its rows, so its work grows
+  with rows times cells: about 1.6 billion comparisons for 125,000 cells in rows of 10 (worked
+  out from the code, not run). A table inside a table already counted is not counted again:
+  kfxgen reads each nested table's whole tree again when the rows path reaches it.
+- An id still waiting at the end of a cell walked as paragraphs, when the cell's last block is
+  a drawn rule, is dropped. Smallest inputs: `<td><p>a</p><p>b</p><hr id="z"/></td>` and
+  `<td><p>a</p><p>b</p><hr/><a id="z"></a></td>` in a native table. kfxgen's `_walk_cell`
+  appends the id to that rule's `anchor_ids`, which is the one list `_EMPTY_BLOCK` shares with
+  every rule and space block in the calibre process (`{**_EMPTY_BLOCK, ...}` is a shallow
+  copy). From then on every rule, earlier ones too, holds `z`, and every rule in a file keyed
+  afterwards gets the key `<file>#z`, in this book and later books converted by the same
+  process. The port puts the id on the cell's rule, which the cell's paragraphs drop, so `z`
+  names nothing and every rule keeps an empty `anchor_ids`. A link to `#z` is written without
+  a link in the port (no block has the key, so the generator leaves the run unlinked); in
+  kfxgen it lands on the first rule its generator finds with the key (both read in the
+  generators' code, not run end to end).
+- The same holds for an empty anchor after a row (`_walk_container`'s `follow`) when the row's
+  first block is a space or rule block. kfxgen appends the id to the list every rule and space
+  block shares. A space block comes from a row holding only a no-break space: `<table><tr
+  style="display: none"><td>h</td></tr><tr><td>&#160;</td></tr><a id="x"></a><tr><td>b</td>
+  </tr><a id="z"></a></table>`; the port puts `x` on that space block, which spacing takes out,
+  so `x` names nothing. A rule block comes from a row holding a table whose cell opens with a
+  rule: `<table><tr><td><hr/><table><tr><td>i</td></tr></table></td></tr><a id="x"></a><tr>
+  <td>b</td></tr><a id="z"></a></table><hr/><p>after</p>`; the port keeps `x` on that one rule,
+  and the second rule has none (in kfxgen every rule carries it).
+- Each paragraph a row holding a table writes (`_walk_split_row`) costs one unit of the file's
+  style text budget, and again for each such row round it, which looks at it again (to mark it
+  a row, and to make it bold in a header cell). Tables nested 62 deep in cells, the innermost
+  cell holding 10,000 paragraphs, stop the file (`Error::TooLarge`, "more than 32000000 bytes");
+  5,000 paragraphs convert (317,759
+  units). kfxgen converts both.
+- A `<col span="N">` repeats its width N times (up to 1,000) in the model's column widths. Each
+  repeat is charged to the file's style text budget before it is made, so a table whose `<col>`
+  spans add up to about a million widths stops the file (`Error::TooLarge`, "more than 32000000
+  bytes"): 2,000 `<col span="1000">` are refused
+  after about 1,000 of them. kfxgen writes the two million widths.
+
+## The book's pictures and cover
+
+The pictures and cover handed to the generator (`src/convert/images.rs`, at ad38ec8). kfxgen
+decodes, scales and writes pictures with Qt through calibre; the port uses the `image` crate.
+
+- A picture kfxgen re-encodes (a GIF made a PNG, a CMYK JPEG made RGB, a picture over 1,920 px
+  or 1 MiB) has kfxgen's format and size, not its bytes: the encoders and the scaling filter
+  differ. A GIF's PNG is RGBA here, a palette PNG in kfxgen; a CMYK JPEG's colours may differ.
+  A picture kept as it is keeps the EPUB's bytes in both.
+- A re-encoded PNG with no alpha is the smaller of the PNG and a JPEG at quality 85 in both, but
+  the sizes being compared are each encoder's, so the format chosen can differ. kfxgen also
+  tries a palette PNG for a palette source, which the port does not. So whether a picture
+  re-encoded for its bytes comes out smaller than it was, and is kept, can differ too. Smallest
+  input: a PNG over 1,920 px with no alpha (`pictures_more`'s `wide.png` comes out a PNG in
+  both).
+- Which pictures decode is `image`'s answer, not Qt's: a picture neither can read is left out
+  with a warning in both, but Qt fills in a JPEG cut short and the port may not, and the two
+  disagree on other damaged files.
+- A picture whose header states more than 100 megapixels (`deckle_limits::MAX_IMAGE_PIXELS`),
+  or that needs more than `image`'s 512 MiB to decode, refuses the book (`Error::TooLarge`)
+  before it is decoded. calibre lets Qt allocate up to 1,024 MB for a picture
+  (`set_image_allocation_limit`), so kfxgen scales one of up to about 268 megapixels at 4
+  bytes a pixel and leaves out a larger one (worked out from the code, not run). Smallest
+  input: a PNG whose header says 10,001 × 10,000. A GIF counts the larger of its screen and
+  its first frame, which `image` decodes at the frame's own size: a GIF of a 1 × 1 screen
+  whose frame says 11,000 × 10,000 is refused too.
+- A JPEG over about 48.8 megapixels refuses the book (`Error::TooLarge`) before it is decoded.
+  zune-jpeg keeps 2-byte coefficient planes for up to 4 components outside `image`'s 512 MiB
+  allocation limit (a progressive JPEG, or a first scan naming fewer components than the
+  frame: a 200-byte progressive 10,000 × 10,000 file reached 900 MB), so 8 bytes a pixel are
+  taken off that limit for every JPEG. With 3 bytes a pixel of RGB output (a CMYK JPEG is
+  decoded to RGB too), 11 × pixels must stay within 536,870,912 bytes: 48,806,446 pixels at
+  most. A grey JPEG (1 byte a pixel out, 9 in all) may have 59,652,323. kfxgen converts these.
+  Smallest input: a baseline RGB JPEG of 7,000 × 7,000 (49 megapixels; worked out, not run).
+- The pictures a book decodes may state 10 gigapixels together
+  (`deckle_limits::MAX_BOOK_IMAGE_PIXELS`), counted from each header before its decode, every
+  decode counted (a CMYK JPEG twice). The picture that passes it refuses the book
+  (`Error::TooLarge`). kfxgen has no such limit. Smallest input: 101 pictures whose headers
+  each say 10,000 × 10,000 (the 101st is refused). A book just under it (100 pictures of
+  10,000 × 10,000) took 29 s in a release build for RGB JPEGs and 9.5 s for grey PNGs.
+- An SVG file of the manifest, and an `<svg>` drawn only with shapes in a spine page (not in
+  another `<svg>`, in a page that is not itself an SVG), refuse the book (`Error::Unsupported`,
+  "SVG pictures"), even where no text shows it. kfxgen draws them with Qt.
+- When several manifest pictures have "cover" in their id or href and the book names no other
+  cover, the port takes the first by href. calibre's manifest is a set, so which one kfxgen
+  takes varies from run to run.
+
+## The book's fonts
+
+`convert::font_table` (`font_table.py`) differs here:
+
+- A WOFF2 that is tried refuses the book (`Error::Unsupported`, "WOFF2 fonts"): every `src`
+  before it failed, including a damaged WOFF2 kfxgen would skip in favour of a later `url()`.
+  fontTools rebuilds a WOFF2's glyph tables with its own compiler, which the port does not
+  have, so it cannot tell a good WOFF2 from a damaged one. A WOFF2 over 50 MiB, or given after
+  a `src` that is chosen, is skipped as in kfxgen. Smallest input:
+  `src: url(bad.woff2), url(good.woff)`, where kfxgen would embed `good.woff` (read, not run:
+  kfxgen's WOFF2 path needs brotli).
+- The fonts a book embeds may come to 256 MiB together: a WOFF is charged the declared size of
+  its tables before it is inflated (whether or not it is then embedded), a TTF/OTF its size
+  before it is kept. Each file is charged once, however many rules or hrefs name it (rules
+  naming one href still give one face, and hrefs finding one file by its file name give a face
+  each, sharing its bytes, as in kfxgen). The font that passes it refuses the book
+  (`Error::TooLarge`). kfxgen has no such limit; calibre holds every file in memory. Smallest
+  input: six TTFs of 50 MiB (the sixth is refused); a 1 MB EPUB of twenty deflated ones held
+  1,000 MiB as faces before. Five WOFFs of 65,535 entries each inflating 49.8 MB, the most a
+  WOFF may ask for, took 3.3 s in a debug build before the sixth was refused.
+- A WOFF is unpacked to the bytes fontTools 4.60.1 writes, compared on the `fonts_woff` model
+  and on WOFFs made in the tests; the version calibre bundles was not read.
+- When two manifest files share a file name and a `src` names neither by href, the port takes
+  the last in the OPF. calibre's manifest is a set, so which one kfxgen takes varies from run
+  to run.
+- A font family is lower-cased by the Rust toolchain's Unicode version (17.0 for rustc 1.99),
+  not Python's (16.0 for 3.14). The 28 code points Unicode 17 gave lower-case forms (U+A7CE,
+  U+A7D2, U+A7D4, U+16EA0–U+16EB8) are lower-cased by Rust and left as they are by Python, so a
+  family holding one gets another `css_family` and name hash than in kfxgen. Smallest input:
+  `font-family: "\16EA0 x"`.
+- `KFXGEN_MAX_FONT_BYTES` is not read; the cap is its default, 50 MiB. kfxgen's warnings for a
+  skipped face are not reported.
+
+## Added files of one name
+
+kfxgen puts the files Calibre added to the spine (`_spine_in_order`) in the order of the first
+contents entry naming each one's file name, then by file name, with a stable sort. Two added
+files of one file name in different folders sort alike whether or not an entry names that
+name, so kfxgen keeps Calibre's set order for them, which changes from run to run, and with it
+which of two spellings up to letter case or percent-encoding it keeps. Names are compared
+decoded, a bad sequence decoded as U+FFFD, so `%FF%FE.xhtml` and `%C0%80.xhtml` are one name
+too. The port (`src/convert/toc.rs`) sorts them by href, and of two such spellings keeps the
+first by href. Smallest input: a page
+linking to `A/x.xhtml` and `B/x.xhtml`, neither in the OPF's spine, with or without a contents
+entry naming `A/x.xhtml`; the port gives `A/x.xhtml` first every time.
+
+## Note and link keys under a long path
+
+`_note_pair_ids`, `_book_link_targets` and `_footnote_keys` (`src/convert/notes.rs`) make a
+key holding the file's path for each id or link they keep, and read the path again for each
+link they resolve. The port charges each key made, and each path read, to the file's style
+text budget, as the anchor keys are; the budget counts whole 64-byte units per charge, so keys
+under 64 bytes cost nothing and the book's node limit bounds the rest. Measured: 5 files of
+95,000 noteref links each held about 720 bytes a link (peak 761 MB, 6.3 s in a debug build). For example, a file at a path of 2,000 characters with
+40,000 note markers linking to notes that link back stops the conversion (`Error::TooLarge`, "more
+than 32000000 bytes") where kfxgen makes the book; at a path of 100 characters it
+converts.
+
+## Headings a contents page repeats
+
+When kfxgen rebuilds the book's contents page (`_rebuild_contents_page`), each heading on the
+page that is also a link the page gives more than once becomes a line of its own, a copy of
+that entry's line: its title and, for a place in a chapter, its key. A heading matches an
+entry when their words agree after `_normalize_title`, which joins runs of white space and
+strips punctuation from both ends, so a short heading can match a very long title, or a short
+title with a very long key (`<file>#<id>` from the contents' own link), and these are copied
+once for each such heading (kfxgen shares the strings; the port copies them). The port
+(`src/convert/contents_page.rs`) counts the bytes of the titles and keys these lines copy
+before it makes them, and past 33,554,432 bytes (`MAX_CONTENT_FILE_BYTES`, the size a content
+file may have) stops the conversion (`Error::TooLarge`, "the contents page repeats more than
+33554432 bytes of contents entry titles and keys") where kfxgen makes the book. A heading in a
+real book is about as long as the title it repeats, the page's headings are in one file under
+that size, and a key is a file name and an id, so only a crafted title or link reaches the
+limit. Smallest inputs: a contents entry titled `"!" * 10_000_000 + "A"`, or a second entry
+titled "A" in the section of the entry before it (a place) linking to an id of 10,000,000
+characters, and a "Contents" page of a heading "Contents" and four headings "A", each a link: four copies, over 40,000,000
+bytes, are refused; with three headings the book converts.
+
+## Titles and keys chapters repeat
+
+Three more steps copy a string kfxgen gives several chapters or entries
+(`src/convert/assemble.rs`, `src/convert/chapters.rs`). Each counts the bytes it is about to
+copy and, past 33,554,432 bytes (`MAX_CONTENT_FILE_BYTES`) in the book, stops the conversion
+(`Error::TooLarge`, "the contents repeat more than 33554432 bytes of titles and keys") where
+kfxgen makes the book. The two assembly copies share one count; the split and the contents
+page's count above each have their own, so together they hold at most three times that.
+
+- **Contents entries on one block.** A contents entry landing on the block of the entry before
+  it gets that entry's key in the chapter's `sub_entries`; kfxgen's entries share the one
+  string, the port copies it for each. Smallest input: one page, an entry naming it, an entry
+  naming an id of 100,000 letters no block has (it snaps to the page's last block), and 336
+  entries naming other missing ids, each snapping to the same block; with 335 the book
+  converts.
+- **Pages that keep a dropped contents listing.** Each contents entry that makes a page of no
+  blocks keeping a listing gets the listing's keys (`_listing_keys`, `"<file>#<id>"` for each
+  id). kfxgen builds these too, so the growth is kfxgen's as well (its memory grows the same
+  way; the port's count stops it). Each key counts its bytes and 48 more, so many short keys
+  count too. Smallest input: a page with a `<div class="toc">` of 5,000 `<a id>` and 222
+  entries titled "Copyright", naming its first id and the page by turns (111 such pages); with
+  220 entries the book converts.
+- **A chapter cut where the writing mode changes.** Each part after the first gets the
+  chapter's title (`_split_by_writing_mode`); kfxgen's parts share it. Smallest input: 36
+  files alternately horizontal and vertical and two entries, the first titled with 1,000,000
+  letters (34 copies); 35 files convert.
+
+## Warnings
+
+`convert` returns the warnings kfxgen logs (`Converted::warnings`, `src/convert/mod.rs`); no
+oracle records kfxgen's log, so they were compared with the pinned Python by reading. They
+differ from it here:
+
+- A `repr` in kfxgen's text (`{entry['title']!r}`, `{href!r}`) is written as Rust's `{:?}`:
+  double quotes, and Rust's escapes.
+- "Spine item N parse failed (href): …" ends with the Python exception's name and what raises
+  it, in the port's words (`Raised`), where kfxgen prints the exception's own message.
+- When kfxgen reads the book a second time to keep its contents listings, it logs the first
+  pass's warnings too, then drops what that pass made; the port keeps the second pass's only.
+- Calibre's reader leaving a spine item out because it is no document (a stylesheet or a
+  picture listed in the spine) is said in the port's words, not Calibre's. A spine `idref`
+  naming no manifest item is dropped without a warning.
+- The read-aloud narration is looked for in the OPF Calibre reads (the container's first);
+  kfxgen reads every OPF the container names.
+- kfxgen's `log.info` lines and the font table's messages about skipped faces are not
+  returned.

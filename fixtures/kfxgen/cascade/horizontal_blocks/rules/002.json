@@ -1,0 +1,11 @@
+{
+ "font_face": [],
+ "rules": [
+  [1, "html", {"writing-mode": "vertical-rl", "-webkit-writing-mode": "vertical-rl"}, [], [1, 0, 0, 0, 1, 83]],
+  [1, ".tcy", {"text-combine-upright": "all", "-webkit-text-combine": "horizontal"}, [], [1, 0, 0, 1, 0, 84]],
+  [1, ".hz", {"writing-mode": "horizontal-tb", "-webkit-writing-mode": "horizontal-tb"}, [], [1, 0, 0, 1, 0, 85]],
+  [1, ".bxp", {"border-top-color": "black", "border-top-style": "solid", "border-top-width": "1px", "border-right-color": "black", "border-right-style": "solid", "border-right-width": "1px", "border-bottom-color": "black", "border-bottom-style": "solid", "border-bottom-width": "1px", "border-left-color": "black", "border-left-style": "solid", "border-left-width": "1px", "padding-top": "10px", "padding-right": "10px", "padding-bottom": "10px", "padding-left": "10px"}, [], [1, 0, 0, 1, 0, 86]],
+  [1, ".c", {"text-align": "center"}, [], [1, 0, 0, 1, 0, 87]]
+ ],
+ "ua_rules": 180
+}

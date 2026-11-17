@@ -1,0 +1,15 @@
+<?xml version="1.0"  encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+<dc:identifier id="id">urn:uuid:00000000-0000-4000-8000-000000001485</dc:identifier>
+<dc:title>Comments In Tree</dc:title><dc:creator opf:role="aut">Fixture Author</dc:creator>
+<dc:language>en</dc:language>
+</metadata>
+<manifest>
+<item id="ncx" href="OEBPS/toc.ncx" media-type="application/x-dtbncx+xml"/>
+<item id="css" href="OEBPS/style.css" media-type="text/css"/>
+<item id="c1" href="OEBPS/c1.xhtml" media-type="application/xhtml+xml"/>
+</manifest>
+<spine toc="ncx"><itemref idref="c1"/></spine>
+
+</package>

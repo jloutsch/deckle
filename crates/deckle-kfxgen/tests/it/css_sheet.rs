@@ -231,9 +231,9 @@ fn book_rules_match_calibre_in_text_and_order() {
         "{matched} of {total} files match; differences:\n{}",
         failed.join("\n")
     );
-    // Every spine file of the 13 books, with their 306 rules and 3 font faces.
-    assert_eq!((matched, total), (49, 49));
-    assert_eq!((rules_compared, faces_compared), (306, 3));
+    // Every spine file of the 20 books, with their 427 rules and 3 font faces.
+    assert_eq!((matched, total), (66, 66));
+    assert_eq!((rules_compared, faces_compared), (427, 3));
 }
 
 /// `rules/001.json` of `css_quirks` (`sheet.xhtml`) without the shorthands Task 6 expands:

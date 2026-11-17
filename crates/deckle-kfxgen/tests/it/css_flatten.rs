@@ -274,6 +274,25 @@ fn body_margins_are_added() {
     assert_eq!(dom.attr(b, "class"), Some("calibre"));
 }
 
+/// `force_int`'s `int()` refuses more than 4300 digits; Calibre catches that and takes
+/// size 3 (`flatten_node`), where a saturated number was size 7 or 1.
+#[test]
+fn font_tag_size_of_4301_digits_is_size_3() {
+    let nines = "9".repeat(4301);
+    let (dom, flat) = flat_page(
+        "",
+        &format!("<p><font size=\"+{nines}\">a</font><font size=\"-{nines}\">b</font></p>"),
+        "",
+    );
+    let p = dom.children(body(&dom))[0];
+    let sizes: Vec<Option<&str>> = dom
+        .children(p)
+        .iter()
+        .map(|&f| value(&flat, f, "font-size"))
+        .collect();
+    assert_eq!(sizes, [Some("12pt"), Some("12pt")]);
+}
+
 #[test]
 fn font_tag_size_plus_one_is_13_5pt() {
     let (dom, flat) = flat_page(

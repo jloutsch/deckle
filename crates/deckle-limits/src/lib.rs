@@ -47,6 +47,12 @@ pub const MAX_FONTS_BYTES: u64 = 256 * MB;
 pub const MAX_MOBI_TEXT_BYTES: u64 = 256 * MB;
 /// Image decode, width × height, except comic pages.
 pub const MAX_IMAGE_PIXELS: u64 = 100_000_000;
+/// EPUB → KFX (deckle-kfxgen): width × height of every picture decoded for one book, together,
+/// as the headers state them. Without it, the time is bounded only by the archive: a 1 GB book
+/// of 100-megapixel pictures that compress well takes about 15 minutes of CPU, and with it
+/// about 1.5 minutes. Real books stay far under: 500 comic pages at 4 megapixels are 2
+/// gigapixels, 300 camera photos at 24 megapixels 7.2.
+pub const MAX_BOOK_IMAGE_PIXELS: u64 = 10_000_000_000;
 /// PDF: a rendered page, width × height in pixels. A page over it renders at a scale that fits.
 pub const MAX_PDF_RENDER_PIXELS: u64 = 100_000_000;
 /// PDF: page width or height in points, the PDF specification's own maximum.
@@ -121,6 +127,11 @@ pub const MAX_BOOK_SELECTOR_WORK: u64 = 1_000_000_000;
 /// each styled its own way (25,000 of one declaration each; fewer with more), and an element's
 /// pseudo-class declarations are counted for it in both cascades. The files of nine Gutenberg
 /// books use at most 1,495 in the first; the 49 cascade fixture files at most 1,049 in both.
+/// Apart from the cascades, the converter's resolvers for a file count the style text they copy
+/// or read per element against the same limit, together: a unit for each 64 bytes (a value
+/// under 64 bytes costs nothing) and one for each pseudo-class declaration copied, so a long
+/// value read for every element is refused after bounded work; the 185 fixture files use at
+/// most 173.
 pub const MAX_CASCADE_DECLS: usize = 500_000;
 
 /// EPUB to KFX: the units of [`MAX_CASCADE_DECLS`] all a book's files use together, each
@@ -137,6 +148,16 @@ pub const MAX_CASCADE_DECLS: usize = 500_000;
 /// `NOVEL_CSS`, cascades only) use 135,800.
 pub const MAX_BOOK_CASCADE_DECLS: usize = 3_000_000;
 
+/// EPUB to KFX: the units of [`MAX_CASCADE_DECLS`] the converter charges all a book's files
+/// together in one pass over them, for the text and style values it copies or reads (a unit for
+/// each 64 bytes): each file has [`MAX_CASCADE_DECLS`] of its own, and what a pass copies stays
+/// held until the book's chapters are made, so without this a book of many files each just
+/// under its own limit holds the files times 32 MB (100 files of 34.6 KB copying a long link
+/// target into each word: 2.7 GB peak). At the limit a pass has copied or read about 128 MB;
+/// that book is refused at a 139 MB peak (release build). The nine Gutenberg books charge at
+/// most 5,409 units in a pass (pg76).
+pub const MAX_BOOK_TEXT_BUDGET: usize = 2_000_000;
+
 /// EPUB to KFX: the nodes of one book file's tree, refused while the file is parsed: read as
 /// XML (a document, the OPF, the nav, the NCX, an XML item), its elements, runs of text,
 /// comments and processing instructions (`roxmltree`'s `nodes_limit`); read as HTML, its
@@ -149,6 +170,14 @@ pub const MAX_DOM_NODES: usize = 500_000;
 /// nine Gutenberg books hold at most 7,718 (pg76). A book of 2 million paragraphs, under the
 /// limit, peaked at 1.11 GB styled (2.2 s, release build).
 pub const MAX_BOOK_DOM_NODES: usize = 2_000_000;
+
+/// EPUB to KFX: the blocks (paragraphs, headings, pictures, tables and the like) the converter
+/// makes of all a book's files in one pass, refused after the file that passes it. Each block
+/// costs about 4.7 KB of peak memory and 55 µs (release build): 1 million paragraphs took
+/// 4 GB and 55 s before this limit; 8 files of 125,000 are refused after the fifth file, at a
+/// 1.7 GB peak in 34 s (release build). The nine Gutenberg books make at most 3,450 blocks
+/// (pg98).
+pub const MAX_BOOK_BLOCKS: usize = 500_000;
 
 /// EPUB to KFX: one book file read as a document or as XML (a spine document, the nav, the
 /// NCX, an XML manifest item), refused before it is parsed. The nine Gutenberg books' largest

@@ -152,10 +152,7 @@ impl<'a> Engine<'a> {
                 Ready::In(set) => set.binary_search(&p).is_ok(),
                 Ready::Attr(a) => self.attr(a, p)?,
                 Ready::Root => p == 0,
-                Ready::Empty => {
-                    let e = self.ix.nodes[p as usize];
-                    self.dom.children(e).is_empty() && self.dom.text(e).is_empty()
-                }
+                Ready::Empty => self.dom.is_empty(self.ix.nodes[p as usize]),
                 Ready::Filter(f) => self.filter(f, p)?,
             };
             if !ok {
@@ -231,19 +228,22 @@ impl<'a> Engine<'a> {
         Ok(cur)
     }
 
+    /// The element before `p` among its siblings, comments passed over (`itersiblings('*')`).
     fn prev_sibling(&self, p: u32) -> Option<u32> {
-        let e = self.dom.prev_sibling(self.ix.nodes[p as usize])?;
+        let e = self.dom.prev_element(self.ix.nodes[p as usize])?;
         Some(self.ix.at(e))
     }
 
+    /// The element after `p` among its siblings, comments passed over.
     fn next_sibling(&self, p: u32) -> Option<u32> {
-        let e = self.dom.next_sibling(self.ix.nodes[p as usize])?;
+        let e = self.dom.next_element(self.ix.nodes[p as usize])?;
         Some(self.ix.at(e))
     }
 
+    /// The child elements of `p` (`iterchildren('*')`).
     fn children(&self, p: u32) -> impl Iterator<Item = u32> + '_ {
         let e = self.ix.nodes[p as usize];
-        self.dom.children(e).iter().map(|&c| self.ix.at(c))
+        self.dom.child_elements(e).map(|c| self.ix.at(c))
     }
 
     /// The elements in relation `comb` to one of `prev` that pass compound `c`.
@@ -283,7 +283,7 @@ impl<'a> Engine<'a> {
             Comb::Child => {
                 let listed: u64 = prev
                     .iter()
-                    .map(|&p| self.dom.children(ix.nodes[p as usize]).len() as u64)
+                    .map(|&p| self.dom.element_count(ix.nodes[p as usize]) as u64)
                     .sum();
                 if let Some(set) = from(listed) {
                     self.ix.charge(set.len() as u64)?;

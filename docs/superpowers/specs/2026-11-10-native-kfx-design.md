@@ -62,7 +62,7 @@ Deckle binary with no Python, no Calibre and no Previewer.
 
 - License GPL-3.0-or-later, SPDX header on every new source file. The port is a derivative of
   kfxgen; `About.tsx:122` already credits kfxgen.
-- **Pinned upstream:** kfxgen 5.24.0 plus #753 to #760, commit `0bc705d`. Recorded in
+- **Pinned upstream:** kfxgen 5.24.0 plus #753 to #778, commit `ad38ec8`. Recorded in
   `crates/deckle-kfxgen/src/lib.rs`, `tools/ref/kfxgen_models.sh` (`KFXGEN_REF`) and
   `fixtures/kfxgen/README.md`.
 - Reuse `deckle-kfx` for Ion, symbols, fragments, container read/write, metadata stamping,
@@ -188,10 +188,10 @@ natively with that element as its text/alt text and a run warning naming it.
 
 ## Keeping up with kfxgen
 
-kfxgen is still changing (5.24.0 shipped on 2026-11-11, with #753 to #760 after it). The port
-targets `0bc705d`. A sync is its own task: run `KFXGEN_REF=<new> tools/ref/kfxgen_models.sh` (it
+kfxgen is still changing (5.24.0 shipped on 2026-11-11, with #753 to #778 after it). The port
+targets `ad38ec8`. A sync is its own task: run `KFXGEN_REF=<new> tools/ref/kfxgen_models.sh` (it
 exports that commit and injects Deckle's dump hook; kfxgen itself is only read), list
-`git log 0bc705d..<new>` in kfxgen for files under `plugin/kfxgen/`, port each change, and set
+`git log ad38ec8..<new>` in kfxgen for files under `plugin/kfxgen/`, port each change, and set
 the new commit in the script, the fixtures README and `crates/deckle-kfxgen/src/lib.rs`. The
 model JSON carries a `schema` number; a kfxgen change to the model bumps it.
 

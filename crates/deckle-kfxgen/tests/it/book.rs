@@ -25,10 +25,10 @@ fn read_book_matches_every_dump() {
         check_book(&book, &Dump::fixture(name), &mut tally);
     }
     tally.assert_clean(&allowed());
-    assert_eq!(tally.books.len(), 13);
+    assert_eq!(tally.books.len(), 20);
     assert_eq!(
         (tally.files, tally.rules, tally.font_faces),
-        (49, 306, 3),
+        (66, 427, 3),
         "files, book rules, @font-face rules"
     );
     assert!(tally.marks >= 3, "{} marks", tally.marks);
@@ -134,7 +134,7 @@ fn a_file_that_is_not_an_epub_is_an_error() {
 const CONTAINER: &[u8] = br#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
 
 /// The stored zip of an EPUB with `opf` at `content.opf` and `files`.
-fn zip_of(opf: &[u8], files: &[(&str, &[u8])]) -> Vec<u8> {
+pub(crate) fn zip_of(opf: &[u8], files: &[(&str, &[u8])]) -> Vec<u8> {
     let mut entries: Vec<(&str, &[u8], u64)> = vec![
         ("mimetype", b"application/epub+zip", 20),
         ("META-INF/container.xml", CONTAINER, CONTAINER.len() as u64),

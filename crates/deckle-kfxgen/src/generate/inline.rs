@@ -13,7 +13,8 @@ use super::notes::Popups;
 use super::styles::{Style157, StyleArgs, Styles};
 use super::typography::{Typography, read_link_colour, read_typography_flag};
 use super::writing::{
-    Bidi, direction_layers, read_bidi_flag, read_ruby_flag, read_tcy_flag, without_ruby_or_tcy,
+    Bidi, direction_layers, read_bidi_flag, read_ruby_flag, read_tcy_flag, read_turn_flag,
+    without_entries,
 };
 use super::{GenerateError, Generator, model_err, py, st, sym};
 use crate::pyvalue::{PyValue, truthy};
@@ -67,6 +68,19 @@ pub(crate) enum Flag {
     Transform(String),
     Spacing(Length),
     Colour(i64),
+    /// `make_turn_flag` (#247, b067638): text set the other way from its line, on the one
+    /// placeholder character it takes.
+    Turn(Box<Turned>),
+}
+
+/// `make_turn_flag`'s `(serial, mode, text, spans)`: `horizontal` for horizontal-tb text in
+/// vertical text, else vertical-rl text in a horizontal block; its own runs in `text`.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Turned {
+    pub serial: i64,
+    pub horizontal: bool,
+    pub text: String,
+    pub spans: Vec<Span>,
 }
 
 /// A size in CSS px, ordered by `total_cmp` so a run's flags can be a set; read with no sign
@@ -107,6 +121,18 @@ pub(crate) fn link_target(flags: &Flags) -> Option<&str> {
     })
 }
 
+/// A chunk's runs, then the runs inside its text set the other way (#247, b067638): a link
+/// in it is its own (PSB S05).
+pub(crate) fn with_turned(spans: &[Span]) -> impl Iterator<Item = &Span> {
+    let inner = spans.iter().flat_map(|sp| {
+        sp.flags.iter().find_map(|f| match f {
+            Flag::Turn(t) => Some(&t.spans[..]),
+            _ => None,
+        })
+    });
+    spans.iter().chain(inner.flatten())
+}
+
 /// `run_font_size`: the size a run's size flag carries.
 pub(crate) fn run_font_size(flags: &Flags) -> Option<f64> {
     flags.iter().find_map(|f| match f {
@@ -124,7 +150,7 @@ fn mono_families(flags: &Flags) -> Option<&[String]> {
 }
 
 /// `(start, length, flags)`, in characters.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Span {
     pub start: i64,
     pub len: i64,
@@ -153,6 +179,7 @@ fn flag_of(f: &PyValue, at: &str) -> Result<Flag, GenerateError> {
             (Some("link"), PyValue::Str(target)) => Flag::Link(target.clone()),
             (Some("ruby"), v) => read_ruby_flag(v, &format!("{at}.spans"))?,
             (Some("tcy"), v) => read_tcy_flag(v, &format!("{at}.spans"))?,
+            (Some("turn"), v) => read_turn_flag(v, &format!("{at}.spans"))?,
             (Some("bidi"), v) => read_bidi_flag(v, &format!("{at}.spans"))?,
             (Some("lang"), PyValue::Str(lang)) => Flag::Lang(lang.clone()),
             (Some("lang"), _) => {
@@ -244,6 +271,9 @@ pub(crate) fn read_spans(v: Option<&PyValue>, at: &str) -> Result<Vec<Span>, Gen
         }
         if count(|f| matches!(f, Flag::Tcy(..))) > 1 {
             return Err(Unsupported("a run of two tate-chu-yoko"));
+        }
+        if count(|f| matches!(f, Flag::Turn(..))) > 1 {
+            return Err(Unsupported("a run of two texts set the other way"));
         }
         if count(|f| matches!(f, Flag::Orientation(_))) > 1
             || count(|f| matches!(f, Flag::EmphasisMarks(_))) > 1
@@ -482,7 +512,7 @@ pub(crate) fn build_body_anchors(
     // :6885).
     let targets: BTreeSet<&str> = chunks
         .iter()
-        .flat_map(|c| c.spans)
+        .flat_map(|c| with_turned(c.spans))
         .filter_map(|sp| link_target(&sp.flags).filter(|t| !t.is_empty()))
         .collect();
     let mut body_anchor_map = BTreeMap::new();
@@ -632,8 +662,8 @@ fn emphasis_style(
 pub(crate) struct Run {
     pub start: i64,
     pub len: i64,
-    style: Option<String>,
-    anchor: Option<String>,
+    pub style: Option<String>,
+    pub anchor: Option<String>,
     /// Its anchor is a pop-up note's (#445).
     popup: bool,
     /// The event of a ruby over it: its chapter's ruby fragment and its number there (#236).
@@ -683,7 +713,7 @@ pub(crate) fn entry_runs(
     popups: &Popups,
 ) -> Vec<Run> {
     let mut runs = Vec::new();
-    for mut layer in direction_layers(&without_ruby_or_tcy(spans)) {
+    for mut layer in direction_layers(&without_entries(spans)) {
         // A run layered on others starts from their weight, slant and font (#715).
         let (mut run_b, mut run_i, mut run_fam) = (base.bold, base.italic, base.family);
         let under = std::mem::take(&mut layer.under);
@@ -776,6 +806,59 @@ pub(crate) fn entry_runs(
             anchor,
             ruby: None,
         });
+    }
+    runs
+}
+
+/// The runs of a text set the other way (#247, b067638): a style for what sets a run apart,
+/// a link where it goes somewhere (PSB S05, S06, S08); a size of its own is a run too (QA's
+/// Q765 Y10). Its styles are allocated before its paragraph's runs, as kfxgen does.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn turn_runs(
+    g: &mut Generator,
+    styles: &mut Styles,
+    extra_style_names: &mut Vec<String>,
+    sizes: &Sizes,
+    spans: &[Span],
+    base: &RunBase,
+    body_anchor_map: &BTreeMap<String, String>,
+) -> Vec<Run> {
+    let mut runs = Vec::new();
+    for sp in spans {
+        let target = link_target(&sp.flags).filter(|t| !t.is_empty());
+        let anchor = target.and_then(|t| body_anchor_map.get(t).cloned());
+        // Its flags but its found links and its language.
+        let plain = sp.flags.iter().any(|f| match f {
+            Flag::Link(t) => t.is_empty(),
+            Flag::Lang(_) => false,
+            _ => true,
+        });
+        let style = plain.then(|| {
+            let style = emphasis_style(
+                &g.fonts,
+                sizes,
+                &sp.flags,
+                (base.bold, base.italic),
+                base.family,
+                base,
+                anchor.is_some() || target.is_none(),
+            );
+            let name = styles.allocate(g, "_em", style);
+            if !extra_style_names.contains(&name) {
+                extra_style_names.push(name.clone());
+            }
+            name
+        });
+        if style.is_some() || anchor.is_some() {
+            runs.push(Run {
+                start: sp.start,
+                len: sp.len,
+                style,
+                anchor,
+                popup: false,
+                ruby: None,
+            });
+        }
     }
     runs
 }

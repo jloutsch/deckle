@@ -1,0 +1,27 @@
+<?xml version="1.0"  encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Typography (new)</dc:title>
+    <dc:creator>kfxgen #239</dc:creator>
+    <dc:identifier id="uid">typography-239-new</dc:identifier>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="css" href="s.css" media-type="text/css"/>
+    <item id="f0" href="c0.xhtml" media-type="application/xhtml+xml"/>
+    <item id="f1" href="c1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="f2" href="c2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="f3" href="c3.xhtml" media-type="application/xhtml+xml"/>
+    <item id="f4" href="c4.xhtml" media-type="application/xhtml+xml"/>
+    <item id="f5" href="c5.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="f0"/>
+    <itemref idref="f1"/>
+    <itemref idref="f2"/>
+    <itemref idref="f3"/>
+    <itemref idref="f4"/>
+    <itemref idref="f5"/>
+  </spine>
+</package>

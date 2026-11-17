@@ -1,0 +1,15 @@
+<?xml version="1.0"  encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+<dc:identifier id="id">urn:uuid:00000000-0000-4000-8000-000000001067</dc:identifier>
+<dc:title>No Contents</dc:title><dc:creator opf:role="aut">Fixture Author</dc:creator>
+<dc:language>en</dc:language>
+</metadata>
+<manifest>
+<item id="css" href="OEBPS/style.css" media-type="text/css"/>
+<item id="one" href="OEBPS/one.xhtml" media-type="application/xhtml+xml"/>
+<item id="two" href="OEBPS/two.xhtml" media-type="application/xhtml+xml"/>
+</manifest>
+<spine><itemref idref="one"/><itemref idref="two"/></spine>
+
+</package>

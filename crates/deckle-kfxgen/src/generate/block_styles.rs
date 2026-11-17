@@ -8,9 +8,10 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
 use super::boxes::BoxStyle;
-use super::chunks::{Chunk, InCell, Marker, Node};
+use super::chunks::{Chunk, InCell, Marker, Mode, Node};
+use super::images;
 use super::inline::run_font_size;
-use super::styles::{Rotation, Style157, StyleArgs, Styles};
+use super::styles::{LINE_EM, Rotation, Style157, StyleArgs, Styles};
 use super::table_styles::{self, CellStyle};
 use super::typography::Typography;
 use super::writing::{Bidi, bidi_diff};
@@ -233,6 +234,11 @@ impl Sizes {
         }
     }
 
+    /// The book's main text size, in CSS px.
+    pub(crate) fn main_px(&self) -> Option<f64> {
+        self.main_px
+    }
+
     /// `main_px or 16.0` (:7666).
     pub(crate) fn main_px_or_16(&self) -> f64 {
         self.main_px.filter(|&p| p != 0.0).unwrap_or(16.0)
@@ -430,10 +436,10 @@ pub(crate) fn keep_space(
 pub(crate) struct Containers {
     pub sizes: Vec<Option<f64>>,
     bidis: Vec<Option<Bidi>>,
-    /// The chapter is vertical-rl text, and whether each open container is a horizontal
-    /// block in it (0bc705d :7514).
+    /// The chapter is vertical-rl text, and the mode each open container opens in it
+    /// (a8b9683).
     vertical: bool,
-    horizontals: Vec<bool>,
+    modes: Vec<Option<Mode>>,
 }
 
 impl Containers {
@@ -466,15 +472,15 @@ impl Containers {
                 self.sizes.pop();
                 self.bidis.pop();
                 styles.fills.pop();
-                self.horizontals.pop();
-                styles.rotation = Rotation::of(self.vertical, &self.horizontals);
+                self.modes.pop();
+                styles.rotation = Rotation::of(self.vertical, &self.modes);
                 return Ok((None, None));
             }
         };
         // In a horizontal block, and on it, margins stay where the book puts them (0bc705d
         // :7546).
-        self.horizontals.push(node.opens_horizontal());
-        styles.rotation = Rotation::of(self.vertical, &self.horizontals);
+        self.modes.push(node.opens_mode());
+        styles.rotation = Rotation::of(self.vertical, &self.modes);
         // A box's or cell's fill (#383, :7422).
         styles.fills.push(match node {
             Node::Box(b) => b.spec.background,
@@ -495,28 +501,63 @@ impl Containers {
             matches!(node, Node::Cell(_)).then(|| sizes.block_font_size(chapter_fs, chunk));
         self.sizes.push(cell_size);
         Ok(match node {
-            // In a horizontal block of vertical text: no style, or only the block's alignment
-            // (#247, 0bc705d :7640).
+            // In vertical text or a horizontal block of it: no style, or only the block's
+            // alignment and its paragraph's indent (#247, a1ba662).
             Node::Link(open) if open.plain => {
-                let name = open
-                    .align
-                    .as_deref()
-                    .and_then(table_styles::align_symbol)
-                    .map(|align| styles.allocate(g, "_pbox", StyleArgs::PictureBox(align)));
+                let align = open.align.as_deref().and_then(table_styles::align_symbol);
+                let name = (align.is_some() || open.indent.is_some()).then(|| {
+                    let args = StyleArgs::PictureBox(align, open.indent.clone());
+                    styles.allocate(g, "_pbox", args)
+                });
                 (None, name)
             }
-            // A linked picture's container centres it, as `$580` does a picture alone (:7505).
-            Node::Link(_) => {
-                let centred = Style157 {
+            // A linked picture's container: its block's alignment, first-line indent and side
+            // margins, as Previewer writes it (#769, PBI B07, PBK K04, K05, K08, PBL;
+            // f605dd6); centred when they weren't read.
+            Node::Link(open) => {
+                let mut style = Style157 {
                     align: Some("center".to_owned()),
                     ..Style157::body(chapter_fs)
                 };
-                (None, Some(styles.allocate(g, "", centred)))
+                if let Some(place) = &open.place {
+                    style.align = place.align.clone();
+                    style.no_align = place.align.as_deref().is_none_or(str::is_empty);
+                    style.text_indent = place.indent.clone();
+                    // The line above it main writes, kept with an indent too: Previewer's
+                    // spacing here isn't matched (none in pg1260).
+                    style.space_above = Some(LINE_EM);
+                    let scale = images::place_scale(place.font_px, sizes.main_px());
+                    let sides = images::sides(
+                        &place.boxes,
+                        scale,
+                        (place.left.as_ref(), place.right.as_ref()),
+                        None,
+                        [None, None],
+                    );
+                    for (margin, pct) in [&mut style.margin_left, &mut style.margin_right]
+                        .into_iter()
+                        .zip(sides)
+                    {
+                        let pct = images::up(pct)?;
+                        if pct > 0.0 {
+                            *margin = Some((py::format_g(pct, 6), "$314".to_owned()));
+                        }
+                    }
+                }
+                (None, Some(styles.allocate(g, "", style)))
             }
             Node::Box(b) => {
                 let style = BoxStyle::of(b, sizes.rem(b.spec.font_px));
                 style.check()?;
+                // A vertical block's own margins are laid out in the horizontal block around
+                // it, unturned (PSB R06, a8b9683).
+                let inside = styles.rotation;
+                if b.spec.vertical {
+                    styles.rotation =
+                        Rotation::of(self.vertical, &self.modes[..self.modes.len() - 1]);
+                }
                 let name = styles.allocate_in(g, "_box", StyleArgs::Box(style), &bidi);
+                styles.rotation = inside;
                 (None, Some(name))
             }
             _ => table_styles::marker_styles(

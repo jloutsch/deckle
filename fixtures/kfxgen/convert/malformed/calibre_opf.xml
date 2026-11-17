@@ -1,0 +1,18 @@
+<?xml version="1.0"  encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+<dc:identifier id="id">urn:uuid:00000000-0000-4000-8000-000000000919</dc:identifier>
+<dc:title>Malformed</dc:title><dc:creator opf:role="aut">Fixture Author</dc:creator>
+<dc:language>en</dc:language>
+</metadata>
+<manifest>
+<item id="ncx" href="OEBPS/toc.ncx" media-type="application/x-dtbncx+xml"/>
+<item id="css" href="OEBPS/style.css" media-type="text/css"/>
+<item id="unclosed" href="OEBPS/unclosed.xhtml" media-type="application/xhtml+xml"/>
+<item id="entities" href="OEBPS/entities.xhtml" media-type="application/xhtml+xml"/>
+<item id="html4" href="OEBPS/html4.xhtml" media-type="application/xhtml+xml"/>
+<item id="cp1252" href="OEBPS/cp1252.xhtml" media-type="application/xhtml+xml"/>
+</manifest>
+<spine toc="ncx"><itemref idref="unclosed"/><itemref idref="entities"/><itemref idref="html4"/><itemref idref="cp1252"/></spine>
+
+</package>

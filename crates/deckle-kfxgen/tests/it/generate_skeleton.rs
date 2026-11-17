@@ -3,9 +3,11 @@
 use std::path::{Path, PathBuf};
 
 use deckle_kfx::container::read_kfx;
-use deckle_kfxgen::generate::generate;
+use deckle_kfxgen::generate::{GenerateError, generate};
 use deckle_kfxgen::load::load_model;
+use deckle_kfxgen::pyvalue::PyValue;
 
+use crate::generate_inline::{entry, item};
 use crate::oracle::assert_fragments_match;
 
 fn model_dir(name: &str) -> PathBuf {
@@ -89,4 +91,89 @@ fn publisher_structure_matches_kfxgen() {
 #[test]
 fn vertical_page_matches_kfxgen() {
     matches_kfxgen("vertical_page");
+}
+
+#[test]
+fn chapter_starts_773_matches_kfxgen() {
+    matches_kfxgen("chapter_starts_773");
+}
+
+#[test]
+fn chapter_starts_777_matches_kfxgen() {
+    matches_kfxgen("chapter_starts_777");
+}
+
+/// `model` with `"surprise": 1` added to the dict `at` picks out, generated: a key the port
+/// neither reads nor knowingly ignores is refused by name, so a converter's wrong key is not
+/// dropped without a word.
+fn refuses_surprise(name: &str, at: impl FnOnce(&mut PyValue) -> &mut PyValue) {
+    let mut model = load_model(&model_dir(name)).unwrap();
+    let PyValue::Dict(pairs) = at(&mut model.args) else {
+        panic!("not a dict")
+    };
+    pairs.push((PyValue::Str("surprise".into()), PyValue::Int(1)));
+    match generate(&model) {
+        Err(GenerateError::Model(m)) => assert!(m.contains("surprise"), "{m}"),
+        other => panic!("{name}: {:?}", other.map(|_| ())),
+    }
+}
+
+#[test]
+fn an_unknown_block_key_is_refused_by_name() {
+    refuses_surprise("minimal", |args| {
+        item(entry(item(entry(args, "chapters"), 0), "blocks"), 1)
+    });
+}
+
+#[test]
+fn an_unknown_chapter_key_is_refused_by_name() {
+    refuses_surprise("minimal", |args| item(entry(args, "chapters"), 0));
+}
+
+/// A listing page of no blocks that the title-page step did not rebuild keeps its
+/// `_listing_keys` into the model; kfxgen's generator never reads the key, so the book comes
+/// out as without it.
+#[test]
+fn a_chapters_listing_keys_are_ignored() {
+    let mut model = load_model(&model_dir("minimal")).unwrap();
+    let plain = generate(&model).unwrap().bytes;
+    let PyValue::Dict(pairs) = item(entry(&mut model.args, "chapters"), 0) else {
+        panic!("not a dict")
+    };
+    let keys = PyValue::List(vec![PyValue::Str("c1.xhtml#toc".into())]);
+    pairs.push((PyValue::Str("_listing_keys".into()), keys));
+    assert!(generate(&model).unwrap().bytes == plain);
+}
+
+#[test]
+fn an_unknown_table_cell_key_is_refused_by_name() {
+    refuses_surprise("table_parts", |args| {
+        let table = entry(
+            item(entry(item(entry(args, "chapters"), 1), "blocks"), 1),
+            "table",
+        );
+        item(entry(item(entry(table, "rows"), 0), "cells"), 0)
+    });
+}
+
+#[test]
+fn an_unknown_cell_paragraph_key_is_refused_by_name() {
+    refuses_surprise("table_paragraph_cells", |args| {
+        let table = entry(
+            item(entry(item(entry(args, "chapters"), 0), "blocks"), 1),
+            "table",
+        );
+        let cell = item(entry(item(entry(table, "rows"), 0), "cells"), 0);
+        item(entry(cell, "paragraphs"), 0)
+    });
+}
+
+#[test]
+fn an_unknown_box_key_is_refused_by_name() {
+    refuses_surprise("boxes", |args| {
+        entry(
+            item(entry(item(entry(args, "chapters"), 0), "blocks"), 2),
+            "box",
+        )
+    });
 }

@@ -11,7 +11,7 @@ use deckle_kfx::epub_zip::{EpubReader, InspectError, percent_decode};
 use deckle_limits::roxmltree::{Document, Node, ParsingOptions};
 use deckle_limits::{MAX_DOM_NODES, MAX_TAG_ATTRIBUTES, XmlError};
 
-use super::{Error, GuideRef, Item, Metadata, Package, SpineRef, oeb};
+use super::{Error, GuideRef, Item, Metadata, Package, oeb};
 
 pub(crate) const OPF2_NS: &str = "http://www.idpf.org/2007/opf";
 /// Dublin Core 1.1. Calibre also reads OPF 1 packages and DC 1.0 and 0.9 elements as these
@@ -210,6 +210,9 @@ pub(crate) struct Opf {
     pub prefixes: BTreeMap<String, String>,
     pub raw: Metadata,
     pub calibre: CalibreMeta,
+    /// Whether an element named `item` anywhere in it has a `media-overlay` (kfxgen's
+    /// `_has_media_overlays`: the book has read-aloud narration).
+    pub media_overlay: bool,
 }
 
 fn opf_ns(ns: Option<&str>) -> bool {
@@ -386,6 +389,11 @@ impl Opf {
             prefixes,
             raw,
             calibre,
+            media_overlay: doc.descendants().any(|n| {
+                n.is_element()
+                    && n.tag_name().name() == "item"
+                    && n.attribute("media-overlay").is_some()
+            }),
         })
     }
 }
@@ -709,12 +717,12 @@ fn opf2_metadata(meta: &[Node]) -> CalibreMeta {
         })
         .filter(|l| l != "und")
         .collect();
-    // `OPF.pubdate`: the earliest date that parses; an empty one is the undefined date.
+    // `OPF.pubdate`: the earliest date that parses; an empty one is the undefined date, which
+    // Calibre keeps when it is the earliest (`package_more`'s `<dc:date/>`).
     let pubdate = named("date")
         .into_iter()
         .filter_map(|n| parse_date(string_value(n).trim(), false))
-        .min()
-        .filter(|d| !d.is_undefined());
+        .min();
     CalibreMeta {
         title,
         authors,
@@ -856,7 +864,7 @@ pub(crate) fn parse_date(raw: &str, only_date_fix: bool) -> Option<Date> {
 /// `resources/localization/iso639.calibre_msgpack`, built from the iso-codes package): all
 /// 184 two-letter codes. Sorted for binary search.
 #[rustfmt::skip]
-const ISO639_2TO3: [(&str, &str); 184] = [
+pub(crate) const ISO639_2TO3: [(&str, &str); 184] = [
     ("aa", "aar"), ("ab", "abk"), ("ae", "ave"), ("af", "afr"), ("ak", "aka"), ("am", "amh"),
     ("an", "arg"), ("ar", "ara"), ("as", "asm"), ("av", "ava"), ("ay", "aym"), ("az", "aze"),
     ("ba", "bak"), ("be", "bel"), ("bg", "bul"), ("bi", "bis"), ("bm", "bam"), ("bn", "ben"),
@@ -1087,22 +1095,6 @@ pub fn read_package(zip: &mut EpubReader) -> Result<Package, Error> {
             })
         })
         .collect();
-    // The first item of each id.
-    let mut by_id: BTreeMap<&str, &Item> = BTreeMap::new();
-    for i in &manifest {
-        by_id.entry(i.id.as_str()).or_insert(i);
-    }
-    let spine = opf
-        .spine
-        .iter()
-        .filter_map(|r| {
-            let item = by_id.get(r.idref.as_deref()?)?;
-            Some(SpineRef {
-                href: item.href.clone(),
-                linear: is_linear(r.linear.as_deref()),
-            })
-        })
-        .collect();
     let guide = opf
         .guide
         .iter()
@@ -1134,7 +1126,6 @@ pub fn read_package(zip: &mut EpubReader) -> Result<Package, Error> {
         nav_text,
         ncx_text,
         manifest,
-        spine,
         guide,
         metadata: opf.raw.clone(),
         page_progression_direction: opf.ppds.first().cloned(),

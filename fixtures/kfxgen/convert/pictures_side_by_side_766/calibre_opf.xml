@@ -1,0 +1,36 @@
+<?xml version="1.0"  encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="u">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="u">urn:kfxgen:s766k</dc:identifier>
+    <dc:title>S766 kfxgen - Pictures side by side</dc:title>
+    <dc:creator>kfxgen tests</dc:creator>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="x0" href="c1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="x1" href="c2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="i0" href="a1.jpg" media-type="image/jpeg"/>
+    <item id="i1" href="a1b.jpg" media-type="image/jpeg"/>
+    <item id="i2" href="a2.jpg" media-type="image/jpeg"/>
+    <item id="i3" href="a2b.jpg" media-type="image/jpeg"/>
+    <item id="i4" href="a2c.jpg" media-type="image/jpeg"/>
+    <item id="i5" href="a3.jpg" media-type="image/jpeg"/>
+    <item id="i6" href="a3b.jpg" media-type="image/jpeg"/>
+    <item id="i7" href="a4.jpg" media-type="image/jpeg"/>
+    <item id="i8" href="a4b.jpg" media-type="image/jpeg"/>
+    <item id="i9" href="a5.jpg" media-type="image/jpeg"/>
+    <item id="i10" href="a5b.jpg" media-type="image/jpeg"/>
+    <item id="i11" href="a6.jpg" media-type="image/jpeg"/>
+    <item id="i12" href="a6b.jpg" media-type="image/jpeg"/>
+    <item id="i13" href="a8.jpg" media-type="image/jpeg"/>
+    <item id="i14" href="a8b.jpg" media-type="image/jpeg"/>
+    <item id="i15" href="a9.jpg" media-type="image/jpeg"/>
+    <item id="i16" href="a9b.jpg" media-type="image/jpeg"/>
+    <item id="i17" href="a9c.jpg" media-type="image/jpeg"/>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="x0"/>
+    <itemref idref="x1"/>
+  </spine>
+</package>

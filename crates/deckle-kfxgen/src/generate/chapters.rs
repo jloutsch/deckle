@@ -2,9 +2,10 @@
 //! A chapter of the model's `chapters` argument, read into what `_build_chapter_content` works
 //! from. What kfxgen does with a chapter or block key not ported yet is
 //! [`GenerateError::Unsupported`], so a book needing it fails rather than coming out different.
+//! A key the port neither reads nor knowingly ignores is a [`GenerateError::Model`] naming it.
 
-use super::block_styles::{BlockStyle, number, read_block_style};
-use super::boxes::{BoxBlock, RuleStyle, read_box, read_rule};
+use super::block_styles::{BlockStyle, Length, number, read_block_style, read_length};
+use super::boxes::{BoxBlock, ListItem, RuleStyle, read_box, read_rule};
 use super::images;
 use super::inline::{Anchors, Span, TocLink, read_spans};
 use super::nav::{SubEntry, read_sub_entries};
@@ -28,6 +29,104 @@ const BLOCK_UNPORTED: [(&str, &str); 7] = [
     ("clear", "clearing floats"),
     ("label_texts", "equations"),
 ];
+
+/// Keys kfxgen's converter writes that no generator code reads, kept only so the model
+/// matches kfxgen's (phase 3 research, book §3 and blocks §2), at any level. `font_px` is a
+/// box block's own; its `box`'s is read.
+pub(crate) const IGNORED_KEYS: [&str; 14] = [
+    "_spine_file",
+    "_from_spine",
+    "_had_nav_listing",
+    "_nav_listing_at",
+    "_listing_keys",
+    "anchor_ids",
+    "row",
+    "front_matter",
+    "break_before",
+    "own_bottom_em",
+    "bottom_in_em",
+    "outer_em_ratio",
+    "padding_below",
+    "font_px",
+];
+
+/// Every chapter key `read_chapter` reads, `CHAPTER_UNPORTED`'s included.
+pub(crate) const CHAPTER_KEYS: [&str; 15] = [
+    "title",
+    "text",
+    "blocks",
+    "toc_level",
+    "font_size",
+    "heading_level",
+    "anchor_keys",
+    "anchor_offsets",
+    "toc_links",
+    "sub_entries",
+    "preserved_images",
+    "_omit_title_heading",
+    "_omit_from_toc",
+    "page_bidi",
+    "_is_cover",
+];
+
+/// Every block key `read_block`, `read_chapter`, `read_box`, `read_rule` and
+/// `read_table_block` read, `BLOCK_UNPORTED`'s included.
+pub(crate) const BLOCK_KEYS: [&str; 30] = [
+    "type",
+    "text",
+    "spans",
+    "block_style",
+    "heading",
+    "heading_level",
+    "in_list",
+    "margin_above",
+    "margin_below",
+    "space_above",
+    "tight",
+    "picture_align",
+    "picture_block",
+    "pictures_apart",
+    "picture_boxes",
+    "list_item",
+    "anchor_keys",
+    "anchor_offsets",
+    "writing_mode",
+    "box",
+    "blocks",
+    "rule",
+    "table",
+    "trailing_space",
+    "preformatted",
+    "float_wrapped",
+    "in_cell_paragraph",
+    "trailing",
+    "clear",
+    "label_texts",
+];
+
+/// `d`'s first key outside `read` and [`IGNORED_KEYS`] is a [`GenerateError::Model`]:
+/// "a model key the port does not know: " and the key's place in the model.
+pub(crate) fn known_keys(d: &PyValue, read: &[&str], at: &str) -> Result<(), GenerateError> {
+    let PyValue::Dict(pairs) = d else {
+        return Ok(());
+    };
+    for (k, _) in pairs {
+        match k.as_str() {
+            Some(k) if read.contains(&k) || IGNORED_KEYS.contains(&k) => {}
+            Some(k) => {
+                return Err(model_err(format!(
+                    "a model key the port does not know: {at}.{k}"
+                )));
+            }
+            None => {
+                return Err(model_err(format!(
+                    "a model key the port does not know: {at}: {k:?}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
 
 pub(crate) struct Chapter {
     pub title: String,
@@ -113,6 +212,16 @@ pub(crate) struct Block {
     /// The text-align a picture walked as a block of its own inherits, having no
     /// `block_style` (#757, 0bc705d :5890).
     pub picture_align: Option<String>,
+    /// A picture set `display: block`: a block picture in a vertical book's horizontal block
+    /// (PVA H10, a1ba662).
+    pub picture_block: bool,
+    /// Pictures set `display: block`: kept apart, an entry each (#762, bd68f30).
+    pub pictures_apart: bool,
+    /// The (left, right) margins of the boxes a picture's block is in, outermost first
+    /// (#769, f605dd6).
+    pub picture_boxes: Vec<[Option<Length>; 2]>,
+    /// A list item of one paragraph (#768, 7511ea5).
+    pub list_item: Option<ListItem>,
     /// Its file's writing mode (#247), on a chapter's own blocks: what
     /// `_chapter_writing_mode` (:942) looks for.
     pub writing_mode: Option<String>,
@@ -137,6 +246,10 @@ impl Block {
             tight: false,
             trailing: String::new(),
             picture_align: None,
+            picture_block: false,
+            pictures_apart: false,
+            picture_boxes: Vec::new(),
+            list_item: None,
             writing_mode: None,
         }
     }
@@ -159,6 +272,7 @@ pub(crate) fn read_chapters(chapters: &PyValue) -> Result<Vec<Chapter>, Generate
 }
 
 fn read_chapter(ch: &PyValue, at: &str) -> Result<Chapter, GenerateError> {
+    known_keys(ch, &CHAPTER_KEYS, at)?;
     for (key, feature) in CHAPTER_UNPORTED {
         if truthy(ch.get(key)) {
             return Err(Unsupported(feature));
@@ -252,6 +366,30 @@ pub(crate) fn first_writing_mode(blocks: &[Block]) -> Option<String> {
     blocks.iter().find_map(|b| b.writing_mode.clone())
 }
 
+/// A block's `picture_boxes` (f605dd6): `((left, right), ...)`, each a length or None.
+fn read_picture_boxes(
+    v: Option<&PyValue>,
+    at: &str,
+) -> Result<Vec<[Option<Length>; 2]>, GenerateError> {
+    let Some(boxes) = v.filter(|v| v.is_truthy()) else {
+        return Ok(Vec::new());
+    };
+    let err = || model_err(format!("{at}.picture_boxes: (left, right) lengths or None"));
+    let side = |v: &PyValue| match v {
+        PyValue::None => Ok(None),
+        v => read_length(v).map(Some).ok_or_else(err),
+    };
+    boxes
+        .as_list()
+        .ok_or_else(err)?
+        .iter()
+        .map(|b| match b.as_list() {
+            Some([left, right]) => Ok([side(left)?, side(right)?]),
+            _ => Err(err()),
+        })
+        .collect()
+}
+
 /// A number or None, as `block.get(key) or 0.0` reads it.
 fn ems(b: &PyValue, key: &str, at: &str) -> Result<Option<f64>, GenerateError> {
     match b.get(key) {
@@ -268,6 +406,7 @@ pub(crate) fn read_block(
     at: &str,
     boxes_around: usize,
 ) -> Result<Block, GenerateError> {
+    known_keys(b, &BLOCK_KEYS, at)?;
     let kind = match b.get("type") {
         None | Some(PyValue::None) => None,
         Some(PyValue::Str(t)) if t == "text" => None,
@@ -347,6 +486,10 @@ pub(crate) fn read_block(
             Some(PyValue::Str(a)) => Some(a.clone()),
             Some(_) => return Err(model_err(format!("{at}.picture_align: a string"))),
         },
+        picture_block: truthy(b.get("picture_block")),
+        pictures_apart: truthy(b.get("pictures_apart")),
+        picture_boxes: read_picture_boxes(b.get("picture_boxes"), at)?,
+        list_item: ListItem::read(b.get("list_item"), &format!("{at}.list_item"))?,
         ..Block::plain(text)
     })
 }

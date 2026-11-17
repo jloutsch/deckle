@@ -1,0 +1,22 @@
+<?xml version="1.0"  encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+<dc:identifier id="id">urn:uuid:00000000-0000-4000-8000-000000001282</dc:identifier>
+<dc:title>Pictures More</dc:title><dc:creator opf:role="aut">Fixture Author</dc:creator>
+<dc:language>en</dc:language>
+</metadata>
+<manifest>
+<item id="ncx" href="OEBPS/toc.ncx" media-type="application/x-dtbncx+xml"/>
+<item id="i0" href="OEBPS/style.css" media-type="text/css"/>
+<item id="i1" href="OEBPS/pictures.xhtml" media-type="application/xhtml+xml"/>
+<item id="i2" href="OEBPS/wrapper.xhtml" media-type="application/xhtml+xml"/>
+<item id="i3" href="OEBPS/background.xhtml" media-type="application/xhtml+xml"/>
+<item id="i4" href="OEBPS/small.gif" media-type="image/gif"/>
+<item id="i5" href="OEBPS/cmyk.jpg" media-type="image/jpeg"/>
+<item id="i6" href="OEBPS/wide.png" media-type="image/png"/>
+<item id="i7" href="OEBPS/page.png" media-type="image/png"/>
+<item id="i8" href="OEBPS/back.png" media-type="image/png"/>
+</manifest>
+<spine toc="ncx"><itemref idref="i1"/><itemref idref="i2"/><itemref idref="i3"/></spine>
+
+</package>

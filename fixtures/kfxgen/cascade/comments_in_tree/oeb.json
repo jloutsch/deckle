@@ -1,0 +1,54 @@
+{
+ "spine": [
+  {
+   "href": "OEBPS/c1.xhtml",
+   "linear": true
+  }
+ ],
+ "page_progression_direction": null,
+ "manifest": [
+  {
+   "id": "c1",
+   "href": "OEBPS/c1.xhtml",
+   "media_type": "application/xhtml+xml"
+  },
+  {
+   "id": "page_css",
+   "href": "page_styles.css",
+   "media_type": "text/css"
+  },
+  {
+   "id": "css",
+   "href": "stylesheet.css",
+   "media_type": "text/css"
+  }
+ ],
+ "toc": [
+  {
+   "title": "Comments",
+   "href": "OEBPS/c1.xhtml",
+   "children": []
+  }
+ ],
+ "auto_generated_toc": false,
+ "guide": [],
+ "metadata": {
+  "title": [
+   "Comments In Tree"
+  ],
+  "creator": [
+   "Fixture Author"
+  ],
+  "description": [],
+  "language": [
+   "eng"
+  ],
+  "publisher": [],
+  "date": [],
+  "cover": []
+ },
+ "raw": {
+  "opfname": "OEBPS/content.opf",
+  "sha256": "bced5b2f3693c68a9ce886470f1e0507f9df6fc505fff4a91133d51ba770c33c"
+ }
+}

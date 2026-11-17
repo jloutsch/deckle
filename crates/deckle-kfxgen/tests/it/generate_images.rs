@@ -28,6 +28,21 @@ fn unused_manifest_image_matches_kfxgen() {
 }
 
 #[test]
+fn pictures_side_by_side_766_matches_kfxgen() {
+    matches_kfxgen("pictures_side_by_side_766");
+}
+
+#[test]
+fn block_picture_769_matches_kfxgen() {
+    matches_kfxgen("block_picture_769");
+}
+
+#[test]
+fn block_picture_770_matches_kfxgen() {
+    matches_kfxgen("block_picture_770");
+}
+
+#[test]
 fn contents_illustration_matches_kfxgen() {
     matches_kfxgen("contents_illustration");
 }
@@ -111,5 +126,40 @@ fn a_contents_line_at_an_i64_edge_does_not_panic() {
                 "{key}"
             );
         }
+    }
+}
+
+/// Replaces `from` with `to` in every string in `v`; the count replaced.
+fn replace_in_strings(v: &mut PyValue, from: &str, to: &str) -> usize {
+    match v {
+        PyValue::Str(s) if s.contains(from) => {
+            *s = s.replace(from, to);
+            1
+        }
+        PyValue::List(items) | PyValue::Tuple(items) | PyValue::Set(items) => items
+            .iter_mut()
+            .map(|x| replace_in_strings(x, from, to))
+            .sum(),
+        PyValue::Dict(pairs) => pairs
+            .iter_mut()
+            .map(|(_, x)| replace_in_strings(x, from, to))
+            .sum(),
+        PyValue::Obj { state, .. } => replace_in_strings(state, from, to),
+        _ => 0,
+    }
+}
+
+/// A placed block picture with a left margin of -(400 digits)px: its share of the page is
+/// -inf, which kfxgen's `_up` can't round (it raises). A model error, not a panic.
+#[test]
+fn a_picture_margin_past_a_float_is_a_model_error() {
+    let mut model = load_model(&deckle_kfx::fixtures::kfxgen("models/block_picture_769")).unwrap();
+    let margin = format!("ml=-{}px", "9".repeat(400));
+    let to = format!("Picture\u{2}C1\u{1}\u{1}\u{1}{margin}\u{0}");
+    assert!(replace_in_strings(&mut model.args, "Picture\u{2}C1\u{0}", &to) > 0);
+    match generate(&model) {
+        Err(GenerateError::Model(m)) => assert!(m.contains("cannot round"), "{m}"),
+        Err(e) => panic!("{e}"),
+        Ok(_) => panic!("generated"),
     }
 }

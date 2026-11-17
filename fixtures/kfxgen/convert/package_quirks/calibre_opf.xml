@@ -1,0 +1,21 @@
+<?xml version="1.0"  encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+<dc:identifier id="id">urn:uuid:00000000-0000-4000-8000-000000001355</dc:identifier>
+<dc:title>Package Quirks</dc:title><dc:creator opf:role="aut">Fixture Author</dc:creator>
+<dc:language>en-US</dc:language><dc:date>2019</dc:date><meta name="cover" content="cover-img"/>
+</metadata>
+<manifest>
+<item id="ncx" href="OEBPS/toc.ncx" media-type="application/x-dtbncx+xml"/>
+<item id="cover-img" href="OEBPS/cover.png" media-type="image/png"/>
+<item id="cover" href="OEBPS/cover.xhtml" media-type="application/xhtml+xml"/>
+<item id="css" href="OEBPS/style.css" media-type="text/css"/>
+<item id="c1" href="OEBPS/c1.xhtml" media-type="application/xhtml+xml"/>
+<item id="c2" href="OEBPS/c2.xhtml" media-type="application/xhtml+xml"/>
+<item id="notes" href="OEBPS/notes.xhtml" media-type="application/xhtml+xml"/>
+<item id="extra" href="OEBPS/extra.xhtml" media-type="application/xhtml+xml"/>
+</manifest>
+<spine toc="ncx"><itemref idref="c1"/><itemref idref="c2"/><itemref idref="notes" linear="no"/></spine>
+<guide><reference type="cover" title="Cover" href="OEBPS/cover.png"/><reference type="text" title="Start" href="OEBPS/c1.xhtml"/><reference type="titlepage" title="Cover page" href="OEBPS/cover.xhtml"/>
+</guide>
+</package>

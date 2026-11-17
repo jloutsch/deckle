@@ -14,13 +14,34 @@ Writes, into OUT_DIR (fixtures/kfxgen/sources):
   and depth below <body>) over the whole book: in all.xhtml 30 <p> straight under <body> share
   `margin-left: 3em` (removed), in half.xhtml 30 <p> one level down, half of them with it
   (kept, under the 95% Calibre needs). The two sets get different classes (see
-  fake_margins()).
+  fake_margins()). carry.xhtml, last, with a stylesheet of its own, holds what kfxgen's
+  margins and spacing read: side margins carried from containers onto paragraphs (both sides,
+  one side, em, pt, px and %, a column past half the page, a <caption> that carries none,
+  loose words), % margins measured against a container's width, side padding and border,
+  spacer paragraphs of three line heights, after a padded block and after an em margin, a
+  negative margin and a padding-top. No <p> sits straight under its <body> and each <div>
+  holds fewer than 5 paragraphs, so RemoveFakeMargins counts none of them and all.xhtml's and
+  half.xhtml's levels stay as they were.
 - malformed.epub: files Calibre does not read as plain XHTML (parse_utils.py parse_html):
   unclosed.xhtml has unclosed <p>, <br> and <font> tags and an unquoted attribute (read with
   the HTML 5 parser); entities.xhtml defines entities in its DOCTYPE, one of them holding a
   character reference, and uses an HTML entity XML does not know; html4.xhtml is HTML 4 with
   upper-case tags and attributes and an HTML 4.0 DOCTYPE (names lower-cased); cp1252.xhtml is
   windows-1252, declared in its XML declaration, with curly quotes, a euro sign and an e-acute.
+- comments_in_tree.epub: comments where Calibre's steps read lxml's children, which count
+  them: an empty <b> holding only a comment beside one holding nothing (parse_html's
+  remove_elem), a <br> holding only a comment (made a <div> when it has children), a comment
+  between the head's children (its whitespace reset), a rule inside a comment in a <style>
+  (the Stylizer reads a child's text), a left-floated drop cap holding a comment beside one
+  without (flatcss is_drop_cap counts children), and a comment before the first child of a
+  <div> whose children :first-child and :nth-child(2) pick (css_selectors counts it), and the
+  same before an only element child (:only-child) and before a :first-of-type; and comments
+  whose tails hold text, before and after an element.
+- refused_selector.epub: two vertical-rl files with the same margin, padding and a:link rules,
+  refused.xhtml's stylesheet also holding a margin rule and a colour rule whose selectors
+  (::marker) Calibre's Select refuses, plain.xhtml's not: whether kfxgen's data-kfxgen-v-*
+  marks and link colours survive a refused selector. Both hold an align=" Center " paragraph
+  of class "TOC Dedication".
 
 tools/ref/kfxgen_models.sh --cascade runs it. Fixed zip dates: the same script makes the same
 bytes. The dumps are the reference; nothing here says what Calibre does with them.
@@ -212,6 +233,7 @@ def fake_margins(out):
     files = {
         "all": page("All", all_p),
         "half": page("Half", f"<div>\n{half_p}\n</div>"),
+        "carry": page("Carry", CARRY_BODY, css="carry.css"),
     }
     manifest = "\n".join(
         [
@@ -222,6 +244,7 @@ def fake_margins(out):
             f'<item id="{fid}" href="{fid}.xhtml" media-type="application/xhtml+xml"/>'
             for fid in files
         ]
+        + ['<item id="carry-css" href="carry.css" media-type="text/css"/>']
     )
     spine = "".join(f'<itemref idref="{fid}"/>' for fid in files)
     ncx = (
@@ -245,8 +268,65 @@ def fake_margins(out):
             ("toc.ncx", ncx),
             ("style.css", css),
         ]
-        + [(f"{fid}.xhtml", text) for fid, text in files.items()],
+        + [(f"{fid}.xhtml", text) for fid, text in files.items()]
+        + [("carry.css", CARRY_CSS)],
     )
+
+
+#: fake_margins' carry.xhtml (see the docstring).
+CARRY_CSS = """\
+.lr { margin-left: 2em; margin-right: 5% }
+.own { margin-left: 1em }
+.ind { text-indent: 2em }
+.lem { margin-left: 1.5em }
+.rem { margin-right: 2em }
+.lpt { margin-left: 12pt }
+.rpt { margin-right: 18pt }
+.lpx { margin-left: 20px }
+.wide { margin-left: 30% }
+.wider { margin-left: 25% }
+.capped { margin-left: 2.5em }
+.cap { margin-left: 1em; margin-right: 1em }
+.w60 { width: 60% }
+.w300 { width: 300px }
+.sides { padding: 0 5% 0 2em }
+.bd { border-top: 1px solid black; border-left: 2px solid black; padding-left: 1em }
+.pct { margin: 5% 0 }
+.padb { padding-bottom: 1em; margin-bottom: 2em; font-size: 1.25em }
+.big { font-size: 1.5em; margin-bottom: 1.5em }
+.lhn { line-height: normal }
+.lh2 { line-height: 2 }
+.neg { margin-top: -0.5em }
+.padt { padding-top: 1em }
+.pxb { margin-bottom: 30px }
+"""
+CARRY_BODY = """\
+<div class="lr">Loose words in a margined div.<p>A plain paragraph.</p>\
+<p class="own">A paragraph with a margin of its own.</p>\
+<p class="ind">A paragraph with an indent only.</p></div>
+<div class="lem"><p>Left only, in em.</p></div>
+<div class="rem"><p>Right only, in em.</p></div>
+<div class="lpt"><p>Left only, in pt.</p></div>
+<div class="rpt"><p>Right only, in pt.</p></div>
+<div class="lpx"><p>Left only, in px.</p></div>
+<div class="wide"><div class="wider"><p>A narrow column keeps its own margins.</p></div></div>
+<div class="capped"><caption class="cap"><p>In a caption.</p></caption></div>
+<div class="w60"><p>Sixty percent wide.</p><p class="pct">Five percent above and below.</p>\
+<p>After it.</p></div>
+<div class="w300"><p>Three hundred px wide.</p><p class="pct">Five percent above and below.</p>\
+</div>
+<div class="sides"><p>Padded at the sides.</p><p class="pct">Five percent above and below.</p>\
+</div>
+<dl><dd class="bd"><p class="pct">Under a top border.</p><p>After it.</p></dd></dl>
+<div class="padb"><p>Padded below, with a margin below in em.</p></div>
+<div><p> </p><p>After a spacer past the padding.</p></div>
+<div><p class="big">A margin below in em, half again its size.</p><p> </p>\
+<p>After the spacer.</p></div>
+<div><p>Before a spacer of a normal line.</p><p class="lhn"> </p><p>After it.</p>\
+<p class="lh2"> </p></div>
+<div><p class="neg">Pulled up by a negative margin.</p><p class="padt">Padded above.</p>\
+<p class="pxb">A margin below in px.</p><p>After it.</p></div>
+<div><p>The last words.</p><p> </p></div>"""
 
 
 def malformed(out):
@@ -310,6 +390,108 @@ def malformed(out):
     )
 
 
+def comments_in_tree(out):
+    css = (
+        "p { margin: 0 }\n"
+        "span.cap { float: left; font-size: 3em; line-height: 0.5 }\n"
+        "div.picks p:first-child { color: green }\n"
+        "div.picks p:nth-child(2) { color: blue }\n"
+        "div.alone p:only-child { color: purple }\n"
+        "div.types p:first-of-type { color: olive }\n"
+    )
+    body = (
+        '<p id="b1">Before <b><!--c--></b>after a bold holding only a comment.</p>\n'
+        '<p id="b2">Before <b></b>after a bold holding nothing.</p>\n'
+        '<p id="tails">a<!--c-->b<i>d</i><!--e-->f</p>\n'
+        '<p id="br1">A break holding a comment<br><!--c--></br>after it.</p>\n'
+        '<p class="ruled">Coloured by the rule inside the comment in the style element.</p>\n'
+        '<p id="cap1"><span class="cap">T<!--c--></span>he drop cap holds a comment.</p>\n'
+        '<p id="cap2"><span class="cap">T</span>he drop cap holds none.</p>\n'
+        '<div class="picks"><!-- c --><p>First paragraph.</p><p>Second paragraph.</p></div>\n'
+        '<div class="alone"><!-- c --><p>The only element child.</p></div>\n'
+        '<div class="types"><!-- c --><p>The first paragraph of its type.</p><p>The second.</p></div>'
+    )
+    text = (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        f'<html xmlns="{XHTML_NS}"><head><title>Comments</title>\n'
+        "<!-- a comment between the head's children -->\n"
+        '<link rel="stylesheet" type="text/css" href="style.css"/>\n'
+        '<style type="text/css"><!-- p.ruled { color: red } --></style>\n'
+        f"</head>\n<body>\n{body}\n</body>\n</html>\n"
+    )
+    manifest = "\n".join(
+        [
+            '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>',
+            '<item id="css" href="style.css" media-type="text/css"/>',
+            '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>',
+        ]
+    )
+    ncx = (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head/>'
+        "<docTitle><text>Comments</text></docTitle><navMap>"
+        '<navPoint id="n1" playOrder="1"><navLabel><text>Comments</text></navLabel>'
+        '<content src="c1.xhtml"/></navPoint></navMap></ncx>\n'
+    )
+    write_epub(
+        out / "comments_in_tree.epub",
+        [
+            (
+                "content.opf",
+                opf2(
+                    "Comments In Tree",
+                    "<dc:language>en</dc:language>",
+                    manifest,
+                    '<itemref idref="c1"/>',
+                ),
+            ),
+            ("toc.ncx", ncx),
+            ("style.css", css),
+            ("c1.xhtml", text),
+        ],
+    )
+
+
+def refused_selector(out):
+    """Two vertical-rl files, each with its own stylesheet, the same margin rules in both."""
+    margins = (
+        "html { writing-mode: vertical-rl; -webkit-writing-mode: vertical-rl }\n"
+        "p { margin-top: 1em }\n"
+        "p.pad { padding-left: 2em }\n"
+        "a:link { color: red }\n"
+    )
+    files = {
+        # A margin rule and a colour rule whose selectors Calibre's Select refuses.
+        "refused": margins + "p::marker { margin-left: 0 }\na::marker { color: blue }\n",
+        "plain": margins,
+    }
+    body = (
+        '<p>A paragraph with <a href="plain.xhtml">a link</a>.</p>\n'
+        '<p class="pad">A padded paragraph.</p>\n'
+        '<p align=" Center " class="TOC Dedication">Aligned, in classes of other case.</p>'
+    )
+    chapters = {name: page(name.title(), body, css=f"{name}.css") for name in files}
+    manifest = "\n".join(
+        [f'<item id="{n}-css" href="{n}.css" media-type="text/css"/>' for n in files]
+        + [
+            f'<item id="{n}" href="{n}.xhtml" media-type="application/xhtml+xml"/>'
+            for n in chapters
+        ]
+    )
+    spine = "".join(f'<itemref idref="{n}"/>' for n in chapters)
+    write_epub(
+        out / "refused_selector.epub",
+        [
+            (
+                "content.opf",
+                opf2("Refused Selector", "<dc:language>en</dc:language>", manifest, spine, toc=False),
+            ),
+        ]
+        + [(f"{n}.css", css) for n, css in files.items()]
+        + [(f"{n}.xhtml", text) for n, text in chapters.items()],
+    )
+
+
 def main(out):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
@@ -317,6 +499,8 @@ def main(out):
     no_toc(out)
     fake_margins(out)
     malformed(out)
+    comments_in_tree(out)
+    refused_selector(out)
 
 
 if __name__ == "__main__":

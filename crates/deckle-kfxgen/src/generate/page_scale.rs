@@ -5,8 +5,8 @@
 //! sets it from the `writing_mode` argument, as `convert` chooses it (DIVERGENCES.md).
 use std::cell::Cell;
 
-pub(crate) const HORIZONTAL_PT: f64 = 384.0;
-pub(crate) const VERTICAL_PT: f64 = 480.0;
+pub const HORIZONTAL_PT: f64 = 384.0;
+pub const VERTICAL_PT: f64 = 480.0;
 
 thread_local! {
     /// `_PAGE_PT`, a context variable in kfxgen.
@@ -29,12 +29,13 @@ pub(crate) fn em_percent() -> f64 {
 }
 
 /// `page_width`: percentages are measured against `pt` until the guard is dropped.
-pub(crate) fn page_width(pt: f64) -> PageWidth {
+pub fn page_width(pt: f64) -> PageWidth {
     PageWidth(PAGE_PT.with(|p| p.replace(pt)))
 }
 
 /// Puts back the width it replaced, as `page_width`'s `_PAGE_PT.reset(token)`.
-pub(crate) struct PageWidth(f64);
+#[must_use = "the width is put back when the guard is dropped"]
+pub struct PageWidth(f64);
 
 impl Drop for PageWidth {
     fn drop(&mut self) {

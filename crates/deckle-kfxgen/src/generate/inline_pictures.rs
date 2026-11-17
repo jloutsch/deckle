@@ -12,7 +12,7 @@ use regex::Captures;
 
 use super::chapters::Block;
 use super::chunks::{ASCII_SPACE, ChapterNow, Chunk, LinkOpen, Marker, Node, space_to_write};
-use super::images::{self, IMG_TOKEN, Images, Picture};
+use super::images::{self, IMG_TOKEN, Images, Picture, Place};
 use super::inline::{Anchors, Flag, Span};
 use super::inline_picture_entries::InlinePicture;
 use super::py;
@@ -50,10 +50,13 @@ fn slice_spans(spans: &[Span], a: i64, b: i64) -> Vec<Span> {
 /// picture in it has a float side. A preformatted paragraph is Unsupported when read.
 pub(crate) fn cut_after_picture_lines(block: &Block) -> Option<Vec<Block>> {
     let text = &block.text;
+    // Pictures alone on one line are one entry; on several, cut line by line, as Previewer
+    // writes them: a line of two or more a paragraph of its own, a line of one a picture
+    // (#762, QA's Q766 Z03, Z04; bd68f30).
     if IMG_TOKEN
         .captures_iter(text)
         .any(|m| group(&m, 4).is_some())
-        || !has_words(text)
+        || !has_words(text) && !text.contains('\n')
     {
         return None;
     }
@@ -197,12 +200,16 @@ fn inline_pictures(
     spans: &[Span],
     offsets: &BTreeMap<String, i64>,
     floats_in_words: bool,
+    apart: bool,
     images: &Images,
 ) -> Option<Inline> {
     let tokens: Vec<Captures> = IMG_TOKEN.captures_iter(para).collect();
+    // Pictures alone: entries. Two or more on one line are one paragraph, side by side, as
+    // Kindle Previewer 4.0.3 writes them (#762, probe PSS P01-P09; bd68f30); a line break
+    // between them still makes each an entry (P04), as does `display: block`.
     if tokens.is_empty()
         || tokens.iter().any(|m| group(m, 4).is_some()) && !floats_in_words
-        || !has_words(para)
+        || !has_words(para) && (tokens.len() < 2 || para.contains('\n') || apart)
     {
         return None;
     }
@@ -291,7 +298,7 @@ fn inline_pictures(
 /// token starts, in characters.
 enum Piece {
     Text(String),
-    Picture(Picture, i64),
+    Picture(Box<Picture>, i64),
 }
 
 /// `_emit_text_chunks` (:5454): `para` cut at its pictures, each piece of words trimmed of
@@ -309,7 +316,10 @@ fn emit_text_chunks(para: &str, trailing: &str, images: &Images) -> Vec<Piece> {
             out.push(Piece::Text(seg));
         }
         if let Some(p) = images::picture_of(&m, images) {
-            out.push(Piece::Picture(p, py::len(&para[..whole.start()]) as i64));
+            out.push(Piece::Picture(
+                Box::new(p),
+                py::len(&para[..whole.start()]) as i64,
+            ));
         }
         last = whole.end();
     }
@@ -384,6 +394,7 @@ pub(crate) fn emit_entries(
         &block.spans,
         &block.anchors.offsets,
         float_wrapped,
+        block.pictures_apart,
         images,
     ) {
         Some(i) => (Cow::Owned(i.text), i.spans, i.offsets, Some(i.pictures)),
@@ -421,7 +432,13 @@ pub(crate) fn emit_entries(
                 // Previewer 4.0.3 writes it (#247, 0bc705d :5870). In a vertical book it is
                 // inline in a plain container, as is a linked one in any book; in an ltr-spine
                 // book, a block picture aligned by `$580` as the block is.
-                picture.plain = picture.float.is_none() && now.in_horizontal_block(chunks);
+                let free = picture.float.is_none();
+                let horizontal = free && now.in_horizontal_block(chunks);
+                // Directly in vertical-rl text: sized by its height, with no other key but an
+                // alignment the block sets, in either spine (PVA, PVAL V01-V15, a1ba662). A
+                // linked one is inline in a plain container (V07).
+                picture.upright = free && now.vertical && !horizontal;
+                picture.plain = horizontal || picture.upright;
                 // A picture walked as a block of its own beside the block's paragraphs has no
                 // block_style: the text-align it inherits (S755).
                 let align = block
@@ -429,12 +446,37 @@ pub(crate) fn emit_entries(
                     .as_ref()
                     .and_then(|s| s.align.clone())
                     .or_else(|| block.picture_align.clone());
-                let boxed = picture.plain && (link.is_some() || now.vertical_book);
+                // `display: block` keeps it a block picture in a vertical book's horizontal
+                // block (PVA H10, P247k K10).
+                let boxed = picture.plain
+                    && (link.is_some() || horizontal && !block.picture_block && now.vertical_book);
                 if picture.plain
                     && !boxed
                     && matches!(align.as_deref(), Some("left" | "center" | "right"))
                 {
                     picture.box_align = align.clone();
+                }
+                // As its block places text (#769, probes PBI, PBJ, PBR; f605dd6): its block's
+                // text-align, its side margins and its boxes', and on a block's first line its
+                // indent.
+                let style = block.style.as_deref();
+                let place = Place {
+                    align: align.clone(),
+                    indent: style
+                        .and_then(|s| s.indent.clone())
+                        .filter(|_| chunks.len() == first),
+                    left: style.and_then(|s| s.margin_left.clone()),
+                    right: style.and_then(|s| s.margin_right.clone()),
+                    boxes: block.picture_boxes.clone(),
+                    font_px: style.and_then(|s| s.font_size),
+                };
+                if !picture.plain && link.is_some() {
+                    // Inline in its link's container, which takes the block's place (PBI B07):
+                    // the picture none.
+                    picture.place = Some(Box::default());
+                } else if !picture.plain && !now.cover {
+                    // kfxgen's own cover page stays centred, as books' cover pages are.
+                    picture.place = Some(Box::new(place.clone()));
                 }
                 let contained = link.is_some() || boxed;
                 if contained {
@@ -443,7 +485,15 @@ pub(crate) fn emit_entries(
                     let open = LinkOpen {
                         target: link.clone(),
                         plain: boxed,
+                        // A paragraph's text-indent stays on its container (PVA H02, H18, V18;
+                        // P247k K02).
+                        indent: boxed
+                            .then(|| block.style.as_ref().and_then(|s| s.indent.clone()))
+                            .flatten(),
                         align: if boxed { align } else { None },
+                        // Its container takes the block's alignment, first-line indent and
+                        // side margins (#769, PBI B07, PBK K05, K08).
+                        place: (!picture.plain).then(|| Box::new(place)),
                     };
                     chunks.push(Chunk {
                         spans: link
@@ -464,7 +514,7 @@ pub(crate) fn emit_entries(
                         keys: at_start,
                         offsets: BTreeMap::new(),
                     },
-                    picture: Some(picture),
+                    picture: Some(*picture),
                     ..Chunk::text(String::new())
                 });
                 if contained {

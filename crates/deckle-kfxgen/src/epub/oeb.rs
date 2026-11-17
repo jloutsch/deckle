@@ -21,12 +21,15 @@ use super::package::{
     posix_join, read_text, splitext, unquote, urldefrag, urlnormalize, urlquote,
 };
 use super::toc::{self, NavPoint};
-use super::{Error, GuideRef, Item, Metadata, Oeb, Package, SpineRef, TocNode};
+use super::{Error, GuideRef, Item, Metadata, Oeb, Package, RewrittenOpf, SpineRef, TocNode};
 use crate::dom::{self, Dom, NodeId, XHTML_NS};
 
 const XHTML_MIME: &str = "application/xhtml+xml";
 const CSS_MIME: &str = "text/css";
 const BINARY_MIME: &str = "application/octet-stream";
+/// The name `convert_epub3_nav` gives the NCX it makes, a `NamedTemporaryFile`, as the dumps
+/// write it in place of its random part.
+const GENERATED_NCX: &str = "tmpXXXXXXXX.ncx";
 /// `base.py` `OEB_DOCS`.
 const OEB_DOCS: [&str; 4] = [
     XHTML_MIME,
@@ -194,6 +197,16 @@ fn is_xml(media_type: &str) -> bool {
     media_type.ends_with("/xml") || media_type.ends_with("+xml")
 }
 
+/// Whether Calibre's `Manifest.Item.data` gives the bytes of an item of (lower-case)
+/// `media_type` as they are (`base.py`): it parses documents, XML and stylesheets, and turns
+/// plain text into a document.
+pub(crate) fn data_is_bytes(media_type: &str) -> bool {
+    !(is_doc(media_type)
+        || is_xml(media_type)
+        || OEB_STYLES.contains(&media_type)
+        || media_type == "text/plain")
+}
+
 // ---------------------------------------------------------------------------------------
 // The archive
 // ---------------------------------------------------------------------------------------
@@ -216,25 +229,6 @@ struct DocInfo {
 /// `n` is `name` in no namespace or XHTML's (`toc::is_html` for the element tree).
 fn dom_is_html(dom: &Dom, n: NodeId, name: &str) -> bool {
     dom.tag(n) == name && matches!(dom.namespace(n), None | Some(XHTML_NS))
-}
-
-/// lxml's `string()` of `n`: its text and that of everything under it, in document order.
-fn dom_string_value(dom: &Dom, n: NodeId) -> String {
-    let mut out = String::new();
-    // (element, entering): its text and children on entering, its tail on leaving.
-    let mut stack = vec![(n, true)];
-    while let Some((m, entering)) = stack.pop() {
-        if entering {
-            out.push_str(dom.text(m));
-            if m != n {
-                stack.push((m, false));
-            }
-            stack.extend(dom.children(m).iter().rev().map(|&c| (c, true)));
-        } else {
-            out.push_str(dom.tail(m));
-        }
-    }
-    out
 }
 
 fn doc_info(dom: &Dom) -> DocInfo {
@@ -309,7 +303,8 @@ fn doc_info(dom: &Dom) -> DocInfo {
             info.sheets.push(h.to_owned());
         }
         if dom_is_html(dom, el, "style") {
-            info.styles.push(dom_string_value(dom, el));
+            // lxml's `string()`: `itertext()` joined.
+            info.styles.push(dom.itertext(el));
         }
     }
     info
@@ -390,7 +385,8 @@ fn html_toc(dom: &Dom, base: &str, frag: &str, hrefs: &BTreeMap<String, usize>) 
         if !hrefs.contains_key(urldefrag(&href).0) {
             continue;
         }
-        let title = collapse(&dom_string_value(dom, a));
+        // lxml's `string()`: `itertext()` joined.
+        let title = collapse(&dom.itertext(a));
         if !titles.contains_key(&href) {
             order.push(href.clone());
         }
@@ -411,8 +407,8 @@ struct Book<'z> {
     zip: &'z mut EpubReader,
     names: BTreeSet<String>,
     docs: BTreeMap<String, Option<DocInfo>>,
-    /// The elements and attributes of every document read so far, counted against
-    /// [`MAX_BOOK_DOM_NODES`].
+    /// The nodes (elements and comments) and attributes of every document read so far, counted
+    /// against [`MAX_BOOK_DOM_NODES`].
     nodes: usize,
     /// The bytes of the nav, the NCX and every document read so far, counted against
     /// [`MAX_BOOK_CONTENT_BYTES`].
@@ -508,7 +504,7 @@ impl Book<'_> {
         });
         if self.nodes > MAX_BOOK_DOM_NODES {
             return Err(Error::TooLarge(format!(
-                "this book's files hold more than {MAX_BOOK_DOM_NODES} elements and attributes"
+                "this book's files hold more than {MAX_BOOK_DOM_NODES} nodes and attributes"
             )));
         }
         self.docs.insert(name, info.clone());
@@ -907,6 +903,65 @@ impl Input {
         }))
     }
 
+    /// The OPF `convert` writes once it is done, and the texts of the files kfxgen reads beside
+    /// it ([`kfxgen_paths`](crate::convert::kfxgen_paths)): the book's own nav and NCX
+    /// texts when the paths are theirs, else read from the book and charged to it.
+    fn rewritten(
+        &self,
+        pkg: &Package,
+        nav: Option<&NavToc>,
+        book: &mut Book,
+    ) -> Result<RewrittenOpf, Error> {
+        let mut manifest = self.manifest.clone();
+        // `convert_epub3_nav` writes its NCX beside the nav under a random name, and appends it.
+        let generated = match (nav, &pkg.files.nav_path) {
+            (Some(_), Some(nav_path)) => {
+                let href = posix_join(dirname(nav_path), GENERATED_NCX);
+                manifest.push(OpfItem {
+                    id: None,
+                    href: Some(href.clone()),
+                    media_type: Some(NCX_MIME.to_owned()),
+                    properties: String::new(),
+                });
+                Some(crate::convert::item_path(&href))
+            }
+            _ => None,
+        };
+        let (nav_path, ncx_path) = crate::convert::kfxgen_paths(&manifest);
+        // `own` is the file `read_package` already read: (its path, its text).
+        let mut text = |path: Option<String>, own: (&Option<String>, &Option<String>)| {
+            let Some(path) = path else {
+                return Ok(None);
+            };
+            if own.0.as_deref() == Some(path.as_str()) {
+                return Ok(own.1.clone());
+            }
+            if path.starts_with('/') || path.starts_with("..") {
+                return Ok(None);
+            }
+            let found = book.read(&path)?;
+            if let Some(t) = &found {
+                super::check_size(&path, t.len())?;
+                book.charge_bytes(t.len())?;
+            }
+            Ok::<_, Error>(found)
+        };
+        let nav_text = text(nav_path, (&pkg.files.nav_path, &pkg.nav_text))?;
+        let ncx_text = if ncx_path.is_some() && ncx_path == generated {
+            None
+        } else {
+            text(ncx_path, (&pkg.files.ncx_href, &pkg.ncx_text))?
+        };
+        Ok(RewrittenOpf {
+            manifest,
+            spine: self.spine.iter().filter_map(|r| r.idref.clone()).collect(),
+            guide: self.guide.iter().cloned().collect(),
+            nav_ncx: nav.map(|n| n.points.clone()),
+            nav_text,
+            ncx_text,
+        })
+    }
+
     /// The rest of `convert`: DTBook refused, page templates and mislabelled fonts out of the
     /// spine, and each spine item once.
     fn clean_spine(&mut self) -> Result<(), Error> {
@@ -1018,6 +1073,7 @@ struct State {
     toc: Vec<TocNode>,
     auto: bool,
     meta: Metadata,
+    spine_left_out: Vec<String>,
 }
 
 impl State {
@@ -1183,16 +1239,16 @@ impl State {
             };
             let mt = self.item(i).media_type.to_lowercase();
             let linear = is_linear(r.linear.as_deref());
+            let href = self.item(i).href.clone();
             if is_doc(&mt) {
                 self.push_spine(i, linear);
-            } else if is_xml(&mt) {
-                let href = self.item(i).href.clone();
-                if book.doc(&href, false)?.is_some_and(|d| d.html_root) {
-                    if let Some(it) = self.items[i].as_mut() {
-                        it.media_type = XHTML_MIME.to_owned();
-                    }
-                    self.push_spine(i, linear);
+            } else if is_xml(&mt) && book.doc(&href, false)?.is_some_and(|d| d.html_root) {
+                if let Some(it) = self.items[i].as_mut() {
+                    it.media_type = XHTML_MIME.to_owned();
                 }
+                self.push_spine(i, linear);
+            } else {
+                self.spine_left_out.push(href);
             }
         }
         if self.spine.is_empty() {
@@ -1657,7 +1713,7 @@ impl State {
         Ok(())
     }
 
-    fn into_oeb(self) -> Oeb {
+    fn into_oeb(self, rewritten: RewrittenOpf) -> Oeb {
         let spine = self
             .spine
             .iter()
@@ -1693,6 +1749,8 @@ impl State {
             guide,
             metadata: self.meta,
             page_progression_direction: self.ppd,
+            rewritten,
+            spine_left_out: self.spine_left_out,
         }
     }
 }
@@ -1728,6 +1786,7 @@ pub fn oeb_view(pkg: &Package, zip: &mut EpubReader) -> Result<Oeb, Error> {
         _ => None,
     };
     input.clean_spine()?;
+    let rewritten = input.rewritten(pkg, nav.as_ref(), &mut book)?;
 
     // `reader.py` `OEBReader._all_from_opf`.
     let mut st = State::default();
@@ -1746,5 +1805,5 @@ pub fn oeb_view(pkg: &Package, zip: &mut EpubReader) -> Result<Oeb, Error> {
     let css_urls = st.flattened_css_urls(&mut book, &docs)?;
     let sheets = st.replace_css();
     st.trim(&mut book, sheets, &css_urls)?;
-    Ok(st.into_oeb())
+    Ok(st.into_oeb(rewritten))
 }

@@ -1,0 +1,31 @@
+<?xml version="1.0"  encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="bookid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="bookid">test-Boxes</dc:identifier>
+    <dc:title>Boxes</dc:title>
+    <dc:creator>kfxgen test</dc:creator>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="chapter1" href="OEBPS/chapter_1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter2" href="OEBPS/chapter_2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter3" href="OEBPS/chapter_3.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter4" href="OEBPS/chapter_4.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter5" href="OEBPS/chapter_5.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter6" href="OEBPS/chapter_6.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter7" href="OEBPS/chapter_7.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter8" href="OEBPS/chapter_8.xhtml" media-type="application/xhtml+xml"/>
+    <item id="css" href="OEBPS/boxes.css" media-type="text/css"/>
+    <item id="ncx" href="OEBPS/toc.ncx" media-type="application/x-dtbncx+xml"/>
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="chapter1"/>
+    <itemref idref="chapter2"/>
+    <itemref idref="chapter3"/>
+    <itemref idref="chapter4"/>
+    <itemref idref="chapter5"/>
+    <itemref idref="chapter6"/>
+    <itemref idref="chapter7"/>
+    <itemref idref="chapter8"/>
+  </spine>
+</package>

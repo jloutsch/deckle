@@ -5,14 +5,18 @@
 //!
 //! [`parse`] decodes the bytes ([`Error`] when it cannot), reads them as XML and, when they are
 //! not well-formed, as HTML with `html5ever`, then cleans the tree as Calibre does. The tree is
-//! lxml's model: elements only, each with the text before its first child (`text`) and the text
-//! after it (`tail`); comments and processing instructions are dropped, their neighbours' text
-//! joined. Names (tags, attribute names, namespaces) are stored once each in a table. Element names are kept as Calibre keeps them (as written on the XML path, in lower
-//! case on the HTML one), attributes by their qualified name (`epub:type`).
+//! lxml's model: elements, and comments and processing instructions as child nodes (both
+//! [`Dom::is_comment`]), each node with the text before its first child (`text`, a comment's
+//! own text) and the text after it (`tail`). [`Dom::children`] and the siblings count every
+//! child node, as lxml's `len(elem)` and `getnext()` do; [`Dom::descendants`], [`Dom::path`]
+//! and [`Dom::index_in_parent`] count elements only. Names (tags, attribute names, namespaces)
+//! are stored once each in a table. Element names are kept as Calibre keeps them (as written on
+//! the XML path, in lower case on the HTML one), attributes by their qualified name
+//! (`epub:type`).
 //!
-//! Hostile input: every walk is a loop over the arena, never recursion; the tree is never
-//! deeper than [`MAX_DEPTH`] below its root; the HTML parser stops at a node budget linear in
-//! the input.
+//! Hostile input: every walk is a loop over the arena, never recursion; no element is deeper
+//! than [`MAX_DEPTH`] below the root (a comment, which has no children, can be one level below
+//! the deepest); the HTML parser stops at a node budget linear in the input, comments counted.
 
 mod clean;
 mod parse;
@@ -63,7 +67,8 @@ pub enum Error {
     EntityText(deckle_limits::TooLarge),
 }
 
-/// An element of a [`Dom`].
+/// A node of a [`Dom`]: an element, or a comment or processing instruction
+/// ([`Dom::is_comment`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeId(u32);
 
@@ -98,16 +103,13 @@ struct Element {
     children: Vec<NodeId>,
     /// Its index in its parent's `children`.
     pos: u32,
-    /// Where a comment or processing instruction with content stood, which the tree does not
-    /// keep: [`IN_TEXT`], [`IN_TAIL`] (read by `structure.rs`).
-    notes: u8,
+    /// How many elements come before it in its parent's `children`: an element's index among
+    /// its element siblings.
+    epos: u32,
+    /// A comment or processing instruction: no name, no attributes, no children; `text` is its
+    /// content (a processing instruction's value).
+    comment: bool,
 }
-
-/// [`Element::notes`]: a comment or processing instruction whose text is not blank
-/// (`structure.py` `isspace`) stood in the element's text, before its first child.
-const IN_TEXT: u8 = 1;
-/// [`Element::notes`]: one stood in the element's tail.
-const IN_TAIL: u8 = 2;
 
 /// An element tree in an arena. Removed elements stay in the arena, detached.
 #[derive(Debug, Clone)]
@@ -116,9 +118,6 @@ pub struct Dom {
     root: NodeId,
     names: Vec<Box<str>>,
     name_ids: BTreeMap<Box<str>, Name>,
-    /// The root's last child node is a comment or processing instruction, which the tree does
-    /// not keep (lxml's `root[-1]`, read by [`clean`]).
-    root_ends_in_comment: bool,
 }
 
 impl Dom {
@@ -129,7 +128,6 @@ impl Dom {
             root: NodeId(0),
             names: Vec::new(),
             name_ids: BTreeMap::new(),
-            root_ends_in_comment: false,
         };
         dom.intern("");
         dom.root = dom.alloc(tag, ns, Vec::new());
@@ -178,9 +176,19 @@ impl Dom {
             parent: None,
             children: Vec::new(),
             pos: 0,
-            notes: 0,
+            epos: 0,
+            comment: false,
         });
         id
+    }
+
+    /// A new comment (or processing instruction) holding `text`, with no parent.
+    fn alloc_comment(&mut self, text: &str) -> NodeId {
+        let n = self.alloc("", None, Vec::new());
+        let e = self.el_mut(n);
+        e.comment = true;
+        text.clone_into(&mut e.text);
+        n
     }
 
     fn el(&self, n: NodeId) -> &Element {
@@ -196,7 +204,13 @@ impl Dom {
         self.root
     }
 
-    /// The element's local name, as Calibre keeps it (see the module documentation).
+    /// Whether `n` is a comment or processing instruction, not an element.
+    pub fn is_comment(&self, n: NodeId) -> bool {
+        self.el(n).comment
+    }
+
+    /// The element's local name, as Calibre keeps it (see the module documentation); empty for
+    /// a comment.
     pub fn tag(&self, n: NodeId) -> &str {
         self.name(self.el(n).tag)
     }
@@ -204,6 +218,11 @@ impl Dom {
     /// The element's namespace URI; None for an element in no namespace.
     pub fn namespace(&self, n: NodeId) -> Option<&str> {
         self.ns_name(self.el(n).ns)
+    }
+
+    /// lxml's `QName(elem)`: (namespace URI, local name), what Clark notation `{ns}tag` names.
+    pub fn qualified(&self, n: NodeId) -> (Option<&str>, &str) {
+        (self.namespace(n), self.tag(n))
     }
 
     fn set_namespace(&mut self, n: NodeId, ns: Option<&str>) {
@@ -218,6 +237,25 @@ impl Dom {
             .attrs
             .iter()
             .find(|a| a.name == id)
+            .map(|a| a.value.as_str())
+    }
+
+    /// lxml's `elem.get('{namespace_uri}local')`: the value of the attribute in that namespace
+    /// with that local name, whatever prefix the file gave it; `namespace_uri` empty for an
+    /// attribute in no namespace.
+    pub fn attr_ns(&self, n: NodeId, namespace_uri: &str, local: &str) -> Option<&str> {
+        let ns = *self.name_ids.get(namespace_uri)?;
+        self.el(n)
+            .attrs
+            .iter()
+            .find(|a| {
+                let name = self.name(a.name);
+                let name = match a.ns {
+                    NO_NS => name,
+                    _ => name.split_once(':').map_or(name, |(_, l)| l),
+                };
+                a.ns == ns && name == local
+            })
             .map(|a| a.value.as_str())
     }
 
@@ -249,33 +287,75 @@ impl Dom {
         }
     }
 
-    /// The parent element; None for the root and for a removed element.
+    /// The parent element; None for the root and for a removed node.
     pub fn parent(&self, n: NodeId) -> Option<NodeId> {
         self.el(n).parent
     }
 
-    /// The child elements, in order.
+    /// lxml's `iterancestors()`: the parent, its parent, and so on up to the root.
+    pub fn ancestors(&self, n: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+        std::iter::successors(self.el(n).parent, |&p| self.el(p).parent)
+    }
+
+    /// The child nodes, comments included, in order: lxml's `list(elem)`.
     pub fn children(&self, n: NodeId) -> &[NodeId] {
         &self.el(n).children
     }
 
-    /// The element's index among its parent's child elements; 0 for the root and for a
-    /// removed element.
+    /// The child elements, comments left out, in order.
+    pub(crate) fn child_elements(&self, n: NodeId) -> impl DoubleEndedIterator<Item = NodeId> + '_ {
+        self.el(n)
+            .children
+            .iter()
+            .copied()
+            .filter(|&c| !self.el(c).comment)
+    }
+
+    /// How many child elements `n` has, comments left out.
+    pub(crate) fn element_count(&self, n: NodeId) -> usize {
+        self.el(n).children.last().map_or(0, |&c| {
+            self.el(c).epos as usize + usize::from(!self.el(c).comment)
+        })
+    }
+
+    /// `css_selectors` `is_empty`: no child element, no text, and no child (a comment) with a
+    /// tail.
+    pub(crate) fn is_empty(&self, n: NodeId) -> bool {
+        let e = self.el(n);
+        e.text.is_empty()
+            && e.children
+                .iter()
+                .all(|&c| self.el(c).comment && self.el(c).tail.is_empty())
+    }
+
+    /// The element's index among its parent's child elements, comments left out; 0 for the
+    /// root and for a removed element.
     pub fn index_in_parent(&self, n: NodeId) -> usize {
+        match self.el(n).parent {
+            Some(_) => self.el(n).epos as usize,
+            None => 0,
+        }
+    }
+
+    /// lxml's `parent.index(n)`: `n`'s index among all its parent's child nodes, comments
+    /// counted; 0 for the root and for a removed node.
+    pub(crate) fn node_index(&self, n: NodeId) -> usize {
         match self.el(n).parent {
             Some(_) => self.el(n).pos as usize,
             None => 0,
         }
     }
 
-    /// The child element of the same parent just before `n`.
+    /// The child node of the same parent just before `n`, a comment or an element: lxml's
+    /// `getprevious()`.
     pub fn prev_sibling(&self, n: NodeId) -> Option<NodeId> {
         let p = self.el(n).parent?;
         let i = (self.el(n).pos as usize).checked_sub(1)?;
         self.el(p).children.get(i).copied()
     }
 
-    /// The child element of the same parent just after `n`.
+    /// The child node of the same parent just after `n`, a comment or an element: lxml's
+    /// `getnext()`.
     pub fn next_sibling(&self, n: NodeId) -> Option<NodeId> {
         let p = self.el(n).parent?;
         self.el(p)
@@ -284,12 +364,30 @@ impl Dom {
             .copied()
     }
 
-    /// lxml's `text`: the text before the first child element.
+    /// The element of the same parent just before `n`, comments passed over.
+    pub(crate) fn prev_element(&self, n: NodeId) -> Option<NodeId> {
+        let mut at = self.prev_sibling(n)?;
+        while self.el(at).comment {
+            at = self.prev_sibling(at)?;
+        }
+        Some(at)
+    }
+
+    /// The element of the same parent just after `n`, comments passed over.
+    pub(crate) fn next_element(&self, n: NodeId) -> Option<NodeId> {
+        let mut at = self.next_sibling(n)?;
+        while self.el(at).comment {
+            at = self.next_sibling(at)?;
+        }
+        Some(at)
+    }
+
+    /// lxml's `text`: the text before the first child node; a comment's own text.
     pub fn text(&self, n: NodeId) -> &str {
         &self.el(n).text
     }
 
-    /// lxml's `tail`: the text after the element's end tag, before its next sibling.
+    /// lxml's `tail`: the text after the node, before its next sibling.
     pub fn tail(&self, n: NodeId) -> &str {
         &self.el(n).tail
     }
@@ -364,12 +462,11 @@ impl Dom {
                 }
                 kids.push(c);
             }
-            for (i, &c) in kids.iter().enumerate() {
-                let e = self.el_mut(c);
-                e.parent = Some(p);
-                e.pos = u32::try_from(i).unwrap_or(u32::MAX);
+            for &c in &kids {
+                self.el_mut(c).parent = Some(p);
             }
             self.el_mut(p).children = kids;
+            self.renumber(p, 0);
         }
         made
     }
@@ -379,11 +476,11 @@ impl Dom {
         self.remove_many(&[n]);
     }
 
-    /// Takes each of `nodes` and everything under it out of the tree. A removed element's tail
-    /// stays where it was: it joins the tail of the nearest earlier sibling not removed, or the
-    /// parent's text (`parse_utils.py` `parse_html`'s `remove_elem`, applied in document order).
-    /// The root, an element already removed and a repeat are passed over. Each parent's
-    /// children are compacted once, however many go.
+    /// Takes each of `nodes` and everything under it out of the tree. A removed node's tail
+    /// stays where it was: it joins the tail of the nearest earlier sibling (a comment or an
+    /// element) not removed, or the parent's text (`parse_utils.py` `parse_html`'s
+    /// `remove_elem`, applied in document order). The root, an element already removed and a
+    /// repeat are passed over. Each parent's children are compacted once, however many go.
     pub fn remove_many(&mut self, nodes: &[NodeId]) {
         // One: shift the siblings after it, not rebuild them all.
         if let [n] = nodes {
@@ -393,16 +490,9 @@ impl Dom {
             };
             let pos = self.el(n).pos as usize;
             let tail = std::mem::take(&mut self.el_mut(n).tail);
-            let note = self.take_tail_note(n);
             match pos.checked_sub(1).map(|i| self.el(p).children[i]) {
-                Some(prev) => {
-                    self.el_mut(prev).tail.push_str(&tail);
-                    self.el_mut(prev).notes |= note * IN_TAIL;
-                }
-                None => {
-                    self.el_mut(p).text.push_str(&tail);
-                    self.el_mut(p).notes |= note * IN_TEXT;
-                }
+                Some(prev) => self.el_mut(prev).tail.push_str(&tail),
+                None => self.el_mut(p).text.push_str(&tail),
             }
             self.el_mut(p).children.remove(pos);
             self.renumber(p, pos);
@@ -430,16 +520,9 @@ impl Dom {
             });
             prev_kept.insert(n, prev);
             let tail = std::mem::take(&mut self.el_mut(n).tail);
-            let note = self.take_tail_note(n);
             match prev {
-                Some(s) => {
-                    self.el_mut(s).tail.push_str(&tail);
-                    self.el_mut(s).notes |= note * IN_TAIL;
-                }
-                None => {
-                    self.el_mut(p).text.push_str(&tail);
-                    self.el_mut(p).notes |= note * IN_TEXT;
-                }
+                Some(s) => self.el_mut(s).tail.push_str(&tail),
+                None => self.el_mut(p).text.push_str(&tail),
             }
         }
         let mut last = None;
@@ -450,10 +533,8 @@ impl Dom {
             last = Some(p);
             let mut kids = std::mem::take(&mut self.el_mut(p).children);
             kids.retain(|c| !removed.contains(c));
-            for (i, &c) in kids.iter().enumerate() {
-                self.el_mut(c).pos = u32::try_from(i).unwrap_or(u32::MAX);
-            }
             self.el_mut(p).children = kids;
+            self.renumber(p, 0);
         }
         for n in removed {
             self.el_mut(n).parent = None;
@@ -465,7 +546,6 @@ impl Dom {
     pub(crate) fn remove_many_with_tails(&mut self, nodes: &[NodeId]) {
         for &n in nodes {
             self.el_mut(n).tail.clear();
-            self.el_mut(n).notes &= !IN_TAIL;
         }
         self.remove_many(nodes);
     }
@@ -483,30 +563,65 @@ impl Dom {
         let mut path = Vec::new();
         let mut at = n;
         while let Some(p) = self.el(at).parent {
-            path.push(self.el(at).pos);
+            path.push(self.el(at).epos);
             at = p;
         }
         path.reverse();
         path
     }
 
-    /// The root and every element under it, in document order.
+    /// The root and every element under it, in document order; comments left out.
     pub fn descendants(&self) -> impl Iterator<Item = NodeId> + '_ {
         let mut stack = vec![self.root];
         std::iter::from_fn(move || {
             let n = stack.pop()?;
-            stack.extend(self.el(n).children.iter().rev());
+            stack.extend(self.child_elements(n).rev());
             Some(n)
         })
+    }
+
+    /// lxml's `elem.iter()`: `n`, then every node under it in document order, comments and
+    /// processing instructions included.
+    pub fn subtree(&self, n: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+        let mut stack = vec![n];
+        std::iter::from_fn(move || {
+            let m = stack.pop()?;
+            stack.extend(self.el(m).children.iter().rev());
+            Some(m)
+        })
+    }
+
+    /// lxml's `''.join(elem.itertext())`: `n`'s text, then the text and tail of each element
+    /// under it and the tail of each comment under it, in document order. A comment's own text
+    /// is left out, and `n`'s tail; a comment's `itertext` is empty.
+    pub fn itertext(&self, n: NodeId) -> String {
+        let mut out = String::new();
+        if self.el(n).comment {
+            return out;
+        }
+        // (node, entering): an element's text and children on entering, its tail on leaving.
+        let mut stack = vec![(n, true)];
+        while let Some((m, entering)) = stack.pop() {
+            let e = self.el(m);
+            if !entering || e.comment {
+                out.push_str(&e.tail);
+                continue;
+            }
+            out.push_str(&e.text);
+            if m != n {
+                stack.push((m, false));
+            }
+            stack.extend(e.children.iter().rev().map(|&c| (c, true)));
+        }
+        out
     }
 
     /// Appends `child`, which has no parent, as the last child of `parent`.
     fn attach(&mut self, parent: NodeId, child: NodeId) {
         let pos = self.el(parent).children.len();
         self.el_mut(parent).children.push(child);
-        let c = self.el_mut(child);
-        c.parent = Some(parent);
-        c.pos = u32::try_from(pos).unwrap_or(u32::MAX);
+        self.el_mut(child).parent = Some(parent);
+        self.renumber(parent, pos);
     }
 
     /// Makes `child`, which has no parent, `parent`'s first child.
@@ -516,11 +631,21 @@ impl Dom {
         self.renumber(parent, 0);
     }
 
-    /// Sets `pos` for `parent`'s children from index `from` on.
+    /// Sets `pos` and `epos` for `parent`'s children from index `from` on.
     fn renumber(&mut self, parent: NodeId, from: usize) {
+        let mut elements = match from.checked_sub(1) {
+            Some(i) => {
+                let before = self.el(self.el(parent).children[i]);
+                before.epos + u32::from(!before.comment)
+            }
+            None => 0,
+        };
         for i in from..self.el(parent).children.len() {
             let c = self.el(parent).children[i];
-            self.el_mut(c).pos = u32::try_from(i).unwrap_or(u32::MAX);
+            let e = self.el_mut(c);
+            e.pos = u32::try_from(i).unwrap_or(u32::MAX);
+            e.epos = elements;
+            elements = elements.saturating_add(u32::from(!e.comment));
         }
     }
 
@@ -537,29 +662,11 @@ impl Dom {
     /// `remove_elem`).
     fn detach_with_tail(&mut self, n: NodeId) {
         self.el_mut(n).tail.clear();
-        self.el_mut(n).notes &= !IN_TAIL;
         self.remove(n);
     }
 
-    /// 1 if a comment with content stood in `n`'s tail, which then moves elsewhere; else 0.
-    fn take_tail_note(&mut self, n: NodeId) -> u8 {
-        let e = self.el_mut(n);
-        let note = u8::from(e.notes & IN_TAIL != 0);
-        e.notes &= !IN_TAIL;
-        note
-    }
-
-    /// Records a comment or processing instruction with content where text after `parent`'s
-    /// last child goes ([`Dom::append_text`]).
-    fn note_comment(&mut self, parent: NodeId) {
-        match self.el(parent).children.last() {
-            Some(&last) => self.el_mut(last).notes |= IN_TAIL,
-            None => self.el_mut(parent).notes |= IN_TEXT,
-        }
-    }
-
-    /// The number of elements the arena holds, removed ones included: one more than the
-    /// largest [`NodeId`] index.
+    /// The number of nodes (elements and comments) the arena holds, removed ones included: one
+    /// more than the largest [`NodeId`] index.
     pub(crate) fn node_count(&self) -> usize {
         self.nodes.len()
     }
