@@ -963,3 +963,23 @@ limit. Smallest inputs: a contents entry titled `"!" * 10_000_000 + "A"`, or a s
 titled "A" in the section of the entry before it (a place) linking to an id of 10,000,000
 characters, and a "Contents" page of a heading "Contents" and four headings "A", each a link: four copies, over 40,000,000
 bytes, are refused; with three headings the book converts.
+
+## Warnings
+
+`convert` returns the warnings kfxgen logs (`Converted::warnings`, `src/convert/mod.rs`); no
+oracle records kfxgen's log, so they were compared with the pinned Python by reading. They
+differ from it here:
+
+- A `repr` in kfxgen's text (`{entry['title']!r}`, `{href!r}`) is written as Rust's `{:?}`:
+  double quotes, and Rust's escapes.
+- "Spine item N parse failed (href): …" ends with the Python exception's name and what raises
+  it, in the port's words (`Raised`), where kfxgen prints the exception's own message.
+- When kfxgen reads the book a second time to keep its contents listings, it logs the first
+  pass's warnings too, then drops what that pass made; the port keeps the second pass's only.
+- Calibre's reader leaving a spine item out because it is no document (a stylesheet or a
+  picture listed in the spine) is said in the port's words, not Calibre's. A spine `idref`
+  naming no manifest item is dropped without a warning.
+- The read-aloud narration is looked for in the OPF Calibre reads (the container's first);
+  kfxgen reads every OPF the container names.
+- kfxgen's `log.info` lines and the font table's messages about skipped faces are not
+  returned.
