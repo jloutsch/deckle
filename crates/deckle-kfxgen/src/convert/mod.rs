@@ -33,7 +33,7 @@ pub use blocks::{
     BeforeSpacing, Block, BlockId, ExtractOptions, Field, FileBlocks, blocks_before_spacing,
     extract_blocks,
 };
-pub use font_table::{parse_style, parse_weight};
+pub use font_table::{font_table, parse_style, parse_weight};
 pub use href::{
     external_target, is_unsafe, key_doc, normalize, resolve_doc_path, resolve_link_target, unquote,
 };

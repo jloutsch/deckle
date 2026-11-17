@@ -4,6 +4,7 @@
 mod book;
 mod convert_args;
 mod convert_blocks;
+mod convert_fonts;
 mod convert_images;
 mod convert_inline;
 mod convert_inline_style;

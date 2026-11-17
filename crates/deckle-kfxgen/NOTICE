@@ -134,6 +134,36 @@ notice. They were read at calibre commit ca05b8602e3e (v8.12.0-77); kfxgen runs 
 9.18.0, which was not compared. The size the picture is then drawn at follows the behaviour of
 Qt's `QImage::scaled` with `Qt::KeepAspectRatio` (`QSize::scaled`); no Qt code is copied.
 
+src/convert/font_table.rs ports how fontTools 4.60.1 (https://github.com/fonttools/fonttools)
+writes the font it reads from a WOFF file, as kfxgen has it do: `SFNTWriter` and
+`calcChecksum` in Lib/fontTools/ttLib/sfnt.py, `TTFont._save`, `TTFont._writeTable`,
+`sortedTagList`, `getSearchRange` and the table orders in Lib/fontTools/ttLib/ttFont.py, and
+the `dependencies` of the table classes in Lib/fontTools/ttLib/tables/. fontTools is under the
+MIT License; the text below is the LICENSE file that ships with fontTools 4.60.1, copied
+unchanged apart from the indent:
+
+    MIT License
+
+    Copyright (c) 2017 Just van Rossum
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
 src/css/html.css is calibre's resources/templates/html.css, copied verbatim. It is Mozilla
 code under the tri-licence its header states (MPL 1.1, GPL 2.0 or later, LGPL 2.1 or later),
 used here under the GPL.
