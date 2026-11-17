@@ -983,8 +983,8 @@ Three more steps copy a string kfxgen gives several chapters or entries
 (`src/convert/assemble.rs`, `src/convert/chapters.rs`). Each counts the bytes it is about to
 copy and, past 33,554,432 bytes (`MAX_CONTENT_FILE_BYTES`) in the book, stops the conversion
 (`Error::TooLarge`, "the contents repeat more than 33554432 bytes of titles and keys") where
-kfxgen makes the book. Each step counts on its own, so the three, with the contents page's
-count above, hold at most four times that.
+kfxgen makes the book. The two assembly copies share one count; the split and the contents
+page's count above each have their own, so together they hold at most three times that.
 
 - **Contents entries on one block.** A contents entry landing on the block of the entry before
   it gets that entry's key in the chapter's `sub_entries`; kfxgen's entries share the one

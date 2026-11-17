@@ -198,9 +198,15 @@ From this phase's ledger (`GATE` lines):
 11. **The model is built by copying every chapter** (`Chapter::to_py` while the chapters are
     alive): 8 files of 20,000 paragraphs peak at 854 MB through `convert` against 522 MB for the
     chapters alone (review, ran). A consuming conversion would move the values, about halving
-    the peak of a book near `MAX_BOOK_BLOCKS` (about 2.4 GB and 27 s a pass at that limit,
-    extrapolated from 4.7 KB and 55 µs a block). Joins the phase 2 item "the limits add up".
-    Open.
+    the peak of a book near `MAX_BOOK_BLOCKS`. Measured in a release build on a loaded machine
+    (re-review of the final fix pass, ran): 499,000 one-word paragraphs in 4 files, a 4 MB EPUB,
+    convert at a 2.2 GB peak in 41 s a pass; a book over the limit is refused at about 1.6 GB
+    after up to 43 s, because the block count is checked after each file, not inside it. A
+    link round 160,000 words to a 48-byte target in each of 12 files adds 882 MB the book
+    counter misses (item 2). Before phase 4 calls `convert`: decide the peak memory the app
+    accepts and lower `MAX_BOOK_BLOCKS` to it or move the values first; give a conversion a
+    way to be cancelled; count blocks inside the walk so a refusal comes within one file.
+    Joins the phase 2 item "the limits add up". Open.
 12. **Warnings have no size cap.** A contents entry's title is copied, escaped, into the
     "dropped: not in spine" warning: a 20 MB NCX gave 70 MB of warnings (review, ran), up to
     about 224 MB at `CalibreOpf`'s 64 MiB (worked out). Cutting the title in the warning would

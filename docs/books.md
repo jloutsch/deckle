@@ -88,7 +88,7 @@ takes is not limited yet: a book built to come near its limits can take a minute
 | EPUB to KFX: elements and runs of text in one book file (read as HTML, attributes count too) | 500,000 |
 | EPUB to KFX: elements and attributes in all of a book's files together (every file is held until the book is styled; about 1.1 GB at the limit) | 2 million per book |
 | EPUB to KFX: text and styles copied or read while converting one book file (a table of about 125,000 one-word cells or 166,000 cells of any size, a paragraph of about a million characters inside 32 nested boxes, many note links in a file with a very long name), and in all of a book's files together | 32,000,000 bytes per file, 128,000,000 per book |
-| EPUB to KFX: paragraphs and other blocks in all of a book's files (about 2.4 GB and 27 seconds at the limit) | 500,000 per book |
+| EPUB to KFX: paragraphs and other blocks in all of a book's files (measured at the limit: about 2.2 GB and 41 seconds) | 500,000 per book |
 | EPUB to KFX: a picture (a JPEG needs more memory to decode: about 48.8 megapixels, 59.7 if grey), and all of a book's pictures together | 100 megapixels each, 10 gigapixels per book |
 | EPUB to KFX: an embedded font (a larger one is left out of the book) and all of a book's fonts together | 50 MiB each, 256 MiB per book |
 | EPUB to KFX: titles and links copied again: by a rebuilt contents page beside its headings, for contents entries on one spot, for pages that keep a contents listing, for a chapter cut where the writing mode changes | 32 MB each |
