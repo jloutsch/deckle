@@ -44,8 +44,6 @@ const TAB_STOP: usize = 8;
 /// Marks where an anchor is declared in a segment stream (#79).
 pub const ANCHOR_MARK: &str = "anchor-mark";
 pub const LINK_FLAG: &str = "link";
-/// A link target leaving the book: the address after this prefix (#474).
-pub const EXTERNAL_LINK_PREFIX: &str = "url:";
 pub const NOTEREF_FLAG: &str = "noteref";
 pub const RUBY_FLAG: &str = "ruby";
 pub const TCY_FLAG: &str = "tcy";

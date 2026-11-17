@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
 """Print the Unicode tables of crates/deckle-kfxgen/src/generate/py.rs.
 
 Run with the Python whose Unicode version the port follows (3.14, Unicode 16.0, as calibre's):

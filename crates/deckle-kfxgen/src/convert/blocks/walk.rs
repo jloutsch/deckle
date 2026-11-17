@@ -404,14 +404,10 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         Ok(self.resolver.resolve(n)?)
     }
 
-    /// The body: an SVG document's pictures, the body's loose text walked as a `<div>`'s, or
-    /// each child walked.
+    /// The body: its loose text walked as a `<div>`'s, or each child walked. (kfxgen's branch
+    /// for a page that is an SVG file is not reached: Calibre leaves such a spine item out.)
     fn walk_body(&mut self, body: NodeId) -> Result<(), ItemError> {
         let dom = self.dom;
-        if dom.tag(body) == "svg" {
-            // The page is an SVG file (#165).
-            return self.svg_blocks(body);
-        }
         let loose =
             has_words(dom.text(body)) || dom.children(body).iter().any(|&c| has_words(dom.tail(c)));
         if loose {
@@ -1203,12 +1199,12 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
     }
 
     /// `_emit_svg_blocks(svg)`: each `<image>` an `<svg>` draws a picture block of its own,
-    /// then the words of each `<text>` a paragraph (#231). One drawn only with shapes, but for
-    /// a page that is an SVG file, is refused as in text (kfxgen draws it as a picture, #709),
-    /// and one with a `data:` picture, before anything is copied.
+    /// then the words of each `<text>` a paragraph (#231). One drawn only with shapes is refused
+    /// (kfxgen draws it as a picture, #709), and one with a `data:` picture, before anything is
+    /// copied.
     fn svg_blocks(&mut self, svg: NodeId) -> Result<(), ItemError> {
         let dom = self.dom;
-        if dom.parent(svg).is_some() && svg_draws_shapes_only(dom, svg) {
+        if svg_draws_shapes_only(dom, svg) {
             return Err(self.unsupported("SVG pictures"));
         }
         let refs = svg_image_refs(dom, svg);

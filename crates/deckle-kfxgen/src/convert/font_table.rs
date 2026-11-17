@@ -7,14 +7,15 @@
 //! (`ttLib/ttFont.py` and `SFNTWriter` in `ttLib/sfnt.py`, fontTools 4.60.1, MIT, `NOTICE`):
 //! the tables copied raw in fontTools' order, padded to 4 bytes, with its checksums. A WOFF2
 //! face is refused: fontTools rebuilds its glyphs with its own compiler, which this port does
-//! not have. kfxgen's `KFXGEN_MAX_FONT_BYTES` is not read: its default is [`MAX_FONT_BYTES`].
+//! not have. kfxgen's environment variable `KFXGEN_MAX_FONT_BYTES` is not read: its default
+//! is used, [`KFXGEN_MAX_FONT_BYTES`] (50 MiB, not `deckle_limits::MAX_FONT_BYTES`).
 //!
 //! Hostile input: a font is only read from the archive, through the manifest item a `src`
 //! names (by href, else by file name, as kfxgen looks it up), so no path from the book reaches
 //! the file system; a file is read for its first 4 bytes, then whole only when tried. Every
 //! offset and length a font states is checked against its bytes. A WOFF's tables are inflated
-//! no further than the lengths they declare, which together stay within [`MAX_FONT_BYTES`]
-//! (kfxgen's `_check_woff`). The fonts a book embeds stay within [`MAX_BOOK_FONT_BYTES`]
+//! no further than the lengths they declare, which together stay within
+//! [`KFXGEN_MAX_FONT_BYTES`] (kfxgen's `_check_woff`). The fonts a book embeds stay within [`MAX_BOOK_FONT_BYTES`]
 //! together: a WOFF charged its tables' declared size before inflating, a TTF/OTF its size
 //! before it is kept, each file once however many rules or hrefs name it. A WOFF's directory holds at most 65,535 entries
 //! (1.3 MB); one naming 4,096 tables or more, or a tag that is not ASCII, is skipped, as
@@ -36,12 +37,12 @@ use crate::epub::{Item, data_is_bytes};
 use crate::generate::py;
 use crate::pyvalue::PyValue;
 
-/// `MAX_FONT_BYTES`: the most bytes a face embeds, and a WOFF's tables unpack to.
-const MAX_FONT_BYTES: usize = 50 * 1024 * 1024;
+/// kfxgen's `MAX_FONT_BYTES`: the most bytes a face embeds, and a WOFF's tables unpack to.
+const KFXGEN_MAX_FONT_BYTES: usize = 50 * 1024 * 1024;
 
 /// The most bytes the book's fonts may come to together (a WOFF's declared tables, a
-/// TTF/OTF's file), against a book of many fonts each just under [`MAX_FONT_BYTES`]; past it
-/// the book is refused. kfxgen has no such bound.
+/// TTF/OTF's file), against a book of many fonts each just under [`KFXGEN_MAX_FONT_BYTES`];
+/// past it the book is refused. kfxgen has no such bound.
 const MAX_BOOK_FONT_BYTES: u64 = 256 * 1024 * 1024;
 
 /// `parse_weight`: a CSS font-weight as a number, 400 for none or one `int()` can't read.
@@ -393,14 +394,14 @@ impl<'a> Fonts<'a> {
     }
 
     /// The TrueType/OpenType bytes the font of item `i` (named by `href`) embeds as, None when
-    /// kfxgen skips it: over [`MAX_FONT_BYTES`], a WOFF that does not unpack, or a table
+    /// kfxgen skips it: over [`KFXGEN_MAX_FONT_BYTES`], a WOFF that does not unpack, or a table
     /// directory `_check_sfnt` refuses. A WOFF2 within the cap is refused.
     fn embeds(&mut self, i: usize, href: &str) -> Result<Option<Arc<[u8]>>, Error> {
         if let Some(e) = self.embeds.get(&i) {
             return Ok(e.clone());
         }
         let data = self.bytes(i)?.unwrap_or_default();
-        let data = if data.len() > MAX_FONT_BYTES {
+        let data = if data.len() > KFXGEN_MAX_FONT_BYTES {
             None
         } else if data.starts_with(b"wOF2") {
             return Err(Error::Unsupported {
@@ -410,7 +411,7 @@ impl<'a> Fonts<'a> {
         } else if data.starts_with(b"wOFF") {
             // Charged before inflating, the declared size of its tables.
             self.sfnt_from_woff(&data, href)?
-                .filter(|d| d.len() <= MAX_FONT_BYTES && check_sfnt(d))
+                .filter(|d| d.len() <= KFXGEN_MAX_FONT_BYTES && check_sfnt(d))
         } else if check_sfnt(&data) {
             self.charge(data.len(), href)?;
             Some(data)
@@ -447,7 +448,7 @@ impl<'a> Fonts<'a> {
             return Ok(None);
         }
         let num_tables = usize::from(be16(data, 12));
-        if be32(data, 16) as usize > MAX_FONT_BYTES {
+        if be32(data, 16) as usize > KFXGEN_MAX_FONT_BYTES {
             return Ok(None);
         }
         let mut entries =
@@ -465,7 +466,7 @@ impl<'a> Fonts<'a> {
                 be32(data, pos + 12) as usize,
             );
             declared = declared.saturating_add(orig);
-            if declared > MAX_FONT_BYTES || length > orig {
+            if declared > KFXGEN_MAX_FONT_BYTES || length > orig {
                 return Ok(None);
             }
             entries.push((tag, offset, length, orig));

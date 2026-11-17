@@ -18,8 +18,6 @@ mod href;
 mod images;
 mod initial;
 mod inline;
-// Tasks 11 to 17 call what the tests do not.
-#[allow(dead_code)]
 mod inline_style;
 pub(crate) mod marks;
 mod notes;
