@@ -23,7 +23,7 @@ use super::boxes::Seen;
 use super::lists::Marker;
 use super::lists::{Item, Lists, Native};
 use super::spacing::Noted;
-use super::tables::{CellEnd, TableJob, Tables};
+use super::tables::{CellEnd, TableJob, Tables, add_ids, is_cell, is_non_text};
 use super::{Block, BlockId, ExtractOptions, Field, dedupe, dict_set, s, strs, unsupported};
 use crate::convert::block_bidi::{BlockBidi, start_end_align};
 use crate::convert::block_style::compute_block_style;
@@ -35,19 +35,22 @@ use crate::convert::inline::{
 use crate::convert::inline_style::{
     FLAG_PRE, Flag, Flags, Segment, make_anchor_mark, normalize_runs_with_anchors,
 };
-use crate::convert::pictures::{css_background_image, displays_as_block};
+use crate::convert::pictures::{
+    DATA_URI, SVG_IMAGE_SIZE, css_background_image, displays_as_block, img_size_hint, img_token,
+    is_data_uri, svg_draws_shapes_only, svg_image_refs, svg_text_paragraphs,
+};
 use crate::convert::resolver::{Resolved, Resolver};
-use crate::convert::{Error, ItemError};
+use crate::convert::{Error, ItemError, Raised};
 use crate::dom::{Dom, NodeId, XHTML_NS};
 use crate::generate::page_scale::em_percent;
 use crate::generate::py;
 use crate::pyvalue::PyValue;
 
 const MATHML_NS: &str = "http://www.w3.org/1998/Math/MathML";
-/// A table written as a paragraph per row (`_walk_container` on the table): a table that is
-/// not native, a notes table, one a contents entry names past its start, or any table without
-/// `native_tables`.
-pub(super) const ROWS: &str = "tables written as rows (Task 17)";
+const WEIGHT_NOT_A_NUMBER: Raised = Raised {
+    exception: "ValueError",
+    note: "_walk_split_row: int() of a cell's font-weight of digits int() does not read",
+};
 /// `_SOURCE_MARKED`, `_SOURCE_TOC`, `_SOURCE_FRONT`: kfxgen's marks of the book's own classes.
 const SOURCE_MARKED: &str = "data-kfxgen-source";
 const SOURCE_TOC: &str = "data-kfxgen-toc";
@@ -160,8 +163,28 @@ pub(super) struct Container {
     parts: Vec<Segment>,
     /// Its next child, as an index into its children.
     next: usize,
-    /// The child just walked as a block, whose tail comes next.
+    /// The child just walked as a block, whose tail comes next, and where its blocks began.
     walked: Option<NodeId>,
+    walked_from: usize,
+    /// `follow`: a row group whose empty anchors after a row name that row (#221).
+    follow: bool,
+    /// `row_block`, as its index in `blocks`, and the ids of the empty anchors after it not
+    /// added to it yet (added together, in order, before anything else reads it).
+    row: Option<usize>,
+    row_ids: Vec<String>,
+    depth: usize,
+}
+
+/// `_walk_split_row(row)` part-way through its cells.
+pub(super) struct SplitRow {
+    row: NodeId,
+    /// The alignment its paragraphs take where they set none (`_row_align`).
+    align: PyValue,
+    start: usize,
+    /// Its next child, as an index into its children.
+    next: usize,
+    /// The cell just walked and where its blocks began.
+    cell: Option<(NodeId, usize)>,
     depth: usize,
 }
 
@@ -208,6 +231,7 @@ pub(super) enum Frame {
     Table(Box<TableJob>),
     /// `_walk_cell(cell)` after its `_walk_element(cell)`, then the table it is building.
     CellEnd(Box<CellEnd>),
+    SplitRow(SplitRow),
 }
 
 /// Memo slots per node.
@@ -239,8 +263,12 @@ pub(super) struct Walker<'o, 'w, 'a, 's> {
     break_at: Option<usize>,
     clear_at: Option<(usize, &'static str)>,
     pub(super) bidi: BlockBidi,
-    /// Whether a node's subtree, itself included, holds an element of `block_tags`.
+    /// Whether a node's subtree, itself included, holds an element of `block_tags`; a
+    /// `<table>`; text or an element of `_NON_TEXT_TAGS` (its own tail counted, see
+    /// [`Walker::shows`]).
     holds_block_tag: Vec<Bit>,
+    holds_table: Vec<Bit>,
+    shows: Vec<Bit>,
     pub(super) stack: Vec<Frame>,
     /// `margins` and `paddings`, and what working them out reads more than once.
     pub(super) noted: Noted,
@@ -275,6 +303,8 @@ pub(super) fn walk(w: &mut Walk, opts: &ExtractOptions) -> Result<Walked, ItemEr
         clear_at: None,
         bidi: BlockBidi::new(dom),
         holds_block_tag: vec![Bit::Unknown; dom.node_count()],
+        holds_table: vec![Bit::Unknown; dom.node_count()],
+        shows: vec![Bit::Unknown; dom.node_count()],
         stack: Vec::new(),
         noted: Noted::new(dom),
         lists: Lists::default(),
@@ -377,8 +407,8 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
     fn walk_body(&mut self, body: NodeId) -> Result<(), ItemError> {
         let dom = self.dom;
         if dom.tag(body) == "svg" {
-            // `_emit_svg_blocks(body)`: the page is an SVG file.
-            return Err(self.unsupported("SVG blocks (Task 17)"));
+            // The page is an SVG file (#165).
+            return self.svg_blocks(body);
         }
         let loose =
             has_words(dom.text(body)) || dom.children(body).iter().any(|&c| has_words(dom.tail(c)));
@@ -424,6 +454,7 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
                 Frame::TableSeen { elem, start } => self.table_seen(elem, start),
                 Frame::Table(job) => self.table_run(job)?,
                 Frame::CellEnd(end) => self.cell_end(*end)?,
+                Frame::SplitRow(r) => self.split_row_step(r)?,
             }
         }
         Ok(())
@@ -545,20 +576,28 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         }
         let css = self.resolve(elem)?;
         let background = css_background_image(dom, elem, css.as_ref(), &self.w.file().href)?;
-        if background.is_some_and(|b| !b.is_empty()) {
-            return Err(self.unsupported("background pictures (Task 17)"));
+        if let Some(href) = background.filter(|b| !b.is_empty()) {
+            // The element is the picture: no children, no text (#168).
+            let size = img_size_hint(dom, elem, css.as_ref())?;
+            drop(css);
+            let token = img_token(&href, "", size.as_deref(), None, None);
+            return self.image_block(elem, Some(token));
         }
         drop(css);
         let local = dom.tag(elem);
         if local == "hr" {
             return self.emit_rule(elem);
         }
-        if local == "table" {
-            if self.opts.native_tables && self.table(elem, depth)? {
-                return Ok(());
-            }
-            return Err(self.unsupported(ROWS));
+        if local == "table" && self.opts.native_tables && self.table(elem, depth)? {
+            return Ok(());
         }
+        self.walk_rest(elem, depth)
+    }
+
+    /// The rest of `_walk_element(elem)`: a table written as rows goes on here.
+    pub(super) fn walk_rest(&mut self, elem: NodeId, depth: usize) -> Result<(), ItemError> {
+        let dom = self.dom;
+        let local = dom.tag(elem);
         // An equation walked as a block is a paragraph of its own (#235); so is a cell
         // `_walk_cell` walks that holds no block (#565).
         let is_block =
@@ -570,24 +609,17 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
                 break;
             }
         }
-        if self.opts.native_tables
-            && local == "tr"
-            && !has_block_child
-            && dom
-                .subtree(elem)
-                .skip(1)
-                .any(|d| !dom.is_comment(d) && dom.tag(d) == "table")
-        {
-            return Err(self.unsupported("table rows holding tables (Task 17)"));
+        if self.opts.native_tables && local == "tr" && !has_block_child && self.table_below(elem) {
+            return self.split_row(elem, depth);
         }
         if is_block && !has_block_child {
             return self.leaf(elem);
         }
         if local == "img" {
-            return self.image_block(elem);
+            return self.image_block(elem, None);
         }
         if local == "svg" {
-            return Err(self.unsupported("SVG blocks (Task 17)"));
+            return self.svg_blocks(elem);
         }
         self.pending_ids
             .extend(own_anchor_ids(dom, elem).map(str::to_owned));
@@ -624,9 +656,12 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         let mut bstyle = PyValue::None;
         if let Some(css) = &css {
             bstyle = compute_block_style(css)?;
-            if local == "tr" {
-                // `_row_align`.
-                return Err(self.unsupported("table rows (Task 17)"));
+            if local == "tr"
+                && let PyValue::Dict(style) = &mut bstyle
+            {
+                let own = style_align(style);
+                let align = self.row_align(elem, own)?;
+                dict_set(style, "align", align);
             }
             if local == "p" {
                 let (with, dropped) = initial(dom, self.resolver, elem, Some(css), &text, spans)?;
@@ -704,13 +739,17 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         self.note_margins(elem, at, padded)
     }
 
-    /// `_emit_image_block(elem)` for an `<img>`.
-    fn image_block(&mut self, elem: NodeId) -> Result<(), ItemError> {
+    /// `_emit_image_block(elem, ...)`: an `<img>` (`token` None), or the picture `token` an
+    /// element draws (its background, or an `<svg>`'s `<image>`).
+    fn image_block(&mut self, elem: NodeId, token: Option<String>) -> Result<(), ItemError> {
         let dom = self.dom;
         let mut ids = self.take_pending();
         ids.extend(own_anchor_ids(dom, elem).map(str::to_owned));
         let block_ids = dedupe(ids);
-        let token = self.w.picture_token(elem, dom.parent(elem))?;
+        let token = match token {
+            Some(t) => t,
+            None => self.w.picture_token(elem, dom.parent(elem))?,
+        };
         let mut fields: Vec<(&'static str, Field)> = vec![
             ("text", Field::Py(PyValue::Str(token))),
             ("spans", Field::Py(PyValue::List(Vec::new()))),
@@ -777,8 +816,8 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
             return Ok(());
         }
         match dom.tag(elem) {
-            "img" => return self.image_block(elem),
-            "svg" => return Err(self.unsupported("SVG blocks (Task 17)")),
+            "img" => return self.image_block(elem, None),
+            "svg" => return self.svg_blocks(elem),
             _ => {}
         }
         self.pending_ids
@@ -819,10 +858,6 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
                 flags: ws.clone(),
             });
         }
-        if anchors_follow_rows(dom, elem) {
-            // An anchor after a row moves onto that row (#221).
-            return Err(self.unsupported("anchors that follow rows (Task 17)"));
-        }
         Ok(Container {
             elem,
             at_body,
@@ -831,6 +866,10 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
             parts,
             next: 0,
             walked: None,
+            walked_from: 0,
+            follow: anchors_follow_rows(dom, elem),
+            row: None,
+            row_ids: Vec::new(),
             depth,
         })
     }
@@ -840,11 +879,19 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
     fn container_step(&mut self, mut c: Container) -> Result<(), ItemError> {
         let dom = self.dom;
         if let Some(child) = c.walked.take() {
+            if c.follow && dom.tag(child) == "tr" {
+                self.add_row_ids(&mut c);
+                c.row = (self.blocks.len() > c.walked_from).then_some(c.walked_from);
+            }
             self.tail(&mut c, child);
         }
         while let Some(&child) = dom.children(c.elem).get(c.next) {
             c.next += 1;
-            if c.among.contains(&child) {
+            if c.follow && c.row.is_some() && is_empty_anchor(dom, child) {
+                // An anchor after a row names that row, at its start (#221).
+                c.row_ids
+                    .extend(own_anchor_ids(dom, child).map(str::to_owned));
+            } else if c.among.contains(&child) {
                 let mut parts = std::mem::take(&mut c.parts);
                 self.inline_picture_parts(child, c.elem, &mut parts)?;
                 c.parts = parts;
@@ -857,6 +904,7 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
                 self.flush(&mut c)?;
                 let depth = c.depth + 1;
                 c.walked = Some(child);
+                c.walked_from = self.blocks.len();
                 self.stack.push(Frame::Container(c));
                 return self.enter(child, depth);
             } else {
@@ -866,7 +914,36 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
             }
             self.tail(&mut c, child);
         }
+        self.add_row_ids(&mut c);
         self.flush(&mut c)
+    }
+
+    /// The ids of the empty anchors after `c`'s row added to its first block, and to the
+    /// table inside it when that block is a table (#263): each where it is missing, in order.
+    fn add_row_ids(&mut self, c: &mut Container) {
+        let ids = std::mem::take(&mut c.row_ids);
+        let Some(b) = c.row.and_then(|at| self.blocks.get_mut(at)) else {
+            return;
+        };
+        if ids.is_empty() {
+            return;
+        }
+        add_ids(b, &ids);
+        if let Some(PyValue::Dict(tbl)) = b.get_mut("table")
+            && let Some((_, PyValue::List(own))) = tbl
+                .iter_mut()
+                .find(|(k, _)| k.as_str() == Some("anchor_ids"))
+        {
+            let mut have: HashSet<String> = own
+                .iter()
+                .filter_map(|a| a.as_str().map(str::to_owned))
+                .collect();
+            for aid in ids {
+                if have.insert(aid.clone()) {
+                    own.push(PyValue::Str(aid));
+                }
+            }
+        }
     }
 
     fn tail(&self, c: &mut Container, child: NodeId) {
@@ -967,31 +1044,205 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         }
     }
 
-    /// `any(d.tag in block_tags for d in n.iter())`, kept per node: worked out for a whole
-    /// subtree at once, children first, so every node is looked at once per file.
+    /// `any(d.tag in block_tags for d in n.iter())`.
     fn block_below(&mut self, n: NodeId) -> bool {
         let dom = self.dom;
-        if self.holds_block_tag[n.index()] == Bit::Unknown {
-            // (node, children done)
-            let mut stack = vec![(n, false)];
-            while let Some((m, done)) = stack.pop() {
-                if self.holds_block_tag[m.index()] != Bit::Unknown {
-                    continue;
-                }
-                if done {
-                    let below = is_block_tag(dom, m)
-                        || dom
-                            .children(m)
-                            .iter()
-                            .any(|c| self.holds_block_tag[c.index()] == Bit::Yes);
-                    self.holds_block_tag[m.index()] = if below { Bit::Yes } else { Bit::No };
-                } else {
-                    stack.push((m, true));
-                    stack.extend(dom.children(m).iter().map(|&c| (c, false)));
-                }
+        any_below(dom, &mut self.holds_block_tag, n, |m| is_block_tag(dom, m))
+    }
+
+    /// `any(_local_tag(d.tag) == "table" for d in tr.iterdescendants())`.
+    fn table_below(&mut self, tr: NodeId) -> bool {
+        let dom = self.dom;
+        let table = |m: NodeId| !dom.is_comment(m) && dom.tag(m) == "table";
+        dom.children(tr)
+            .iter()
+            .any(|&c| any_below(dom, &mut self.holds_table, c, table))
+    }
+
+    /// `"".join(cell.itertext()).strip()`, or an element of `_NON_TEXT_TAGS` in `cell.iter()`.
+    fn cell_shows(&mut self, cell: NodeId) -> bool {
+        let dom = self.dom;
+        // Below the cell a node's tail is part of the cell's text.
+        let shows = |m: NodeId| {
+            has_words(dom.tail(m))
+                || (!dom.is_comment(m) && (has_words(dom.text(m)) || is_non_text(dom.tag(m))))
+        };
+        has_words(dom.text(cell))
+            || is_non_text(dom.tag(cell))
+            || dom
+                .children(cell)
+                .iter()
+                .any(|&c| any_below(dom, &mut self.shows, c, shows))
+    }
+
+    /// `_row_align(tr, own, style_resolver)`: a row written as one paragraph takes its cells'
+    /// alignment when every cell with something in it agrees, else its own (#224).
+    fn row_align(&mut self, tr: NodeId, own: PyValue) -> Result<PyValue, ItemError> {
+        let dom = self.dom;
+        let mut aligns: Vec<PyValue> = Vec::new();
+        for &cell in dom.children(tr) {
+            if dom.is_comment(cell) || !is_cell(dom.tag(cell)) || !self.cell_shows(cell) {
+                continue;
+            }
+            let align = match self.resolve(cell)? {
+                Some(css) => block_align(&css)?,
+                None => PyValue::None,
+            };
+            // The values are a few keywords and None.
+            if !aligns.contains(&align) {
+                aligns.push(align);
             }
         }
-        self.holds_block_tag[n.index()] == Bit::Yes
+        Ok(match aligns.as_slice() {
+            [one] if *one != PyValue::None => one.clone(),
+            _ => own,
+        })
+    }
+
+    /// `_walk_split_row(row)` up to its first cell: a row holding a table, each cell walked
+    /// as the body is, so each table in it is a block of its own (#263, #681).
+    fn split_row(&mut self, row: NodeId, depth: usize) -> Result<(), ItemError> {
+        let mut align = PyValue::None;
+        if let Some(css) = self.resolve(row)? {
+            let own = block_align(&css)?;
+            drop(css);
+            align = self.row_align(row, own)?;
+        }
+        // The row's own ids name its first piece.
+        self.pending_ids
+            .extend(own_anchor_ids(self.dom, row).map(str::to_owned));
+        let start = self.blocks.len();
+        self.split_row_step(SplitRow {
+            row,
+            align,
+            start,
+            next: 0,
+            cell: None,
+            depth,
+        })
+    }
+
+    /// `_walk_split_row`'s loop from where it stopped: the next cell's `_walk_container`, or
+    /// the row's end.
+    fn split_row_step(&mut self, mut r: SplitRow) -> Result<(), ItemError> {
+        let dom = self.dom;
+        if let Some((cell, first)) = r.cell.take() {
+            self.header_bold(cell, first)?;
+        }
+        while let Some(&cell) = dom.children(r.row).get(r.next) {
+            r.next += 1;
+            if dom.is_comment(cell) || !is_cell(dom.tag(cell)) {
+                continue;
+            }
+            self.pending_ids
+                .extend(own_anchor_ids(dom, cell).map(str::to_owned));
+            r.cell = Some((cell, self.blocks.len()));
+            let c = self.container(cell, false, r.depth + 1)?;
+            self.stack.push(Frame::SplitRow(r));
+            self.stack.push(Frame::Container(c));
+            return Ok(());
+        }
+        // A table's rows written as paragraphs keep their space (#219), and the row's
+        // alignment where they set none of their own. A row nested in a cell is looked at
+        // again by each row round it: each look is charged.
+        self.step(self.blocks.len().saturating_sub(r.start))?;
+        for b in self.blocks.iter_mut().skip(r.start) {
+            if b.kind().is_some() {
+                continue;
+            }
+            b.set("row", PyValue::Bool(true));
+            let style = b.get("block_style");
+            let set = style
+                .and_then(|st| st.get("align"))
+                .is_some_and(PyValue::is_truthy);
+            if r.align.is_truthy() && !set {
+                let mut pairs = match style {
+                    Some(PyValue::Dict(pairs)) => pairs.clone(),
+                    _ => Vec::new(),
+                };
+                dict_set(&mut pairs, "align", r.align.clone());
+                b.set("block_style", PyValue::Dict(pairs));
+            }
+        }
+        Ok(())
+    }
+
+    /// A header cell's bold, which its own text, written straight in it, has no paragraph
+    /// style to carry (QA on #692): onto each paragraph from `first` on without a `bold`.
+    fn header_bold(&mut self, cell: NodeId, first: usize) -> Result<(), ItemError> {
+        let weight = keyword(self.resolve(cell)?.as_ref(), "font-weight")?;
+        let bold = match weight.as_str() {
+            "bold" | "bolder" => true,
+            w if !w.is_empty() && w.chars().all(py::is_digit) => {
+                // `int()` refuses the digits `isdigit` takes beyond category Nd.
+                py::py_int(w).ok_or(WEIGHT_NOT_A_NUMBER)? >= 600
+            }
+            _ => false,
+        };
+        if !bold {
+            return Ok(());
+        }
+        self.step(self.blocks.len().saturating_sub(first))?;
+        for b in self.blocks.iter_mut().skip(first) {
+            if b.kind().is_some() {
+                continue;
+            }
+            let mut pairs = match b.get("block_style") {
+                Some(PyValue::Dict(pairs)) => pairs.clone(),
+                _ => Vec::new(),
+            };
+            if pairs.iter().any(|(k, _)| k.as_str() == Some("bold")) {
+                continue;
+            }
+            pairs.push((s("bold"), PyValue::Bool(true)));
+            b.set("block_style", PyValue::Dict(pairs));
+        }
+        Ok(())
+    }
+
+    /// `_emit_svg_blocks(svg)`: each `<image>` an `<svg>` draws a picture block of its own,
+    /// then the words of each `<text>` a paragraph (#231). One drawn only with shapes, but for
+    /// a page that is an SVG file, is refused as in text (kfxgen draws it as a picture, #709),
+    /// and one with a `data:` picture, before anything is copied.
+    fn svg_blocks(&mut self, svg: NodeId) -> Result<(), ItemError> {
+        let dom = self.dom;
+        if dom.parent(svg).is_some() && svg_draws_shapes_only(dom, svg) {
+            return Err(self.unsupported("SVG pictures"));
+        }
+        let refs = svg_image_refs(dom, svg);
+        if refs.iter().any(|href| is_data_uri(href)) {
+            return Err(self.unsupported(DATA_URI));
+        }
+        let mut drew_picture = !refs.is_empty();
+        for href in refs {
+            self.resolver.charge(href.len())?;
+            let token = img_token(href, "", Some(SVG_IMAGE_SIZE), None, None);
+            self.image_block(svg, Some(token))?;
+        }
+        for (text, node) in svg_text_paragraphs(dom, svg) {
+            let mut ids = Vec::new();
+            if !drew_picture {
+                // No picture took the `<svg>`'s own ids or those carried to it.
+                ids = self.take_pending();
+                ids.extend(own_anchor_ids(dom, svg).map(str::to_owned));
+                drew_picture = true;
+            }
+            ids.extend(subtree_anchor_ids(dom, node));
+            let ids = dedupe(ids);
+            self.resolver.charge(text.len())?;
+            let style = self
+                .bidi
+                .with_bidi(dom, self.resolver, PyValue::None, node, true)?;
+            let block = self.new_block(vec![
+                ("text", Field::Py(PyValue::Str(text))),
+                ("spans", Field::Py(PyValue::List(Vec::new()))),
+                ("block_style", Field::Py(style)),
+                ("anchor_ids", Field::Py(strs(&ids))),
+                ("anchor_offsets", Field::Py(offsets(&ids, &[]))),
+            ]);
+            self.blocks.push(block);
+        }
+        Ok(())
     }
 
     /// `_is_block_at_body(child)`.
@@ -1086,6 +1337,36 @@ impl<'o, 'w, 'a, 's> Walker<'o, 'w, 'a, 's> {
         }
         Ok(false)
     }
+}
+
+/// Whether `own` holds for `n` or anything below it, kept per node in `memo`: worked out for a
+/// whole subtree at once, children first, so every node is looked at once per file.
+fn any_below(dom: &Dom, memo: &mut [Bit], n: NodeId, own: impl Fn(NodeId) -> bool) -> bool {
+    if memo[n.index()] == Bit::Unknown {
+        // (node, children done)
+        let mut stack = vec![(n, false)];
+        while let Some((m, done)) = stack.pop() {
+            if memo[m.index()] != Bit::Unknown {
+                continue;
+            }
+            if done {
+                let below = own(m) || dom.children(m).iter().any(|c| memo[c.index()] == Bit::Yes);
+                memo[m.index()] = if below { Bit::Yes } else { Bit::No };
+            } else {
+                stack.push((m, true));
+                stack.extend(dom.children(m).iter().map(|&c| (c, false)));
+            }
+        }
+    }
+    memo[n.index()] == Bit::Yes
+}
+
+/// `compute_block_style(...)["align"]` of a block style dict.
+fn style_align(style: &[(PyValue, PyValue)]) -> PyValue {
+    style
+        .iter()
+        .find(|(k, _)| k.as_str() == Some("align"))
+        .map_or(PyValue::None, |(_, v)| v.clone())
 }
 
 /// A block's `text`, "" for none.

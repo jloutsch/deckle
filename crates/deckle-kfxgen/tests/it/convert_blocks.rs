@@ -61,6 +61,7 @@ const FIXTURES: &[&str] = &[
     "package_more",
     "package_quirks",
     "page_list",
+    "pictures_more",
     "pictures_side_by_side_766",
     "refused_selector",
     "rtl",
@@ -68,6 +69,7 @@ const FIXTURES: &[&str] = &[
     "ruby_tcy",
     "rules_spaces",
     "spacers",
+    "tables_more",
     "text_edges",
     "turned_words_765",
     "typography",
@@ -1659,13 +1661,9 @@ fn a_table_of_20000_cells_converts_under_the_cost_limit() {
     assert!(took < COST_LIMIT, "{took:?}");
 }
 
-/// The refusal of a table kfxgen writes as rows (Task 17 ports that path).
-fn is_rows<T>(got: &Result<T, ItemError>) -> bool {
-    matches!(got, Err(ItemError::Error(Error::Unsupported { feature, .. })) if *feature == "tables written as rows (Task 17)")
-}
-
-/// `<table><tbody><tr><td>` nested `levels` times, a word in the innermost cell.
-fn tables_in_cells(levels: usize) -> deckle_kfxgen::book::File {
+/// `<table><tbody><tr><td>` nested `levels` times; in the innermost cell a table of `rows`
+/// rows of ten cells of a word.
+fn tables_in_cells(levels: usize, rows: usize) -> deckle_kfxgen::book::File {
     let (mut dom, body) = empty_page();
     let mut at = body;
     for _ in 0..levels {
@@ -1674,24 +1672,45 @@ fn tables_in_cells(levels: usize) -> deckle_kfxgen::book::File {
         let tr = dom.append_child(tbody, "tr");
         at = dom.append_child(tr, "td");
     }
-    dom.set_text(at, "x");
+    let table = dom.append_child(at, "table");
+    let tbody = dom.append_child(table, "tbody");
+    for _ in 0..rows {
+        let tr = dom.append_child(tbody, "tr");
+        for _ in 0..10 {
+            let td = dom.append_child(tr, "td");
+            dom.set_text(td, "x");
+        }
+    }
     file_of(dom, "")
 }
 
-/// A table holding a table is never native (`_table_is_native`): kfxgen writes it as rows,
-/// which the port refuses by name until Task 17. Tables nested in cells as deep as a book may
-/// nest, and 5,000 levels (20,000 elements) in a `File` built by hand, are refused after one
-/// pass over the outer table, on a test thread's stack.
+/// A table holding a table is written as rows, each row holding one split round it, so the
+/// innermost table is a native table block and each table round it is counted in
+/// `tables_seen`. Tables nested in cells as deep as a book may nest are walked on the walk's
+/// own stack; 5,000 levels (20,000 elements) in a `File` built by hand are refused by depth.
+/// Each table's cells are counted once, not once for each table round them: 62 tables round
+/// one of 10,000 cells take 30,000 units for the cells, not 1.9 million (which the budget
+/// refuses).
 #[test]
-fn tables_nested_in_cells_are_refused_after_one_pass() {
-    for levels in [(deckle_limits::MAX_DEPTH - 2) / 4, 5_000] {
-        let file = tables_in_cells(levels);
+fn tables_nested_in_cells_are_counted_once() {
+    let levels = (deckle_limits::MAX_DEPTH - 2) / 4 - 1;
+    for rows in [1, 1_000] {
+        let file = tables_in_cells(levels, rows);
         let start = Instant::now();
-        let got = extract(&file);
+        let got = extract(&file).unwrap_or_else(|e| panic!("{rows}: {e:?}"));
         let took = start.elapsed();
-        assert!(is_rows(&got), "{levels}: {:?}", got.map(|b| b.blocks.len()));
-        assert!(took < COST_LIMIT, "{levels}: {took:?}");
+        assert_eq!(table_rows(&got).len(), rows);
+        assert_eq!(got.tables_seen, vec![got.blocks[0].id(); levels]);
+        assert!(took < COST_LIMIT, "{rows}: {took:?}");
     }
+    let start = Instant::now();
+    match extract(&tables_in_cells(5_000, 1)) {
+        Err(ItemError::Error(Error::TooLarge { what })) => {
+            assert!(what.ends_with("levels below the body"), "{what}");
+        }
+        other => panic!("{:?}", other.map(|b| b.blocks.len())),
+    }
+    assert!(start.elapsed() < COST_LIMIT, "{:?}", start.elapsed());
 }
 
 /// A row nested in `groups` `<tbody>`s, its one cell holding two paragraphs.
@@ -1793,9 +1812,10 @@ fn huge_spans_take_bounded_work() {
         dom.set_text(td, "x");
     });
     let start = Instant::now();
-    let got = extract(&wide);
-    assert!(is_rows(&got), "{:?}", got.map(|b| b.blocks.len()));
+    let got = extract(&wide).expect("written as a row");
     assert!(start.elapsed() < COST_LIMIT, "{:?}", start.elapsed());
+    assert_eq!(got.blocks.len(), 1);
+    assert_eq!(got.blocks[0].get("row"), Some(&PyValue::Bool(true)));
 
     // 1,001 rows of 4 columns, the first cell of the first row spanning the rows below,
     // which hold 3 cells each.
@@ -1947,86 +1967,6 @@ fn tables_holding_an_epub_switch_are_refused_by_name() {
     }
 }
 
-/// `tables_more` (Task 17: three of its tables are written as rows) holds the only dumped
-/// native table with a caption, a colspan, a rowspan, header cells and a cell of paragraphs.
-/// With the rows tables taken out of its tree, the blocks up to that table match kfxgen's dump
-/// before spacing and after. With the notes table kept, `_is_notes_table` sends it to the rows
-/// path (kfxgen's dump counts it in `notes_seen`), refused until Task 17.
-#[test]
-fn tables_more_s_native_table_matches_the_dump() {
-    let toc = dump("tables_more", "toc.json.gz");
-    let link_targets = string_set(toc.get("link_targets"));
-    let none = HashSet::new();
-    let opts = ExtractOptions {
-        native_tables: true,
-        toc_targets: &none,
-        link_targets: &link_targets,
-        keep_nav_listings: false,
-    };
-    let PyValue::List(records) = dump("tables_more", "blocks/000.json.gz") else {
-        panic!("no records");
-    };
-    let record = &records[0];
-    let spacing = record.get("spacing").and_then(PyValue::as_list).unwrap();
-    let file_call = spacing
-        .iter()
-        .rfind(|c| c.get("depth").and_then(PyValue::as_int) == Some(0))
-        .unwrap();
-    let Some(PyValue::List(want_before)) = file_call.get("blocks") else {
-        panic!("no D2a blocks");
-    };
-    let Some(PyValue::List(want_after)) = record.get("blocks") else {
-        panic!("no D2 blocks");
-    };
-    for keep_notes in [false, true] {
-        let mut book = read_book(&fixtures::kfxgen("sources/tables_more.epub")).unwrap();
-        let file = &mut book.files[0];
-        assert!(file.href.ends_with("tables.xhtml"));
-        // In document order: the native table, the one with a hidden row, the one holding a
-        // table (and that table), the notes table.
-        let tables: Vec<_> = file
-            .dom
-            .descendants()
-            .filter(|&n| file.dom.tag(n) == "table")
-            .collect();
-        assert_eq!(tables.len(), 5);
-        let mut gone = vec![tables[1], tables[2]];
-        if !keep_notes {
-            gone.push(tables[4]);
-        }
-        file.dom.remove_many(&gone);
-        let file = &book.files[0];
-        let run = |before: bool| {
-            let budget = TextBudget::new();
-            let resolver = Resolver::new(file, &DEFAULT_PROFILE, &budget);
-            let mut serials = Serials::default();
-            let mut walk = Walk::new(file, &resolver, &mut serials);
-            if before {
-                blocks_before_spacing(&mut walk, &opts).map(|b| before_spacing_py(&b))
-            } else {
-                extract_blocks(&mut walk, &opts).map(|b| blocks_py(&b.blocks))
-            }
-        };
-        if keep_notes {
-            assert!(is_rows(&run(false)));
-            continue;
-        }
-        let mut failures = Vec::new();
-        for (before, want) in [(true, want_before), (false, want_after)] {
-            let PyValue::List(ours) = run(before).unwrap() else {
-                panic!("no list");
-            };
-            // The heading, the paragraph, the caption, the table.
-            for i in 0..4 {
-                for d in model_diff(&ours[i], &want[i]) {
-                    failures.push(format!("{}[{i}]{d}", if before { "D2a" } else { "D2" }));
-                }
-            }
-        }
-        assert!(failures.is_empty(), "{failures:#?}");
-    }
-}
-
 /// `blocks[i]`'s value at a path of dict keys and list indexes ("table.rows.0.cells.1.text").
 fn at(blocks: &[Block], i: usize, path: &str) -> String {
     let mut v = blocks[i].to_py();
@@ -2103,8 +2043,9 @@ fn tables_no_dump_holds_are_built_as_kfxgen_builds_them() {
     assert_eq!(at(b, 3, "anchor_offsets"), "{'t': Int(0)}");
     assert_eq!(at(b, 3, "table.anchor_ids"), "List([])");
 
-    // A contents entry naming a row past the first: the rows path (Task 17). Naming the
-    // table itself keeps it native.
+    // A contents entry naming a row past the first: written as rows, a paragraph a row, the
+    // table's own id on the first, and counted in `tables_seen`. Naming the table itself
+    // keeps it native.
     let table = "<table id=\"t\"><tr><td>a</td></tr><tr id=\"r2\"><td>b</td></tr></table>";
     let file = page(table, "");
     let budget = TextBudget::new();
@@ -2118,10 +2059,15 @@ fn tables_no_dump_holds_are_built_as_kfxgen_builds_them() {
         link_targets: &empty,
         keep_nav_listings: false,
     };
-    assert!(is_rows(&extract_blocks(
-        &mut Walk::new(&file, &resolver, &mut serials),
-        &opts
-    )));
+    let rows = extract_blocks(&mut Walk::new(&file, &resolver, &mut serials), &opts).unwrap();
+    let b = &rows.blocks;
+    assert_eq!(b.len(), 2);
+    for (i, (text, id)) in [("a", "t"), ("b", "r2")].into_iter().enumerate() {
+        assert_eq!(at(b, i, "text"), format!("'{text}'"));
+        assert_eq!(at(b, i, "row"), "True");
+        assert_eq!(at(b, i, "anchor_ids"), format!("List([Str(\"{id}\")])"));
+    }
+    assert_eq!(rows.tables_seen, [b[0].id()]);
     let got = walked_with(table, "", &["t"]);
     assert_eq!(at(&got.blocks, 0, "type"), "'table'");
 

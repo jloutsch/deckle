@@ -33,7 +33,7 @@ use super::boxes::{border_py, is_box_tag};
 use super::rules::{BORDER_SIDES, css_border};
 use super::spacing::{Pad, margin_em, padding_em, space_between, truthy};
 use super::walk::{
-    Aside, Frame, HORIZONTAL, ROWS, Walker, anchors_follow_rows, has_words, is_block_tag,
+    Aside, Frame, HORIZONTAL, Walker, anchors_follow_rows, has_words, is_block_tag,
     is_empty_anchor, is_nav_listing, offsets, text_field,
 };
 use super::{Block, BlockId, Field, dedupe, dict_set, s, strs};
@@ -87,7 +87,7 @@ const NO_ALIGN: Raised = Raised {
 };
 
 /// `_CELL_TAGS`.
-fn is_cell(local: &str) -> bool {
+pub(super) fn is_cell(local: &str) -> bool {
     matches!(local, "td" | "th")
 }
 
@@ -149,7 +149,7 @@ fn is_cell_block(local: &str) -> bool {
 }
 
 /// `_NON_TEXT_TAGS`.
-fn is_non_text(local: &str) -> bool {
+pub(super) fn is_non_text(local: &str) -> bool {
     matches!(
         local,
         "img" | "svg" | "image" | "math" | "video" | "audio" | "object" | "embed" | "iframe"
@@ -289,6 +289,8 @@ pub(super) struct Tables {
     inherited_align: HashMap<NodeId, String>,
     /// `_table_dir(cell).lower() == "rtl"` per table.
     rtl: HashMap<NodeId, bool>,
+    /// Tables below a table already counted and searched for a switch.
+    scanned: HashSet<NodeId>,
 }
 
 /// A row as `take` builds it, before `source_order`.
@@ -819,14 +821,28 @@ impl Walker<'_, '_, '_, '_> {
         // Not in kfxgen: each cell below the table, nested tables' cells too, costs
         // `CELL_UNITS` of the file's style text budget, counted from the tree before anything
         // is resolved. A table converts in about four resolves a cell, so one too large for the
-        // budget is refused after this one pass rather than after minutes of resolving.
-        let dom = self.dom;
-        let cells = dom
-            .subtree(elem)
-            .filter(|&c| local(dom, c).is_some_and(is_cell))
-            .count();
-        self.resolver
-            .charge(cells.saturating_mul(CELL_UNITS * crate::css::TEXT_UNIT))?;
+        // budget is refused after this one pass rather than after minutes of resolving. A
+        // table inside one counted already was counted and searched with it, so nesting does
+        // not repeat the pass.
+        if self.tables.scanned.insert(elem) {
+            let dom = self.dom;
+            let (mut cells, mut switch) = (0usize, false);
+            for d in dom.subtree(elem) {
+                match local(dom, d) {
+                    Some(t) if is_cell(t) => cells += 1,
+                    Some("table") => {
+                        self.tables.scanned.insert(d);
+                    }
+                    _ => {}
+                }
+                switch = switch || epub_switch_branch(dom, d).is_some();
+            }
+            self.resolver
+                .charge(cells.saturating_mul(CELL_UNITS * crate::css::TEXT_UNIT))?;
+            if switch {
+                return Err(self.unsupported(SWITCH));
+            }
+        }
         if !self.table_is_native(elem)? {
             return Ok(false);
         }
@@ -840,15 +856,10 @@ impl Walker<'_, '_, '_, '_> {
         Ok(true)
     }
 
-    /// `_table_is_native(table, style_resolver)`.
+    /// `_table_is_native(table, style_resolver)` past `_shown_tree`, whose switch search is in
+    /// [`Self::table`].
     fn table_is_native(&mut self, table: NodeId) -> Result<bool, ItemError> {
         let dom = self.dom;
-        if dom
-            .subtree(table)
-            .any(|d| epub_switch_branch(dom, d).is_some())
-        {
-            return Err(self.unsupported(SWITCH));
-        }
         let (mut rows, mut cells, mut captions) = (0usize, 0usize, 0usize);
         let mut long_cell = false;
         for e in dom.subtree(table) {
@@ -1050,7 +1061,10 @@ impl Walker<'_, '_, '_, '_> {
                     if let Some((cell, depth)) = self.rows_step(&mut job)? {
                         return self.walk_cell(job, cell, depth);
                     }
-                    self.rows_done(&mut job)?;
+                    if !self.rows_done(&mut job)? {
+                        // The contents fallback: written as rows instead.
+                        return self.walk_rest(job.table, job.depth);
+                    }
                 }
                 Stage::Fostered => {
                     if let Some((el, depth)) = self.fostered_step(&mut job)? {
@@ -1717,9 +1731,9 @@ impl Walker<'_, '_, '_, '_> {
     }
 
     /// The end of `_table_block` and the contents fallback: rows ordered head, body, foot;
-    /// the table's ids, text, widths and direction; refused as rows when a contents entry
-    /// names an id past the table's start (#219).
-    fn rows_done(&mut self, job: &mut TableJob) -> Result<(), ItemError> {
+    /// the table's ids, text, widths and direction. False when a contents entry names an id
+    /// past the table's start, which writes the table as rows (#219).
+    fn rows_done(&mut self, job: &mut TableJob) -> Result<bool, ItemError> {
         let dom = self.dom;
         let table = job.table;
         for (i, row) in job.rows.iter_mut().enumerate() {
@@ -1769,7 +1783,7 @@ impl Walker<'_, '_, '_, '_> {
                 // A chapter cannot start inside one block: the rows path keeps 5.8.8's
                 // chapters, and records its own listings (#282).
                 self.nav_listing_at.truncate(job.listings);
-                return Err(self.unsupported(ROWS));
+                return Ok(false);
             }
         }
         let rows = std::mem::take(&mut job.rows)
@@ -1806,7 +1820,7 @@ impl Walker<'_, '_, '_, '_> {
         });
         job.fostered = fostered_content(dom, table, job.depth);
         job.stage = Stage::Fostered;
-        Ok(())
+        Ok(true)
     }
 
     /// `_emit_fostered(table)` from where it stopped: the next block element to walk, or None
@@ -1963,7 +1977,7 @@ fn span_py(dom: &Dom, n: NodeId, name: &str) -> PyValue {
 /// `_walk_cell`'s ids left pending at the cell's end, onto its last block where it lacks them:
 /// `last["anchor_ids"].append(aid)`, `last["anchor_offsets"][aid] = 0`. Each id is looked up,
 /// not searched for.
-fn add_ids(last: &mut Block, pending: &[String]) {
+pub(super) fn add_ids(last: &mut Block, pending: &[String]) {
     let mut ids: Vec<String> = str_list(last.get("anchor_ids"))
         .map(str::to_owned)
         .collect();

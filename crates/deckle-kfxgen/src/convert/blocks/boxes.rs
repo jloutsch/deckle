@@ -170,7 +170,7 @@ fn share_or_none(x: f64) -> PyValue {
 
 impl Walker<'_, '_, '_, '_> {
     /// One unit charged for each of `n` kids looked at.
-    fn step(&self, n: usize) -> Result<(), ItemError> {
+    pub(super) fn step(&self, n: usize) -> Result<(), ItemError> {
         Ok(self.resolver.charge(TEXT_UNIT.saturating_mul(n))?)
     }
 
