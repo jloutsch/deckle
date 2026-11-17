@@ -12,6 +12,7 @@ mod block_style;
 mod blocks;
 mod font_table;
 mod href;
+mod images;
 mod initial;
 mod inline;
 // Tasks 11 to 17 call what the tests do not.
@@ -36,6 +37,7 @@ pub use font_table::{parse_style, parse_weight};
 pub use href::{
     external_target, is_unsafe, key_doc, normalize, resolve_doc_path, resolve_link_target, unquote,
 };
+pub use images::{Images, images};
 pub use initial::initial;
 pub use inline::{Serials, Walk};
 pub use inline_style::{

@@ -128,6 +128,12 @@ under cssselect's licence:
     NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
     SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+src/convert/images.rs ports calibre's `fit_image` (src/calibre/__init__.py) and the steps of
+`scale_image` (src/calibre/utils/img.py) that kfxgen's picture optimizer runs, under the same
+notice. They were read at calibre commit ca05b8602e3e (v8.12.0-77); kfxgen runs under calibre
+9.18.0, which was not compared. The size the picture is then drawn at follows the behaviour of
+Qt's `QImage::scaled` with `Qt::KeepAspectRatio` (`QSize::scaled`); no Qt code is copied.
+
 src/css/html.css is calibre's resources/templates/html.css, copied verbatim. It is Mozilla
 code under the tri-licence its header states (MPL 1.1, GPL 2.0 or later, LGPL 2.1 or later),
 used here under the GPL.

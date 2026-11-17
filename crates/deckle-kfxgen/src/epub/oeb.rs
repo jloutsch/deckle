@@ -197,6 +197,16 @@ fn is_xml(media_type: &str) -> bool {
     media_type.ends_with("/xml") || media_type.ends_with("+xml")
 }
 
+/// Whether Calibre's `Manifest.Item.data` gives the bytes of an item of (lower-case)
+/// `media_type` as they are (`base.py`): it parses documents, XML and stylesheets, and turns
+/// plain text into a document.
+pub(crate) fn data_is_bytes(media_type: &str) -> bool {
+    !(is_doc(media_type)
+        || is_xml(media_type)
+        || OEB_STYLES.contains(&media_type)
+        || media_type == "text/plain")
+}
+
 // ---------------------------------------------------------------------------------------
 // The archive
 // ---------------------------------------------------------------------------------------

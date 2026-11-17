@@ -1574,6 +1574,7 @@ dependencies = [
  "encoding_rs",
  "flate2",
  "html5ever",
+ "image",
  "regex",
  "roxmltree",
  "serde",

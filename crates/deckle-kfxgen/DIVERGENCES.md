@@ -830,3 +830,35 @@ kfxgen's native tables (`src/convert/blocks/tables.rs`, at ad38ec8):
   spans add up to about a million widths stops the file (`Error::Book`, "the CSS of this book
   file gives its elements more than 500000 declarations"): 2,000 `<col span="1000">` are refused
   after about 1,000 of them. kfxgen writes the two million widths.
+
+## The book's pictures and cover
+
+The pictures and cover handed to the generator (`src/convert/images.rs`, at ad38ec8). kfxgen
+decodes, scales and writes pictures with Qt through calibre; the port uses the `image` crate.
+
+- A picture kfxgen re-encodes (a GIF made a PNG, a CMYK JPEG made RGB, a picture over 1,920 px
+  or 1 MiB) has kfxgen's format and size, not its bytes: the encoders and the scaling filter
+  differ. A GIF's PNG is RGBA here, a palette PNG in kfxgen; a CMYK JPEG's colours may differ.
+  A picture kept as it is keeps the EPUB's bytes in both.
+- A re-encoded PNG with no alpha is the smaller of the PNG and a JPEG at quality 85 in both, but
+  the sizes being compared are each encoder's, so the format chosen can differ. kfxgen also
+  tries a palette PNG for a palette source, which the port does not. So whether a picture
+  re-encoded for its bytes comes out smaller than it was, and is kept, can differ too. Smallest
+  input: a PNG over 1,920 px with no alpha (`pictures_more`'s `wide.png` comes out a PNG in
+  both).
+- Which pictures decode is `image`'s answer, not Qt's: a picture neither can read is left out
+  with a warning in both, but Qt fills in a JPEG cut short and the port may not, and the two
+  disagree on other damaged files. A GIF frame over 50 MB as RGBA (12.5 megapixels) is refused
+  by the `gif` crate's own limit and left out; kfxgen converts it.
+- A picture whose header states more than 100 megapixels (`deckle_limits::MAX_IMAGE_PIXELS`),
+  or that needs more than `image`'s 512 MiB to decode, refuses the book (`Error::TooLarge`)
+  before it is decoded. calibre lets Qt allocate up to 1,024 MB for a picture
+  (`set_image_allocation_limit`), so kfxgen scales one of up to about 268 megapixels at 4
+  bytes a pixel and leaves out a larger one (worked out from the code, not run). Smallest
+  input: a PNG whose header says 10,001 × 10,000.
+- An SVG file of the manifest, and an `<svg>` drawn only with shapes in a spine page (not in
+  another `<svg>`, in a page that is not itself an SVG), refuse the book (`Error::Unsupported`,
+  "SVG pictures"), even where no text shows it. kfxgen draws them with Qt.
+- When several manifest pictures have "cover" in their id or href and the book names no other
+  cover, the port takes the first by href. calibre's manifest is a set, so which one kfxgen
+  takes varies from run to run.

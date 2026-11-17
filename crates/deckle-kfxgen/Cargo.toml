@@ -27,6 +27,8 @@ chrono = { version = "0.4", default-features = false }
 thiserror.workspace = true
 # Class names in ASCII, as Calibre's `ascii_text` writes them (src/css/flatten.rs).
 deunicode.workspace = true
+# The book's pictures: kfxgen's GIF to PNG, CMYK to RGB and resizing (src/convert/images.rs).
+image = { workspace = true, features = ["gif"] }
 
 [dev-dependencies]
 deckle-kfx = { workspace = true, features = ["testing"] }

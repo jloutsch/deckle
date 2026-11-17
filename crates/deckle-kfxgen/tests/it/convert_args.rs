@@ -19,7 +19,7 @@ use crate::convert_support::model_diff;
 const SKIP: &[(&str, &str)] = &[];
 
 /// Every source fixture: each has a model kfxgen made from it.
-fn sources() -> Vec<String> {
+pub(crate) fn sources() -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(fixtures::kfxgen("sources"))
         .unwrap()
         .filter_map(|e| {
@@ -31,7 +31,7 @@ fn sources() -> Vec<String> {
     names
 }
 
-fn dict(v: &PyValue) -> BTreeMap<String, &PyValue> {
+pub(crate) fn dict(v: &PyValue) -> BTreeMap<String, &PyValue> {
     let PyValue::Dict(items) = v else {
         panic!("not a dict: {v:?}")
     };
