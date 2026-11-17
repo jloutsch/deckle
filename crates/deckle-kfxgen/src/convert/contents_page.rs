@@ -8,13 +8,18 @@
 //! Identity and value. kfxgen picks the contents page by identity (`is`, `id()`), here by its
 //! place in the list, kept as chapters are inserted before it. It finds the place to insert a
 //! split-off chapter with `chapters.index(ch)`, which compares by value and so could find an
-//! earlier chapter equal to `ch`; it never does, and here `ch`'s own place is used:
+//! earlier chapter equal to `ch`. For the chapters assembly makes it never does, and here
+//! `ch`'s own place is used:
 //!
 //! - The contents page is the first chapter titled so (not a file's) or, with none, the first
 //!   flagged chapter of a short text and at most one block of text. A chapter before it equal
 //!   to it, once cut, has its title and its keys, so is titled so; or is flagged, with a text
 //!   and blocks that are a part of the page's, so no longer and no more: it would have been
 //!   picked first.
+//! - This rests on a chapter's `text` being its blocks' texts joined, as assembly makes it
+//!   (`_mk`; only its chapters carry `_nav_listing_at`, and a file's chapter is never the
+//!   titled page). A chapter handed in with another `text` can break it: kfxgen then inserts
+//!   before an earlier equal chapter, the port before the page.
 //!
 //! On the page itself, `b is first` compares blocks by identity: here by their place.
 //!
@@ -25,7 +30,7 @@
 //!
 //! What this step copies is bounded by the chapters it is given (each title and place once,
 //! the page's own text and keys once), but for the lines a page's headings repeat, each a copy
-//! of an entry's title: those are counted first and refused past `MAX_CONTENT_FILE_BYTES`
+//! of an entry's title and key: those are counted first and refused past `MAX_CONTENT_FILE_BYTES`
 //! (DIVERGENCES, "Headings a contents page repeats").
 
 use std::collections::{HashMap, HashSet};
@@ -523,7 +528,7 @@ fn rebuild_contents_page(chapters: &mut [Chapter], c: usize) -> Result<(), Error
     }
 
     let mut events: Vec<Event> = Vec::new();
-    // The bytes of entry titles the repeated lines copy, counted before any is made.
+    // The bytes of entry titles and keys the repeated lines copy, counted before any is made.
     let mut repeated = 0u64;
     let mut last = None;
     for (n, b) in blocks.iter().enumerate() {
@@ -548,7 +553,10 @@ fn rebuild_contents_page(chapters: &mut [Chapter], c: usize) -> Result<(), Error
                 // keeping its own line. Merged lines are never repeated (`links_to` is at most
                 // one for those, at least two here), so the line copied is the same now or
                 // once all are counted.
-                repeated = repeated.saturating_add(lines[at].text.len() as u64);
+                // The line's strings: its title and a place's key.
+                let key = lines[at].key.as_ref().and_then(PyValue::as_str);
+                let copied = lines[at].text.len() + key.map_or(0, str::len);
+                repeated = repeated.saturating_add(copied as u64);
                 events.push(Event::Repeat {
                     at,
                     level: level.clone(),
@@ -572,12 +580,12 @@ fn rebuild_contents_page(chapters: &mut [Chapter], c: usize) -> Result<(), Error
         }
     }
     // A heading matches a title once the title's edge punctuation is stripped, so a short one
-    // can repeat a long title (DIVERGENCES, "Headings a contents page repeats").
+    // can repeat a long title, or a place's long key (DIVERGENCES, "Headings a contents page repeats").
     if repeated > MAX_CONTENT_FILE_BYTES {
         return Err(Error::TooLarge {
             what: format!(
                 "the contents page repeats more than {MAX_CONTENT_FILE_BYTES} bytes of contents \
-                 entry titles"
+                 entry titles and keys"
             ),
         });
     }

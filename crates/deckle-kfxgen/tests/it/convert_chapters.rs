@@ -772,19 +772,19 @@ fn final_chapters_match_every_model() {
 
 /// kfxgen's own title-page step on crafted chapters (`tests/it/data/contents_page_probe.json`,
 /// which says how they were run), for what no fixture reaches: a listing's page rebuilt as the
-/// contents (the text above its listing split off, or the front matter below it; a page of no
-/// blocks whose keys come off every block), a "Contents" page whose other files and front
-/// matter are split off and whose headings are merged, placed and repeated as Previewer prints
-/// them, entries of the same words, two equal "Contents" pages (only the first rebuilt) and a
-/// first block's equal twin (printed), the second pass, the rerun, a book with no title, and
-/// the split by writing mode.
+/// contents (the text above its listing split off, after which the listing's place can be past
+/// the page's blocks, or the front matter below it; a page of no blocks whose keys come off
+/// every block), a "Contents" page whose other files and front matter are split off and whose
+/// headings are merged, placed and repeated as Previewer prints them, entries of the same
+/// words, two equal "Contents" pages (only the first rebuilt) and a first block's equal twin
+/// (printed), the second pass, the rerun, a book with no title, and the split by writing mode.
 #[test]
 fn contents_pages_of_crafted_books_match_kfxgen() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/it/data/contents_page_probe.json");
     let probe: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     let cases = probe["cases"].as_object().unwrap();
-    assert_eq!(cases.len(), 11);
+    assert_eq!(cases.len(), 12);
     let mut failures = Vec::new();
     for (name, case) in cases {
         let py = |key: &str| PyValue::from_json(&case[key], &path, name).unwrap();
@@ -814,8 +814,9 @@ fn contents_pages_of_crafted_books_match_kfxgen() {
 
 /// A "Contents" page of `headings` headings "A", each a link, and a chapter titled
 /// `"!" * (title - 1) + "A"`, which each heading names once the title's edge punctuation is
-/// stripped; `title` is the title's length in bytes.
-fn page_repeating(title: usize, headings: usize) -> Vec<Chapter> {
+/// stripped (`title` is the title's length in bytes); with a `key` of more than 0 bytes, a
+/// chapter titled "x" whose place titled "A" has a key of `key` bytes.
+fn page_repeating(title: usize, key: usize, headings: usize) -> Vec<Chapter> {
     let block = |text: &str, linked: bool, level: i64| {
         let mut b = vec![(s("text"), s(text))];
         if linked {
@@ -841,51 +842,78 @@ fn page_repeating(title: usize, headings: usize) -> Vec<Chapter> {
             (s("toc_level"), PyValue::Int(0)),
         ])
     };
-    let long = format!("{}A", "!".repeat(title - 1));
     let x = PyValue::Dict(vec![(s("text"), s("x"))]);
+    let mut named = chapter(format!("{}A", "!".repeat(title - 1)), vec![x.clone()]);
+    if key > 0 {
+        named = chapter("x".into(), vec![x]);
+        let place = PyValue::Dict(vec![
+            (s("title"), s("A")),
+            (s("key"), s(&"k".repeat(key))),
+            (s("level"), PyValue::Int(0)),
+        ]);
+        if let PyValue::Dict(pairs) = &mut named {
+            pairs.push((s("sub_entries"), PyValue::List(vec![place])));
+        }
+    }
     let mut next = 0;
-    [chapter("Contents".into(), blocks), chapter(long, vec![x])]
+    [chapter("Contents".into(), blocks), named]
         .iter()
         .map(|c| Chapter::from_py(c, &mut next).unwrap())
         .collect()
 }
 
-/// The lines a contents page repeats copy their entry's title (kfxgen's `{**toc_links[at],
-/// …}`), which a heading names once its edge punctuation is stripped: past
-/// `MAX_CONTENT_FILE_BYTES` of copies the book is refused (DIVERGENCES, "Headings a contents
-/// page repeats"), before any copy is made; just under it, it converts.
+/// The lines a contents page repeats copy their entry's line (kfxgen's `{**toc_links[at],
+/// …}`), its title and a place's key: a long title a heading names once its edge punctuation
+/// is stripped, or a short one with a long key. Past `MAX_CONTENT_FILE_BYTES` of copies the
+/// book is refused (DIVERGENCES, "Headings a contents page repeats"), before any copy is made;
+/// just under it, it converts.
 #[test]
-fn a_contents_page_repeating_long_titles_is_refused_before_it_copies_them() {
-    const TITLE: usize = 4_000_001;
-    let mut over = page_repeating(TITLE, 9);
-    let (got, bytes) = crate::support::allocated_by(|| replace_title_page(&mut over, "T", false));
-    match got {
-        Err(Error::TooLarge { what }) => assert_eq!(
-            what,
-            "the contents page repeats more than 33554432 bytes of contents entry titles"
-        ),
-        other => panic!("{other:?}"),
-    }
-    // 9 copies would be 36 MB; the page's own lines, its text and the title's words are about
-    // three titles.
-    assert!(bytes < 20 << 20, "{} MB allocated", bytes >> 20);
+fn a_contents_page_repeating_long_titles_or_keys_is_refused_before_it_copies_them() {
+    const LONG: usize = 4_000_001;
+    // (title bytes, key bytes, the page's lines with 8 repeats)
+    for (title, key, lines) in [(LONG, 0, 9), (1, LONG, 10)] {
+        let mut over = page_repeating(title, key, 9);
+        let (got, bytes) =
+            crate::support::allocated_by(|| replace_title_page(&mut over, "T", false));
+        match got {
+            Err(Error::TooLarge { what }) => assert_eq!(
+                what,
+                "the contents page repeats more than 33554432 bytes of contents entry titles \
+                 and keys"
+            ),
+            other => panic!("{title}, {key}: {other:?}"),
+        }
+        // 9 copies would be 36 MB; the page's own lines, its text and the title's words are
+        // about three titles.
+        assert!(
+            bytes < 20 << 20,
+            "{title}, {key}: {} MB allocated",
+            bytes >> 20
+        );
 
-    let mut under = page_repeating(TITLE, 8);
-    replace_title_page(&mut under, "T", false).unwrap();
-    let page = under[0].to_py();
-    let links = page.get("toc_links").and_then(PyValue::as_list).unwrap();
-    assert_eq!(links.len(), 9, "the entry and its 8 repeats");
+        let mut under = page_repeating(title, key, 8);
+        replace_title_page(&mut under, "T", false).unwrap();
+        let page = under[0].to_py();
+        let links = page.get("toc_links").and_then(PyValue::as_list).unwrap();
+        assert_eq!(
+            links.len(),
+            lines,
+            "{title}, {key}: the entries and 8 repeats"
+        );
+    }
 }
 
 /// What kfxgen's contents page does in time quadratic in entries or page lines, done here
-/// once each: 50,000 chapters of one title, each with two places of one title (150,000 entries
-/// of two words), and a page of 100,000 lines alternating a link and a heading of those words
-/// (kfxgen scans every entry for each line, every later line for each heading, and inserts
-/// each heading into the list), and 100,000 keys of a dropped listing taken off every block.
+/// once each: 100,000 chapters of one title, each with two places of one title (300,000
+/// entries of two words), and a page of 200,000 lines alternating a link and a heading of
+/// those words (kfxgen scans every entry for each line, every later line for each heading, and
+/// inserts each heading into the list), and 200,000 keys of a dropped listing taken off every
+/// block. Large enough that finding an entry by scanning its words' entries from the first,
+/// rather than by a binary search, passes the cost limit.
 #[test]
 fn a_contents_page_of_many_entries_and_lines_costs_little() {
-    const CHAPTERS: usize = 50_000;
-    const LINES: usize = 100_000;
+    const CHAPTERS: usize = 100_000;
+    const LINES: usize = 200_000;
     let block = |text: &str, linked: bool, heading: bool, keys: Vec<PyValue>| {
         let mut b = vec![(s("text"), s(text))];
         if linked {

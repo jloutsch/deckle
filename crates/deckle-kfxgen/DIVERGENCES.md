@@ -948,15 +948,18 @@ converts.
 
 When kfxgen rebuilds the book's contents page (`_rebuild_contents_page`), each heading on the
 page that is also a link the page gives more than once becomes a line of its own, a copy of
-that entry's line (its title included). A heading matches an entry when their words agree
-after `_normalize_title`, which joins runs of white space and strips punctuation from both
-ends, so a short heading can match a very long title, and the title is copied once for each
-such heading. The port (`src/convert/contents_page.rs`) counts the bytes of the titles these
-lines copy before it makes them, and past 33,554,432 bytes (`MAX_CONTENT_FILE_BYTES`, the size
-a content file may have) stops the conversion (`Error::TooLarge`, "the contents page repeats
-more than 33554432 bytes of contents entry titles") where kfxgen makes the book. A heading in a
-real book is about as long as the title it repeats, and the page's headings are in one file
-under that size, so only a crafted title reaches the limit. Smallest input: a contents entry
-titled `"!" * 10_000_000 + "A"` and a "Contents" page of a heading "Contents" and four
-headings "A", each a link: four copies, 40,000,004 bytes, are refused; with three headings the
-book converts.
+that entry's line: its title and, for a place in a chapter, its key. A heading matches an
+entry when their words agree after `_normalize_title`, which joins runs of white space and
+strips punctuation from both ends, so a short heading can match a very long title, or a short
+title with a very long key (`<file>#<id>` from the contents' own link), and these are copied
+once for each such heading (kfxgen shares the strings; the port copies them). The port
+(`src/convert/contents_page.rs`) counts the bytes of the titles and keys these lines copy
+before it makes them, and past 33,554,432 bytes (`MAX_CONTENT_FILE_BYTES`, the size a content
+file may have) stops the conversion (`Error::TooLarge`, "the contents page repeats more than
+33554432 bytes of contents entry titles and keys") where kfxgen makes the book. A heading in a
+real book is about as long as the title it repeats, the page's headings are in one file under
+that size, and a key is a file name and an id, so only a crafted title or link reaches the
+limit. Smallest inputs: a contents entry titled `"!" * 10_000_000 + "A"`, or a second entry
+titled "A" in the section of the entry before it (a place) linking to an id of 10,000,000
+characters, and a "Contents" page of a heading "Contents" and four headings "A", each a link: four copies, over 40,000,000
+bytes, are refused; with three headings the book converts.
