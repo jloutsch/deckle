@@ -11,3 +11,6 @@ dist
 /apps/desktop/src-tauri/liquid-glass
 /gutenberg/
 __pycache__/
+
+# Brainstorming mockups (visual companion)
+.superpowers/
